@@ -71,6 +71,11 @@ The total trajectory-level equation is
 du^rho / d lambda = a_GR^rho + F_memory^rho .
 ```
 
+The derivative of the state remains an ordinary first derivative in affine
+parameter. The fractional operator appears in the history-dependent force on
+the right-hand side; this implementation must not be described as a Caputo
+fractional differential equation for the state variables themselves.
+
 The diagnostic residual
 
 ```text
@@ -94,9 +99,10 @@ is exposed so the projection can be audited numerically.
 - The uniform affine-parameter step is finite and positive.
 - Invalid non-finite numerical values are rejected rather than repaired.
 
-## Numerical Algorithm
+## Numerical Algorithms
 
-For the auditable baseline implementation:
+The complete-history Caputo L1 evaluation is the numerical memory oracle for
+both fixed-step integrators. For the auditable compatibility implementation:
 
 1. Validate configuration, initial coordinates, and initial velocity.
 2. Retain the complete velocity history.
@@ -116,6 +122,25 @@ u_(n+1) = u_n + h a_n
 x_(n+1) = x_n + h u_(n+1)
 ```
 
+The second integrator is named Heun PECE
+(`predict_evaluate_correct_evaluate`). It is a second-order predictor-corrector
+for the ordinary state equation with a fractional-history force, not a
+fractional Adams method for the state equation:
+
+```text
+a_n      = a(x_n, u_n, accepted history)
+u*       = u_n + h a_n
+x*       = x_n + h u*
+a*       = a(x*, u*, provisional history including u*)
+u_(n+1)  = u_n + h/2 (a_n + a*)
+x_(n+1)  = x_n + h/2 (u_n + u_(n+1))
+```
+
+The predicted velocity is inserted only into the provisional history used to
+evaluate `a*`. The accepted complete history stores the corrected velocity.
+All predicted and corrected coordinates and velocities are checked for
+finiteness.
+
 There is no RNG, no hidden global state, no parallel reduction, and no
 automatic four-velocity renormalization. Metric-norm drift is measured and
 reported instead.
@@ -124,7 +149,38 @@ The baseline history cost is `O(D * N^2)` over `N` fixed steps because each
 step recomputes direct Caputo histories for all `D` velocity components.
 
 Semi-implicit Euler is a reference integrator for reproducible experiments, not
-a precision integrator.
+a precision integrator. Heun PECE is usually more accurate on smooth problems,
+but it does not change the model's scientific status or make the force law
+covariant.
+
+## Convergence Methodology
+
+The V2 convergence utility runs the same initial condition and final affine
+parameter with steps `h`, `h/2`, and `h/4`. It reports:
+
+- endpoint coordinate L2 differences between successive refinements;
+- endpoint velocity L2 differences between successive refinements;
+- observed self-convergence ratios when the denominator is non-zero;
+- endpoint metric-norm drift;
+- endpoint memory-force norm.
+
+The `h/4` result is only an internal refinement reference. Self-convergence can
+show that two discretizations are approaching each other for a chosen chart,
+step sequence, and parameter set. It is not empirical validation, not a proof
+of the continuous model, and not a substitute for an exact solution or an
+independent numerical oracle.
+
+For Schwarzschild standard exterior coordinates, the crate also exposes
+chart-specific diagnostics:
+
+```text
+E   = -u_t
+L_z = u_phi
+s   = g_(mu nu) u^mu u^nu
+```
+
+These helpers are explicitly tied to the fixed Schwarzschild exterior
+background and do not define generic invariants for every metric.
 
 ## Falsifiable Observables
 
@@ -151,7 +207,9 @@ disagreement with physical data is not claimed.
   not a covariant field theory.
 - Complete-history direct evaluation has quadratic cost in the number of
   samples.
-- The Euler update is low order and intended for auditability, not accuracy.
+- The Euler update is low order and intended for auditability, not accuracy;
+  Heun PECE reduces time-discretization error on smooth tests but still uses a
+  coordinate memory force.
 - The background connection and metric are assumed to be supplied consistently
   by the caller; the crate validates finiteness but does not prove geometric
   compatibility.

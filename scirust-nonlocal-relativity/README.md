@@ -20,6 +20,10 @@ F_memory^rho = - kappa P^rho_sigma m^sigma
 du^rho / d lambda = a_GR^rho + F_memory^rho
 ```
 
+This is an ordinary first-order state equation with a fractional-history force
+on the right-hand side. It is not a Caputo fractional differential equation for
+the state variables themselves.
+
 For non-null worldlines,
 
 ```text
@@ -38,14 +42,29 @@ The projection is checked through the diagnostic residual
 - The first sample uses a zero memory vector because the Caputo history is
   insufficient.
 - The baseline history cost is `O(D * N^2)` over `N` fixed steps.
-- The update is documented semi-implicit Euler:
+- The compatibility/default update is semi-implicit Euler:
 
 ```text
 u_(n+1) = u_n + h a_n
 x_(n+1) = x_n + h u_(n+1)
 ```
 
-This is a deterministic reference integrator, not a precision integrator.
+This is a deterministic reference integrator, not a precision integrator. An
+additive explicit integrator API also provides `heun_pece`, a
+predict-evaluate-correct-evaluate Heun method for the same ordinary state
+equation:
+
+```text
+u*       = u_n + h a_n
+x*       = x_n + h u*
+a*       = a(x*, u*, provisional history including u*)
+u_(n+1)  = u_n + h/2 (a_n + a*)
+x_(n+1)  = x_n + h/2 (u_n + u_(n+1))
+```
+
+The provisional history is used only to evaluate the predicted acceleration;
+accepted histories remain complete deterministic velocity histories.
+
 There is no RNG, no parallel reduction, no hidden global state, and no automatic
 four-velocity renormalization. Metric-norm drift is measured and exposed.
 
@@ -55,11 +74,24 @@ background. The discretization is coordinate-dependent.
 Positive `kappa` is a finite non-negative phenomenological damping-like
 coupling. It is not a new fundamental constant.
 
+## Convergence studies
+
+`run_convergence_study` compares the same final affine parameter at `h`,
+`h/2`, and `h/4`. It reports endpoint coordinate and velocity differences,
+observed self-convergence ratios, endpoint metric-norm drift, and endpoint
+memory-force norm. The `h/4` result is a refinement reference, not an exact
+oracle for the continuous model; self-convergence can reveal numerical
+stability trends but cannot validate the physical model or prove the continuum
+equation is correct.
+
 ## Example
 
 ```bash
 cargo run -p scirust-nonlocal-relativity --example schwarzschild_memory
+cargo run -p scirust-nonlocal-relativity --example convergence_study
 ```
 
-The example compares `kappa = 0` with a small positive coupling for an exterior
-Schwarzschild worldline and prints compact CSV-like rows.
+The first example compares `kappa = 0` with a small positive coupling for an
+exterior Schwarzschild worldline. The convergence study prints deterministic
+CSV-like rows comparing Euler and Heun PECE on a short Schwarzschild exterior
+experiment.

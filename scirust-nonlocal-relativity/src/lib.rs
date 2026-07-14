@@ -31,12 +31,73 @@
 #![deny(missing_docs)]
 
 use scirust_fractional::{FractionalError, FractionalOrder, caputo_l1_uniform};
-use scirust_relativity::{Connection, Metric};
+use scirust_relativity::{Connection, Metric, Schwarzschild};
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 
 /// Result type used by this experimental crate.
 pub type NonlocalResult<T> = Result<T, NonlocalRelativityError>;
+
+/// Fixed-step integrator used for the ordinary worldline state equation.
+///
+/// The fractional Caputo term is a history-dependent force on the right-hand
+/// side. These variants select how the ordinary first-order state equation is
+/// advanced once that force has been evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldlineIntegrator {
+    /// Compatibility path: evaluate the accepted state once and advance with
+    /// semi-implicit Euler.
+    SemiImplicitEuler,
+    /// Predictor-evaluate-correct-evaluate Heun method for the existing
+    /// ordinary state equation with fractional-history force.
+    HeunPece,
+}
+
+impl WorldlineIntegrator {
+    /// Return the stable lowercase identifier for this integrator.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self
+        {
+            Self::SemiImplicitEuler => "semi_implicit_euler",
+            Self::HeunPece => "heun_pece",
+        }
+    }
+
+    /// Parse an integrator identifier.
+    ///
+    /// Accepted identifiers are `semi_implicit_euler`, `euler`,
+    /// `heun_pece`, `heun`, `pece`, and
+    /// `predict_evaluate_correct_evaluate`.
+    pub fn try_from_name(name: &str) -> NonlocalResult<Self> {
+        match name.to_ascii_lowercase().as_str()
+        {
+            "semi_implicit_euler" | "euler" => Ok(Self::SemiImplicitEuler),
+            "heun_pece" | "heun" | "pece" | "predict_evaluate_correct_evaluate" =>
+            {
+                Ok(Self::HeunPece)
+            },
+            _ => Err(NonlocalRelativityError::InvalidIntegratorConfiguration {
+                name: name.to_string(),
+            }),
+        }
+    }
+}
+
+impl fmt::Display for WorldlineIntegrator {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for WorldlineIntegrator {
+    type Err = NonlocalRelativityError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::try_from_name(value)
+    }
+}
 
 /// Configuration for the fixed-step fractional-memory worldline integrator.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -229,6 +290,71 @@ impl<const D: usize> NonlocalTrajectory<D> {
     }
 }
 
+/// Endpoint summary for one refinement in a deterministic convergence study.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RefinementEndpoint<const D: usize> {
+    /// Uniform affine-parameter step used by this run.
+    pub step: f64,
+    /// Number of accepted integration steps.
+    pub steps: usize,
+    /// Final affine parameter reached by this run.
+    pub final_affine_parameter: f64,
+    /// Endpoint coordinates in the supplied chart.
+    pub coordinates: [f64; D],
+    /// Endpoint contravariant coordinate velocity.
+    pub velocity: [f64; D],
+    /// Endpoint metric-norm drift from the initial sample.
+    pub metric_norm_drift: f64,
+    /// Endpoint coordinate L2 norm of the projected memory force.
+    pub memory_force_l2_norm: f64,
+}
+
+/// Self-convergence result comparing equal final affine parameter at
+/// `h`, `h/2`, and `h/4`.
+///
+/// The finest run is a refinement reference for this numerical study, not an
+/// exact solution of the continuous model.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConvergenceStudy<const D: usize> {
+    /// Integrator used for all three refinements.
+    pub integrator: WorldlineIntegrator,
+    /// Coarse endpoint at step `h`.
+    pub coarse: RefinementEndpoint<D>,
+    /// Fine endpoint at step `h/2`.
+    pub fine: RefinementEndpoint<D>,
+    /// Finest endpoint at step `h/4`.
+    pub finest: RefinementEndpoint<D>,
+    /// Coordinate endpoint L2 difference between `h` and `h/2`.
+    pub endpoint_coordinate_error_h_h2: f64,
+    /// Coordinate endpoint L2 difference between `h/2` and `h/4`.
+    pub endpoint_coordinate_error_h2_h4: f64,
+    /// Velocity endpoint L2 difference between `h` and `h/2`.
+    pub endpoint_velocity_error_h_h2: f64,
+    /// Velocity endpoint L2 difference between `h/2` and `h/4`.
+    pub endpoint_velocity_error_h2_h4: f64,
+    /// Observed coordinate self-convergence ratio, when the denominator is
+    /// non-zero and finite.
+    pub coordinate_self_convergence_ratio: Option<f64>,
+    /// Observed velocity self-convergence ratio, when the denominator is
+    /// non-zero and finite.
+    pub velocity_self_convergence_ratio: Option<f64>,
+}
+
+/// Schwarzschild exterior chart diagnostics for one worldline state.
+///
+/// These quantities are specific to standard Schwarzschild coordinates
+/// `(t, r, theta, phi)` in a fixed background with signature `(-,+,+,+)`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SchwarzschildInvariants {
+    /// Specific energy `E = -u_t` associated with the stationary Killing
+    /// coordinate.
+    pub specific_energy: f64,
+    /// Azimuthal angular momentum `L_z = u_phi`.
+    pub azimuthal_angular_momentum: f64,
+    /// Metric norm `g_(mu nu) u^mu u^nu`.
+    pub metric_norm: f64,
+}
+
 /// Errors reported by the experimental non-local worldline integrator.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NonlocalRelativityError {
@@ -246,6 +372,30 @@ pub enum NonlocalRelativityError {
 
     /// Metric-norm floor is non-finite or non-positive.
     InvalidMetricNormFloor(f64),
+
+    /// Integrator selection is not one of the supported fixed-step methods.
+    InvalidIntegratorConfiguration {
+        /// Rejected integrator identifier.
+        name: String,
+    },
+
+    /// Refinement would overflow the number of integration steps.
+    RefinementStepCountOverflow {
+        /// Base number of steps.
+        base_steps: usize,
+        /// Integer refinement factor.
+        factor: usize,
+    },
+
+    /// Coordinates are outside the standard Schwarzschild exterior chart.
+    InvalidSchwarzschildExteriorCoordinates {
+        /// Radial coordinate.
+        radius: f64,
+        /// Polar angle coordinate.
+        polar_angle: f64,
+        /// Horizon radius `2 M`.
+        horizon_radius: f64,
+    },
 
     /// Initial coordinate component is not finite.
     NonFiniteInitialCoordinate {
@@ -405,6 +555,23 @@ impl fmt::Display for NonlocalRelativityError {
                 formatter,
                 "metric-norm floor must be finite and positive; got {floor}"
             ),
+            Self::InvalidIntegratorConfiguration { name } => write!(
+                formatter,
+                "unsupported worldline integrator configuration '{name}'"
+            ),
+            Self::RefinementStepCountOverflow { base_steps, factor } => write!(
+                formatter,
+                "refinement by factor {factor} overflows step count {base_steps}"
+            ),
+            Self::InvalidSchwarzschildExteriorCoordinates {
+                radius,
+                polar_angle,
+                horizon_radius,
+            } => write!(
+                formatter,
+                "Schwarzschild diagnostics require exterior coordinates r > {horizon_radius} \
+                 and 0 < theta < pi; got r={radius}, theta={polar_angle}"
+            ),
             Self::NonFiniteInitialCoordinate { index, value } => write!(
                 formatter,
                 "initial coordinate at index {index} is not finite; got {value}"
@@ -558,6 +725,87 @@ pub fn coordinate_l2_norm<const D: usize>(vector: &[f64; D]) -> f64 {
     sum.sqrt()
 }
 
+/// Evaluate Schwarzschild exterior chart diagnostics for a worldline state.
+///
+/// Coordinates are interpreted as standard Schwarzschild `(t, r, theta, phi)`.
+/// This helper is chart- and background-specific; it is not a generic
+/// invariant extractor for arbitrary metrics.
+pub fn schwarzschild_invariants(
+    background: &Schwarzschild,
+    state: &WorldlineState<4>,
+) -> NonlocalResult<SchwarzschildInvariants> {
+    validate_initial_state(state)?;
+
+    if !background.is_in_exterior(&state.coordinates)
+    {
+        return Err(
+            NonlocalRelativityError::InvalidSchwarzschildExteriorCoordinates {
+                radius: state.coordinates[1],
+                polar_angle: state.coordinates[2],
+                horizon_radius: background.horizon_radius(),
+            },
+        );
+    }
+
+    let metric = validated_metric(background, &state.coordinates, 0)?;
+    let lowered_velocity = lower_index(&metric, &state.velocity);
+    let specific_energy = -lowered_velocity[0];
+    let azimuthal_angular_momentum = lowered_velocity[3];
+    let metric_norm = metric_contraction(&metric, &state.velocity, &state.velocity);
+
+    validate_scalar("schwarzschild_specific_energy", specific_energy, 0)?;
+    validate_scalar(
+        "schwarzschild_azimuthal_angular_momentum",
+        azimuthal_angular_momentum,
+        0,
+    )?;
+
+    if !metric_norm.is_finite()
+    {
+        return Err(NonlocalRelativityError::NonFiniteMetricNorm {
+            step: 0,
+            value: metric_norm,
+        });
+    }
+
+    Ok(SchwarzschildInvariants {
+        specific_energy,
+        azimuthal_angular_momentum,
+        metric_norm,
+    })
+}
+
+/// Return the Schwarzschild exterior specific energy `E = -u_t`.
+///
+/// This helper assumes standard Schwarzschild coordinates in a fixed exterior
+/// chart and does not apply to arbitrary stationary metrics.
+pub fn schwarzschild_specific_energy(
+    background: &Schwarzschild,
+    state: &WorldlineState<4>,
+) -> NonlocalResult<f64> {
+    Ok(schwarzschild_invariants(background, state)?.specific_energy)
+}
+
+/// Return the Schwarzschild exterior azimuthal angular momentum `L_z = u_phi`.
+///
+/// This helper assumes standard Schwarzschild coordinates in a fixed exterior
+/// chart and does not apply to arbitrary axisymmetric metrics.
+pub fn schwarzschild_azimuthal_angular_momentum(
+    background: &Schwarzschild,
+    state: &WorldlineState<4>,
+) -> NonlocalResult<f64> {
+    Ok(schwarzschild_invariants(background, state)?.azimuthal_angular_momentum)
+}
+
+/// Return `g_(mu nu) u^mu u^nu` in standard Schwarzschild exterior
+/// coordinates.
+pub fn schwarzschild_metric_norm(
+    background: &Schwarzschild,
+    state: &WorldlineState<4>,
+) -> NonlocalResult<f64> {
+    Ok(schwarzschild_invariants(background, state)?.metric_norm)
+}
+
 /// Compute the ordinary geodesic acceleration
 /// `-Gamma^rho_(mu nu) u^mu u^nu`.
 #[must_use]
@@ -627,11 +875,35 @@ pub fn caputo_velocity_memory<const D: usize>(
 ///
 /// The background is fixed and supplies both metric components and
 /// Christoffel symbols. The returned trajectory contains `steps + 1` sampled
-/// states and diagnostics, including the initial sample.
+/// states and diagnostics, including the initial sample. This compatibility
+/// path uses [`WorldlineIntegrator::SemiImplicitEuler`].
 pub fn simulate_nonlocal_worldline<B, const D: usize>(
     background: &B,
     initial_state: WorldlineState<D>,
     config: NonlocalConfig,
+) -> NonlocalResult<NonlocalTrajectory<D>>
+where
+    B: Metric<D> + Connection<D>,
+{
+    simulate_nonlocal_worldline_with_integrator(
+        background,
+        initial_state,
+        config,
+        WorldlineIntegrator::SemiImplicitEuler,
+    )
+}
+
+/// Simulate the experimental fractional-memory worldline model with an
+/// explicit fixed-step integrator selection.
+///
+/// The state equation remains ordinary in affine parameter. The Caputo L1
+/// term is evaluated as a coordinate-memory force from complete velocity
+/// history.
+pub fn simulate_nonlocal_worldline_with_integrator<B, const D: usize>(
+    background: &B,
+    initial_state: WorldlineState<D>,
+    config: NonlocalConfig,
+    integrator: WorldlineIntegrator,
 ) -> NonlocalResult<NonlocalTrajectory<D>>
 where
     B: Metric<D> + Connection<D>,
@@ -669,35 +941,24 @@ where
 
         diagnostics.push(evaluation.diagnostics);
 
-        let mut next_velocity = [0.0_f64; D];
-        let mut next_coordinates = [0.0_f64; D];
-
-        for rho in 0..D
+        let next_state = match integrator
         {
-            next_velocity[rho] = state.velocity[rho] + config.step * evaluation.acceleration[rho];
-            if !next_velocity[rho].is_finite()
+            WorldlineIntegrator::SemiImplicitEuler =>
             {
-                return Err(NonlocalRelativityError::NonFiniteGeneratedVelocity {
-                    step: step_index + 1,
-                    index: rho,
-                    value: next_velocity[rho],
-                });
-            }
-
-            next_coordinates[rho] = state.coordinates[rho] + config.step * next_velocity[rho];
-            if !next_coordinates[rho].is_finite()
-            {
-                return Err(NonlocalRelativityError::NonFiniteGeneratedCoordinate {
-                    step: step_index + 1,
-                    index: rho,
-                    value: next_coordinates[rho],
-                });
-            }
-        }
-
-        let next_state = WorldlineState::new(next_coordinates, next_velocity);
+                semi_implicit_euler_step(&state, &evaluation.acceleration, config.step, step_index)?
+            },
+            WorldlineIntegrator::HeunPece => heun_pece_step(
+                background,
+                &state,
+                &evaluation.acceleration,
+                &mut velocity_history,
+                initial_metric_norm,
+                step_index,
+                config,
+            )?,
+        };
         states.push(next_state);
-        velocity_history.push(next_velocity);
+        velocity_history.push(next_state.velocity);
     }
 
     let final_step = config.steps;
@@ -716,9 +977,272 @@ where
     Ok(NonlocalTrajectory::new(states, diagnostics))
 }
 
+/// Run a deterministic endpoint self-convergence study at `h`, `h/2`, and
+/// `h/4`.
+///
+/// The returned errors are endpoint differences between successive
+/// refinements. They are useful numerical self-consistency diagnostics, but
+/// they are not an exact-error certificate for the continuous model.
+pub fn run_convergence_study<B, const D: usize>(
+    background: &B,
+    initial_state: WorldlineState<D>,
+    base_config: NonlocalConfig,
+    integrator: WorldlineIntegrator,
+) -> NonlocalResult<ConvergenceStudy<D>>
+where
+    B: Metric<D> + Connection<D>,
+{
+    let fine_config = refined_config(base_config, 2)?;
+    let finest_config = refined_config(base_config, 4)?;
+
+    let coarse_trajectory = simulate_nonlocal_worldline_with_integrator(
+        background,
+        initial_state,
+        base_config,
+        integrator,
+    )?;
+    let fine_trajectory = simulate_nonlocal_worldline_with_integrator(
+        background,
+        initial_state,
+        fine_config,
+        integrator,
+    )?;
+    let finest_trajectory = simulate_nonlocal_worldline_with_integrator(
+        background,
+        initial_state,
+        finest_config,
+        integrator,
+    )?;
+
+    let coarse = refinement_endpoint(&coarse_trajectory, base_config)?;
+    let fine = refinement_endpoint(&fine_trajectory, fine_config)?;
+    let finest = refinement_endpoint(&finest_trajectory, finest_config)?;
+
+    let endpoint_coordinate_error_h_h2 = checked_l2_distance(
+        &coarse.coordinates,
+        &fine.coordinates,
+        "coordinate_error_h_h2",
+    )?;
+    let endpoint_coordinate_error_h2_h4 = checked_l2_distance(
+        &fine.coordinates,
+        &finest.coordinates,
+        "coordinate_error_h2_h4",
+    )?;
+    let endpoint_velocity_error_h_h2 =
+        checked_l2_distance(&coarse.velocity, &fine.velocity, "velocity_error_h_h2")?;
+    let endpoint_velocity_error_h2_h4 =
+        checked_l2_distance(&fine.velocity, &finest.velocity, "velocity_error_h2_h4")?;
+
+    Ok(ConvergenceStudy {
+        integrator,
+        coarse,
+        fine,
+        finest,
+        endpoint_coordinate_error_h_h2,
+        endpoint_coordinate_error_h2_h4,
+        endpoint_velocity_error_h_h2,
+        endpoint_velocity_error_h2_h4,
+        coordinate_self_convergence_ratio: finite_ratio(
+            endpoint_coordinate_error_h_h2,
+            endpoint_coordinate_error_h2_h4,
+        ),
+        velocity_self_convergence_ratio: finite_ratio(
+            endpoint_velocity_error_h_h2,
+            endpoint_velocity_error_h2_h4,
+        ),
+    })
+}
+
 struct StepEvaluation<const D: usize> {
     acceleration: [f64; D],
     diagnostics: StepDiagnostics,
+}
+
+fn semi_implicit_euler_step<const D: usize>(
+    state: &WorldlineState<D>,
+    acceleration: &[f64; D],
+    step: f64,
+    step_index: usize,
+) -> NonlocalResult<WorldlineState<D>> {
+    let mut next_velocity = [0.0_f64; D];
+    let mut next_coordinates = [0.0_f64; D];
+
+    for rho in 0..D
+    {
+        next_velocity[rho] = state.velocity[rho] + step * acceleration[rho];
+        validate_generated_velocity(next_velocity[rho], step_index + 1, rho)?;
+
+        next_coordinates[rho] = state.coordinates[rho] + step * next_velocity[rho];
+        validate_generated_coordinate(next_coordinates[rho], step_index + 1, rho)?;
+    }
+
+    Ok(WorldlineState::new(next_coordinates, next_velocity))
+}
+
+fn heun_pece_step<B, const D: usize>(
+    background: &B,
+    state: &WorldlineState<D>,
+    accepted_acceleration: &[f64; D],
+    velocity_history: &mut Vec<[f64; D]>,
+    initial_metric_norm: f64,
+    step_index: usize,
+    config: NonlocalConfig,
+) -> NonlocalResult<WorldlineState<D>>
+where
+    B: Metric<D> + Connection<D>,
+{
+    let mut predicted_velocity = [0.0_f64; D];
+    let mut predicted_coordinates = [0.0_f64; D];
+
+    for rho in 0..D
+    {
+        predicted_velocity[rho] = state.velocity[rho] + config.step * accepted_acceleration[rho];
+        validate_generated_velocity(predicted_velocity[rho], step_index + 1, rho)?;
+
+        predicted_coordinates[rho] = state.coordinates[rho] + config.step * predicted_velocity[rho];
+        validate_generated_coordinate(predicted_coordinates[rho], step_index + 1, rho)?;
+    }
+
+    let predicted_state = WorldlineState::new(predicted_coordinates, predicted_velocity);
+    velocity_history.push(predicted_velocity);
+    let predicted_evaluation = evaluate_step(
+        background,
+        &predicted_state,
+        velocity_history,
+        initial_metric_norm,
+        (step_index + 1) as f64 * config.step,
+        step_index + 1,
+        config,
+    );
+    let _ = velocity_history.pop();
+    let predicted_evaluation = predicted_evaluation?;
+
+    let mut next_velocity = [0.0_f64; D];
+    let mut next_coordinates = [0.0_f64; D];
+
+    for rho in 0..D
+    {
+        next_velocity[rho] = state.velocity[rho]
+            + 0.5
+                * config.step
+                * (accepted_acceleration[rho] + predicted_evaluation.acceleration[rho]);
+        validate_generated_velocity(next_velocity[rho], step_index + 1, rho)?;
+
+        next_coordinates[rho] =
+            state.coordinates[rho] + 0.5 * config.step * (state.velocity[rho] + next_velocity[rho]);
+        validate_generated_coordinate(next_coordinates[rho], step_index + 1, rho)?;
+    }
+
+    Ok(WorldlineState::new(next_coordinates, next_velocity))
+}
+
+fn validate_generated_velocity(value: f64, step: usize, index: usize) -> NonlocalResult<()> {
+    if !value.is_finite()
+    {
+        return Err(NonlocalRelativityError::NonFiniteGeneratedVelocity { step, index, value });
+    }
+
+    Ok(())
+}
+
+fn validate_generated_coordinate(value: f64, step: usize, index: usize) -> NonlocalResult<()> {
+    if !value.is_finite()
+    {
+        return Err(NonlocalRelativityError::NonFiniteGeneratedCoordinate { step, index, value });
+    }
+
+    Ok(())
+}
+
+fn refined_config(config: NonlocalConfig, factor: usize) -> NonlocalResult<NonlocalConfig> {
+    let steps = config.steps.checked_mul(factor).ok_or(
+        NonlocalRelativityError::RefinementStepCountOverflow {
+            base_steps: config.steps,
+            factor,
+        },
+    )?;
+    let step = config.step / factor as f64;
+
+    NonlocalConfig::from_fractional_order(
+        config.fractional_order,
+        config.coupling,
+        step,
+        steps,
+        config.metric_norm_floor,
+    )
+}
+
+fn refinement_endpoint<const D: usize>(
+    trajectory: &NonlocalTrajectory<D>,
+    config: NonlocalConfig,
+) -> NonlocalResult<RefinementEndpoint<D>> {
+    let state = match trajectory.final_state()
+    {
+        Some(state) => *state,
+        None => return Err(NonlocalRelativityError::InvalidStepCount(0)),
+    };
+    let diagnostics = match trajectory.final_diagnostics()
+    {
+        Some(diagnostics) => *diagnostics,
+        None => return Err(NonlocalRelativityError::InvalidStepCount(0)),
+    };
+
+    validate_scalar(
+        "final_affine_parameter",
+        diagnostics.affine_parameter,
+        config.steps,
+    )?;
+    validate_scalar(
+        "metric_norm_drift",
+        diagnostics.metric_norm_drift,
+        config.steps,
+    )?;
+    validate_scalar(
+        "memory_force_l2_norm",
+        diagnostics.memory_force_l2_norm,
+        config.steps,
+    )?;
+
+    Ok(RefinementEndpoint {
+        step: config.step,
+        steps: config.steps,
+        final_affine_parameter: diagnostics.affine_parameter,
+        coordinates: state.coordinates,
+        velocity: state.velocity,
+        metric_norm_drift: diagnostics.metric_norm_drift,
+        memory_force_l2_norm: diagnostics.memory_force_l2_norm,
+    })
+}
+
+fn checked_l2_distance<const D: usize>(
+    left: &[f64; D],
+    right: &[f64; D],
+    quantity: &'static str,
+) -> NonlocalResult<f64> {
+    let mut sum = 0.0;
+
+    for component in 0..D
+    {
+        let difference = left[component] - right[component];
+        validate_scalar(quantity, difference, component)?;
+        sum += difference * difference;
+        validate_scalar(quantity, sum, component)?;
+    }
+
+    let value = sum.sqrt();
+    validate_scalar(quantity, value, D)?;
+    Ok(value)
+}
+
+fn finite_ratio(numerator: f64, denominator: f64) -> Option<f64> {
+    if denominator <= 0.0
+    {
+        return None;
+    }
+
+    let ratio = numerator / denominator;
+
+    if ratio.is_finite() { Some(ratio) } else { None }
 }
 
 fn validate_initial_state<const D: usize>(
@@ -1048,6 +1572,19 @@ fn validate_diagnostics(
                 value,
             });
         }
+    }
+
+    Ok(())
+}
+
+fn validate_scalar(quantity: &'static str, value: f64, step: usize) -> NonlocalResult<()> {
+    if !value.is_finite()
+    {
+        return Err(NonlocalRelativityError::NonFiniteDiagnostic {
+            step,
+            quantity,
+            value,
+        });
     }
 
     Ok(())
