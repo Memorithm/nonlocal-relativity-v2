@@ -99,10 +99,34 @@ is exposed so the projection can be audited numerically.
 - The uniform affine-parameter step is finite and positive.
 - Invalid non-finite numerical values are rejected rather than repaired.
 
+## Numerical Architecture
+
+The implementation separates the numerical responsibilities used by the
+experimental worldline layer:
+
+- `HistoryBackend<D>` stores accepted velocity samples and reports how many
+  retained samples are used by memory evaluation.
+- `HistoryTransport<D>` maps retained samples into the current coordinate
+  frame before memory evaluation. The current production implementation is
+  coordinate identity/no-transport.
+- `MemoryLaw<D>` evaluates the coordinate memory vector from retained,
+  transported samples. The current production law is Caputo L1 coordinate
+  velocity memory.
+- `WorldlineStepper<D>` advances the ordinary first-order state equation once
+  the total acceleration has been evaluated.
+
+Transport is abstracted separately from memory because future research may
+study transported histories or chart-specific comparison maps without changing
+the Caputo L1 stencil or the storage backend. The current identity transport
+does not make the model covariant; it preserves the Phase 1 coordinate-memory
+contract.
+
 ## Numerical Algorithms
 
 The complete-history Caputo L1 evaluation is the numerical memory oracle for
-both fixed-step integrators. For the auditable compatibility implementation:
+both fixed-step integrators. The default compatibility policy uses complete
+uniform history, coordinate identity transport, the Caputo coordinate-memory
+law, and semi-implicit Euler. For the auditable compatibility implementation:
 
 1. Validate configuration, initial coordinates, and initial velocity.
 2. Retain the complete velocity history.
@@ -145,8 +169,19 @@ There is no RNG, no hidden global state, no parallel reduction, and no
 automatic four-velocity renormalization. Metric-norm drift is measured and
 reported instead.
 
-The baseline history cost is `O(D * N^2)` over `N` fixed steps because each
-step recomputes direct Caputo histories for all `D` velocity components.
+The complete-history backend has `O(N)` memory use and `O(D * N^2)` history
+cost over `N` fixed steps because each step recomputes direct Caputo histories
+for all `D` velocity components. It is exact with respect to this discrete
+complete-history contract and remains the oracle used by default.
+
+The bounded short-memory backend retains only the most recent `W >= 2`
+accepted velocity samples. It has `O(W)` memory use and `O(D * N * W)` history
+cost over `N` fixed steps. It is an explicit approximation: it reports
+`Approximate` history diagnostics, retained sample counts, and used sample
+counts; it rejects windows smaller than two samples; and it is never selected
+automatically from an exact configuration. Constant retained histories still
+produce exactly zero Caputo memory because every retained first difference is
+zero.
 
 Semi-implicit Euler is a reference integrator for reproducible experiments, not
 a precision integrator. Heun PECE is usually more accurate on smooth problems,
@@ -207,6 +242,9 @@ disagreement with physical data is not claimed.
   not a covariant field theory.
 - Complete-history direct evaluation has quadratic cost in the number of
   samples.
+- Bounded short memory reduces history cost but deliberately changes the
+  discrete memory model; it is useful only as an approximation to compare
+  against the complete-history oracle.
 - The Euler update is low order and intended for auditability, not accuracy;
   Heun PECE reduces time-discretization error on smooth tests but still uses a
   coordinate memory force.

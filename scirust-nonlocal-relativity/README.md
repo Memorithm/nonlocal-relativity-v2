@@ -37,11 +37,15 @@ The projection is checked through the diagnostic residual
 
 ## Numerical contract
 
-- Complete velocity history is retained.
+- The default backend retains complete velocity history and is the numerical
+  memory oracle.
 - The baseline Caputo evaluation uses `scirust_fractional::caputo_l1_uniform`.
 - The first sample uses a zero memory vector because the Caputo history is
   insufficient.
 - The baseline history cost is `O(D * N^2)` over `N` fixed steps.
+- The explicit bounded short-memory backend retains only the most recent
+  `W >= 2` samples. It is an approximation with `O(D * N * W)` history cost
+  over `N` fixed steps and must be selected explicitly.
 - The compatibility/default update is semi-implicit Euler:
 
 ```text
@@ -64,6 +68,24 @@ x_(n+1)  = x_n + h/2 (u_n + u_(n+1))
 
 The provisional history is used only to evaluate the predicted acceleration;
 accepted histories remain complete deterministic velocity histories.
+
+## Phase 2 architecture
+
+The advanced simulation API separates four responsibilities:
+
+- `HistoryBackend<D>` stores accepted velocity samples and reports retained and
+  used sample counts.
+- `HistoryTransport<D>` maps retained samples into the current coordinate
+  frame before memory evaluation. The production transport is coordinate
+  identity/no-transport.
+- `MemoryLaw<D>` evaluates the memory vector. The production law is the current
+  coordinate Caputo L1 velocity-memory law.
+- `WorldlineStepper<D>` advances the ordinary first-order state equation. The
+  production steppers are semi-implicit Euler and Heun PECE.
+
+Transport is separate from memory because future transported-history studies
+should not change the Caputo stencil or history storage contract. The current
+identity transport preserves the existing coordinate-memory model.
 
 There is no RNG, no parallel reduction, no hidden global state, and no automatic
 four-velocity renormalization. Metric-norm drift is measured and exposed.
