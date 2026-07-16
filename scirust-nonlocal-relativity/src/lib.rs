@@ -47,6 +47,7 @@ mod transport;
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
     cylindrical_to_cartesian_coordinates, cylindrical_to_cartesian_velocity,
+    exact_cylindrical_minkowski_transport,
 };
 pub use modulation::{
     HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
@@ -56,7 +57,7 @@ pub use proper_time::{
     ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
     simulate_nonlocal_worldline_with_mode,
 };
-pub use transport::{DiscreteConnectionTransport, HistoryEntry};
+pub use transport::{DiscreteConnectionTransport, HistoryEntry, transport_vector_along_polyline};
 
 /// Result type used by this experimental crate.
 pub type NonlocalResult<T> = Result<T, NonlocalRelativityError>;
@@ -1088,6 +1089,9 @@ pub enum NonlocalRelativityError {
     /// A discrete-transport segment step is not finite.
     InvalidTransportSegmentStep(f64),
 
+    /// A transport polyline has no waypoints.
+    EmptyTransportPolyline,
+
     /// A Christoffel symbol evaluated during discrete parallel transport is
     /// not finite.
     NonFiniteTransportChristoffel {
@@ -1367,6 +1371,10 @@ impl fmt::Display for NonlocalRelativityError {
             Self::InvalidTransportSegmentStep(step) => write!(
                 formatter,
                 "discrete-transport segment step must be finite; got {step}"
+            ),
+            Self::EmptyTransportPolyline => write!(
+                formatter,
+                "transport polyline must contain at least one waypoint"
             ),
             Self::NonFiniteTransportChristoffel { rho, mu, nu, value } => write!(
                 formatter,
