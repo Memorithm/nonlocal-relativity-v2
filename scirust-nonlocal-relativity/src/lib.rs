@@ -40,12 +40,17 @@ use std::fmt;
 use std::str::FromStr;
 
 mod charts;
+mod modulation;
 mod proper_time;
 mod transport;
 
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
     cylindrical_to_cartesian_coordinates, cylindrical_to_cartesian_velocity,
+};
+pub use modulation::{
+    HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
+    SchwarzschildKretschmannModulator,
 };
 pub use proper_time::{
     ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
@@ -1148,6 +1153,30 @@ pub enum NonlocalRelativityError {
         value: f64,
     },
 
+    /// A history backend could not supply a full [`HistoryEntry`] for a
+    /// retained sample, which a [`HistoryModulator`] requires.
+    HistoryEntryUnavailable {
+        /// Requested retained sample index.
+        retained_index: usize,
+    },
+
+    /// A curvature-modulator mass is non-finite or non-positive.
+    InvalidModulationMass(f64),
+
+    /// A curvature-modulator reference length is non-finite or non-positive.
+    InvalidModulationReferenceLength(f64),
+
+    /// A curvature-modulator phenomenological coefficient is non-finite or
+    /// negative.
+    InvalidModulationBeta(f64),
+
+    /// A curvature-modulator radius is non-finite or not a valid Schwarzschild
+    /// exterior radius.
+    InvalidModulationRadius(f64),
+
+    /// A curvature-modulator weight is non-finite or non-positive.
+    NonFiniteModulationWeight(f64),
+
     /// Generated coordinate component is not finite.
     NonFiniteGeneratedCoordinate {
         /// Step index that produced the invalid state.
@@ -1379,6 +1408,33 @@ impl fmt::Display for NonlocalRelativityError {
             Self::NonFiniteChartVelocity { component, value } => write!(
                 formatter,
                 "chart-transformed velocity at index {component} is not finite; got {value}"
+            ),
+            Self::HistoryEntryUnavailable { retained_index } => write!(
+                formatter,
+                "history backend did not supply a full entry for retained sample \
+                 {retained_index}, required by this memory law"
+            ),
+            Self::InvalidModulationMass(mass) => write!(
+                formatter,
+                "curvature-modulator mass must be finite and strictly positive; got {mass}"
+            ),
+            Self::InvalidModulationReferenceLength(length) => write!(
+                formatter,
+                "curvature-modulator reference length must be finite and strictly positive; \
+                 got {length}"
+            ),
+            Self::InvalidModulationBeta(beta) => write!(
+                formatter,
+                "curvature-modulator beta must be finite and non-negative; got {beta}"
+            ),
+            Self::InvalidModulationRadius(radius) => write!(
+                formatter,
+                "curvature-modulator radius must be finite and exceed the horizon radius; \
+                 got {radius}"
+            ),
+            Self::NonFiniteModulationWeight(weight) => write!(
+                formatter,
+                "curvature-modulator weight must be finite and positive; got {weight}"
             ),
             Self::NonFiniteGeneratedCoordinate { step, index, value } => write!(
                 formatter,
@@ -2184,7 +2240,7 @@ where
     Ok(symbols)
 }
 
-fn caputo_velocity_memory_at_step<const D: usize>(
+pub(crate) fn caputo_velocity_memory_at_step<const D: usize>(
     velocity_history: &[[f64; D]],
     step: f64,
     order: FractionalOrder,

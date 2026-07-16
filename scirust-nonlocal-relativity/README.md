@@ -207,6 +207,42 @@ constant — it is not a discretization artifact, it is the chart-dependence
 itself. This is a controlled numerical demonstration, not a proof of exact
 agreement between charts, and not a claim of covariance.
 
+## Phase 4: curvature-modulated memory (research hook)
+
+Phase 4 adds one more additive, opt-in `MemoryLaw`: a deterministic scalar
+modulation of retained history vectors, applied before the Caputo
+evaluation. It composes with every Phase 2/3 component (either backend,
+either transport, either integrator, either parameterization mode) because
+it only changes what number the Caputo stencil consumes at each retained
+sample.
+
+`HistoryModulator<D>` transforms one finite `HistoryEntry<D>` into a finite,
+dimensionless scalar weight:
+
+- `IdentityHistoryModulator` always returns `1.0`.
+- `SchwarzschildKretschmannModulator` is an explicitly experimental,
+  phenomenological instance: `q = 1 + beta * L^4 * K`, where
+  `K = 48 M^2 / r^6` is the Schwarzschild Kretschmann scalar and `L` is a
+  strictly positive reference length that makes the modulation
+  dimensionless. It requires a strictly positive finite mass, a strictly
+  positive finite reference length, a finite non-negative `beta`, and a
+  finite radius strictly outside the horizon; it rejects a non-finite or
+  non-positive resulting weight. **When `beta == 0.0`, evaluation bypasses
+  the Kretschmann computation entirely and returns exactly `1.0`**, so a
+  modulated pipeline reproduces the unmodulated baseline bit-for-bit
+  whenever the rest of the numerical path is identical.
+
+`ModulatedCaputoCoordinateMemory<M>` is the `MemoryLaw` that applies a
+`HistoryModulator`'s weight to each retained (and, when a geometric
+transport is used, already-transported) velocity sample, componentwise,
+before the Caputo L1 stencil runs. The result is exactly a Caputo derivative
+of a dimensionless *modulated* velocity history — nothing more. It must
+**never** be described as a unique consequence of general relativity, a
+quantum-gravity prediction, an experimentally derived law, or a modification
+of the Einstein field equations. No structure resembling a modified field
+equation, Einstein tensor, or stress-energy tensor is introduced anywhere in
+this crate.
+
 ## Convergence studies
 
 `run_convergence_study` compares the same final affine parameter at `h`,
@@ -223,6 +259,7 @@ equation is correct.
 cargo run -p scirust-nonlocal-relativity --example schwarzschild_memory
 cargo run -p scirust-nonlocal-relativity --example convergence_study
 cargo run -p scirust-nonlocal-relativity --example coordinate_covariance
+cargo run -p scirust-nonlocal-relativity --example curvature_modulated_memory
 ```
 
 The first example compares `kappa = 0` with a small positive coupling for an
@@ -231,3 +268,6 @@ CSV-like rows comparing Euler and Heun PECE on a short Schwarzschild exterior
 experiment. `coordinate_covariance` prints deterministic CSV rows comparing
 raw coordinate memory and `DiscreteConnectionTransport` memory across
 Cartesian and cylindrical Minkowski charts, at three refinement levels.
+`curvature_modulated_memory` prints deterministic CSV rows comparing
+unmodulated and Schwarzschild-Kretschmann-modulated memory, at two
+refinement levels and with both transport strategies.

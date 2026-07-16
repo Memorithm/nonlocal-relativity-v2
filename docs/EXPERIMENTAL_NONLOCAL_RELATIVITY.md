@@ -241,6 +241,58 @@ This comparison has real limits:
 - the comparison is a controlled numerical demonstration on one worldline
   family, not a general covariance proof.
 
+## Curvature-Modulated Memory (Phase 4)
+
+Phase 4 adds one more additive, opt-in `MemoryLaw`: a deterministic scalar
+modulation of retained history vectors, applied componentwise before the
+Caputo evaluation. `HistoryModulator<D>` transforms one finite
+`HistoryEntry<D>` into a finite, dimensionless scalar weight:
+
+- `IdentityHistoryModulator` always returns `1.0`.
+- `SchwarzschildKretschmannModulator` is an explicitly experimental,
+  phenomenological instance:
+
+```text
+K = 48 M^2 / r^6
+q = 1 + beta * L^4 * K
+```
+
+`K` is the Schwarzschild Kretschmann scalar; `L` is a strictly positive
+reference length that makes the modulation dimensionless; `beta` is a
+finite, non-negative phenomenological coefficient, not a new fundamental
+constant. Construction requires a strictly positive finite mass and
+reference length and a finite non-negative `beta`; evaluation requires a
+finite radius strictly outside the horizon and a finite positive resulting
+weight.
+
+**`beta == 0.0` is a full bypass.** Evaluation returns exactly `1.0` without
+computing the Kretschmann scalar at all, so `ModulatedCaputoCoordinateMemory`
+with `beta = 0` reproduces the unmodulated `CaputoCoordinateMemory` pipeline
+bit-for-bit whenever the rest of the numerical path (backend, transport,
+integrator, mode) is identical.
+
+`ModulatedCaputoCoordinateMemory<M>` implements `MemoryLaw` by applying
+`M::weight` to each retained sample's (possibly already-transported)
+velocity, componentwise, immediately before the Caputo L1 stencil runs. The
+resulting quantity is exactly a Caputo derivative of a dimensionless
+*modulated* velocity history. It composes with every other Phase 2/3
+component — either history backend, either transport, either fixed-step
+integrator, either parameterization mode — because it only changes what
+number the Caputo stencil consumes at each retained sample; it does not
+change how that sample was stored or transported.
+
+**This law must never be described as:**
+
+- a unique consequence of general relativity;
+- a quantum-gravity prediction;
+- an experimentally derived law;
+- a modification of the Einstein field equations.
+
+No structure resembling a modified field equation, an Einstein tensor, or a
+stress-energy tensor is introduced anywhere in this crate. This is
+mechanically checked by a dedicated test that scans the crate's own source
+for item declarations using such names.
+
 ## Numerical Algorithms
 
 The complete-history Caputo L1 evaluation is the numerical memory oracle for
@@ -354,7 +406,9 @@ small positive `kappa`, and independent implementations:
   cylindrical computation of the same physical worldline, for raw coordinate
   memory and for `DiscreteConnectionTransport` memory, under refinement;
 - estimated proper-time increments along an affine-parameter trajectory, and
-  metric-norm drift from `-1` under `NormalizedTimelikeProperTime` mode.
+  metric-norm drift from `-1` under `NormalizedTimelikeProperTime` mode;
+- the Schwarzschild-Kretschmann modulation weight and its effect on final
+  radius, for `beta = 0` versus small positive `beta`, under refinement.
 
 These are numerical observables of this discretized model. Agreement or
 disagreement with physical data is not claimed.
@@ -393,6 +447,15 @@ disagreement with physical data is not claimed.
   approaches the tolerance.
 - `CylindricalMinkowski` is regular only for `r > 0`; it is a second chart of
   flat spacetime for comparison purposes, not a new physical background.
+- `SchwarzschildKretschmannModulator` is a deliberately simple, hand-chosen
+  phenomenological weight; `beta` and the reference length `L` are free
+  parameters with no calibration against data, and the modulator is specific
+  to the Schwarzschild exterior chart, not a generic curvature-modulation
+  mechanism for arbitrary backgrounds.
+- Modulation is applied to whatever velocity sample the transport pipeline
+  already produced; it does not change the coordinate-dependence discussed
+  above, and it composes with, but does not replace, the transported-memory
+  discretization error already documented for `DiscreteConnectionTransport`.
 
 ## Roadmap
 
@@ -401,9 +464,10 @@ disagreement with physical data is not claimed.
 The current crate implements a fixed-background, test-particle,
 Caputo-memory modification of the worldline equation, with two interchangeable
 memory pipelines: raw coordinate memory (Phase 1/2, unchanged) and a discrete
-parallel-transported memory (Phase 3), plus an explicit affine-vs-proper-time
-parameterization choice (Phase 3). It exposes deterministic diagnostics and
-explicit failure modes.
+parallel-transported memory (Phase 3), an explicit affine-vs-proper-time
+parameterization choice (Phase 3), and an optional deterministic curvature
+modulation of retained history vectors (Phase 4). It exposes deterministic
+diagnostics and explicit failure modes.
 
 ### 2. Future Covariant Kernel Research
 
@@ -422,4 +486,7 @@ Any future field-equation investigation would require a separate mathematical
 and numerical contract, independent validation, and clear distinction from
 established general relativity. This crate does not implement such work, and
 this roadmap item is not a claim that fractional field equations are
-established physics.
+established physics. Phase 4's `SchwarzschildKretschmannModulator` is not a
+step toward this item: it is a phenomenological scalar reweighting of a
+trajectory-level history force, with no Einstein tensor, stress-energy
+tensor, or field equation anywhere in its construction.
