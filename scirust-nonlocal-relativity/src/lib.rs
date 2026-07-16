@@ -39,6 +39,20 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
+mod charts;
+mod proper_time;
+mod transport;
+
+pub use charts::{
+    CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
+    cylindrical_to_cartesian_coordinates, cylindrical_to_cartesian_velocity,
+};
+pub use proper_time::{
+    ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
+    simulate_nonlocal_worldline_with_mode,
+};
+pub use transport::{DiscreteConnectionTransport, HistoryEntry};
+
 /// Result type used by this experimental crate.
 pub type NonlocalResult<T> = Result<T, NonlocalRelativityError>;
 
@@ -171,6 +185,45 @@ pub trait HistoryBackend<const D: usize>: Clone {
             self.approximation(),
         )
     }
+
+    /// Accept one new [`HistoryEntry`], transporting all currently retained
+    /// vectors across the newly accepted segment before appending the new
+    /// sample.
+    ///
+    /// This is the entry point a [`HistoryTransport`] with real geometric
+    /// behavior relies on: it is called once per accepted segment (including
+    /// once per provisional predictor evaluation), with the source
+    /// coordinates and parameter the original [`HistoryBackend::push_velocity`]
+    /// contract does not carry.
+    ///
+    /// The default implementation performs no geometric transport: it stores
+    /// only `entry.velocity` via [`HistoryBackend::push_velocity`], which
+    /// preserves the original coordinate-memory contract for backends that do
+    /// not override this method.
+    fn push_entry<B, T>(
+        &mut self,
+        background: &B,
+        transport: &T,
+        entry: HistoryEntry<D>,
+    ) -> NonlocalResult<()>
+    where
+        B: Connection<D>,
+        T: HistoryTransport<D>,
+    {
+        let _ = (background, transport);
+        self.push_velocity(entry.velocity)
+    }
+
+    /// Retrieve one retained sample as a full entry, when the backend records
+    /// source coordinates and a parameter value.
+    ///
+    /// The default implementation returns `None`: a backend that does not
+    /// override this method cannot supply the source-point information a
+    /// geometric [`HistoryTransport`] needs, so it must not claim to.
+    fn entry(&self, retained_index: usize) -> Option<HistoryEntry<D>> {
+        let _ = retained_index;
+        None
+    }
 }
 
 /// Complete uniform velocity-history backend.
@@ -179,7 +232,7 @@ pub trait HistoryBackend<const D: usize>: Clone {
 /// numerical memory oracle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompleteUniformHistory<const D: usize> {
-    samples: Vec<[f64; D]>,
+    entries: Vec<HistoryEntry<D>>,
 }
 
 impl<const D: usize> CompleteUniformHistory<D> {
@@ -187,7 +240,7 @@ impl<const D: usize> CompleteUniformHistory<D> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            samples: Vec::new(),
+            entries: Vec::new(),
         }
     }
 
@@ -195,7 +248,7 @@ impl<const D: usize> CompleteUniformHistory<D> {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            samples: Vec::with_capacity(capacity),
+            entries: Vec::with_capacity(capacity),
         }
     }
 }
@@ -208,25 +261,47 @@ impl<const D: usize> Default for CompleteUniformHistory<D> {
 
 impl<const D: usize> HistoryBackend<D> for CompleteUniformHistory<D> {
     fn push_velocity(&mut self, velocity: [f64; D]) -> NonlocalResult<()> {
-        validate_history_velocity(&velocity, self.samples.len())?;
-        self.samples.push(velocity);
+        validate_history_velocity(&velocity, self.entries.len())?;
+        self.entries
+            .push(HistoryEntry::from_velocity_only(velocity));
         Ok(())
     }
 
     fn retained_samples(&self) -> usize {
-        self.samples.len()
+        self.entries.len()
     }
 
     fn used_samples(&self) -> usize {
-        self.samples.len()
+        self.entries.len()
     }
 
     fn sample(&self, retained_index: usize) -> Option<[f64; D]> {
-        self.samples.get(retained_index).copied()
+        self.entries.get(retained_index).map(|entry| entry.velocity)
     }
 
     fn approximation(&self) -> HistoryApproximation {
         HistoryApproximation::Exact
+    }
+
+    fn push_entry<B, T>(
+        &mut self,
+        background: &B,
+        transport: &T,
+        entry: HistoryEntry<D>,
+    ) -> NonlocalResult<()>
+    where
+        B: Connection<D>,
+        T: HistoryTransport<D>,
+    {
+        validate_history_velocity(&entry.coordinates, self.entries.len())?;
+        validate_history_velocity(&entry.velocity, self.entries.len())?;
+        transport::transport_retained_entries(&mut self.entries, background, transport, &entry)?;
+        self.entries.push(entry);
+        Ok(())
+    }
+
+    fn entry(&self, retained_index: usize) -> Option<HistoryEntry<D>> {
+        self.entries.get(retained_index).copied()
     }
 }
 
@@ -237,7 +312,7 @@ impl<const D: usize> HistoryBackend<D> for CompleteUniformHistory<D> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundedShortMemoryHistory<const D: usize> {
     window_samples: usize,
-    samples: Vec<[f64; D]>,
+    entries: Vec<HistoryEntry<D>>,
     total_samples_seen: usize,
 }
 
@@ -255,7 +330,7 @@ impl<const D: usize> BoundedShortMemoryHistory<D> {
 
         Ok(Self {
             window_samples,
-            samples: Vec::with_capacity(window_samples),
+            entries: Vec::with_capacity(window_samples),
             total_samples_seen: 0,
         })
     }
@@ -277,30 +352,59 @@ impl<const D: usize> HistoryBackend<D> for BoundedShortMemoryHistory<D> {
     fn push_velocity(&mut self, velocity: [f64; D]) -> NonlocalResult<()> {
         validate_history_velocity(&velocity, self.total_samples_seen)?;
 
-        if self.samples.len() == self.window_samples
+        if self.entries.len() == self.window_samples
         {
-            self.samples.remove(0);
+            self.entries.remove(0);
         }
 
-        self.samples.push(velocity);
+        self.entries
+            .push(HistoryEntry::from_velocity_only(velocity));
         self.total_samples_seen += 1;
         Ok(())
     }
 
     fn retained_samples(&self) -> usize {
-        self.samples.len()
+        self.entries.len()
     }
 
     fn used_samples(&self) -> usize {
-        self.samples.len()
+        self.entries.len()
     }
 
     fn sample(&self, retained_index: usize) -> Option<[f64; D]> {
-        self.samples.get(retained_index).copied()
+        self.entries.get(retained_index).map(|entry| entry.velocity)
     }
 
     fn approximation(&self) -> HistoryApproximation {
         HistoryApproximation::Approximate
+    }
+
+    fn push_entry<B, T>(
+        &mut self,
+        background: &B,
+        transport: &T,
+        entry: HistoryEntry<D>,
+    ) -> NonlocalResult<()>
+    where
+        B: Connection<D>,
+        T: HistoryTransport<D>,
+    {
+        validate_history_velocity(&entry.coordinates, self.total_samples_seen)?;
+        validate_history_velocity(&entry.velocity, self.total_samples_seen)?;
+
+        if self.entries.len() == self.window_samples
+        {
+            self.entries.remove(0);
+        }
+
+        transport::transport_retained_entries(&mut self.entries, background, transport, &entry)?;
+        self.entries.push(entry);
+        self.total_samples_seen += 1;
+        Ok(())
+    }
+
+    fn entry(&self, retained_index: usize) -> Option<HistoryEntry<D>> {
+        self.entries.get(retained_index).copied()
     }
 }
 
@@ -318,6 +422,44 @@ pub trait HistoryTransport<const D: usize>: Clone {
         velocity: [f64; D],
         current_state: &WorldlineState<D>,
     ) -> NonlocalResult<[f64; D]>;
+
+    /// Transport one already-retained vector across one newly accepted
+    /// segment, from `from_state` to `to_state`, under the fixed background
+    /// connection `background`.
+    ///
+    /// [`HistoryBackend::push_entry`] calls this once per accepted segment,
+    /// for every vector currently retained by the backend, before appending
+    /// the newly accepted sample. It is a single discrete transport step
+    /// between two consecutive accepted (or provisional) worldline states; it
+    /// does not re-derive transport from a sample's original recorded source
+    /// point, which is why repeated calls across accepted segments accumulate
+    /// path-dependent transport along the worldline instead of jumping
+    /// directly between distant points.
+    ///
+    /// The default implementation performs no geometric transport: it returns
+    /// `vector` unchanged, exactly like the coordinate-memory contract used by
+    /// [`transport_velocity`](HistoryTransport::transport_velocity).
+    fn transport_segment<B>(
+        &self,
+        retained_index: usize,
+        background: &B,
+        vector: [f64; D],
+        from_state: &WorldlineState<D>,
+        to_state: &WorldlineState<D>,
+        segment_step: f64,
+    ) -> NonlocalResult<[f64; D]>
+    where
+        B: Connection<D>,
+    {
+        let _ = (
+            retained_index,
+            background,
+            from_state,
+            to_state,
+            segment_step,
+        );
+        Ok(vector)
+    }
 }
 
 /// Coordinate identity transport for retained velocity history.
@@ -475,8 +617,17 @@ impl<const D: usize> WorldlineStepper<D> for HeunPeceStepper {
         }
 
         let predicted_state = WorldlineState::new(predicted_coordinates, predicted_velocity);
+        let predicted_parameter = (context.step_index + 1) as f64 * context.config.step;
         let mut provisional_history = context.history.clone();
-        provisional_history.push_velocity(predicted_velocity)?;
+        provisional_history.push_entry(
+            context.background,
+            context.transport,
+            HistoryEntry::new(
+                predicted_coordinates,
+                predicted_velocity,
+                predicted_parameter,
+            ),
+        )?;
         let predicted_evaluation = evaluate_step_with_policy(StepEvaluationInput {
             background: context.background,
             state: &predicted_state,
@@ -929,6 +1080,74 @@ pub enum NonlocalRelativityError {
         retained_samples: usize,
     },
 
+    /// A discrete-transport segment step is not finite.
+    InvalidTransportSegmentStep(f64),
+
+    /// A Christoffel symbol evaluated during discrete parallel transport is
+    /// not finite.
+    NonFiniteTransportChristoffel {
+        /// Contravariant index.
+        rho: usize,
+        /// First lower index.
+        mu: usize,
+        /// Second lower index.
+        nu: usize,
+        /// Invalid symbol value.
+        value: f64,
+    },
+
+    /// A transported history-vector component is not finite.
+    NonFiniteTransportedVector {
+        /// Retained sample index being transported.
+        retained_index: usize,
+        /// Vector component index.
+        component: usize,
+        /// Invalid component value.
+        value: f64,
+    },
+
+    /// Proper-time-mode tolerance is non-finite or non-positive.
+    InvalidProperTimeTolerance(f64),
+
+    /// A sampled step's metric norm is not within the configured proper-time
+    /// tolerance of `-1`.
+    ProperTimeNormDrift {
+        /// Sample step index (`0` is the initial sample).
+        step: usize,
+        /// Observed metric norm `g_(mu nu) u^mu u^nu`.
+        metric_norm: f64,
+        /// Configured positive tolerance for `|g(u,u) - (-1)|`.
+        tolerance: f64,
+    },
+
+    /// A state's metric norm is not negative, so it cannot be used to
+    /// estimate a proper-time increment.
+    NonTimelikeMetricNorm {
+        /// Observed metric norm `g_(mu nu) u^mu u^nu`.
+        metric_norm: f64,
+    },
+
+    /// A cylindrical-chart radial coordinate is not finite or not strictly
+    /// positive.
+    InvalidCylindricalRadius(f64),
+
+    /// A coordinate-chart transform produced a non-finite coordinate
+    /// component.
+    NonFiniteChartCoordinate {
+        /// Coordinate component index.
+        component: usize,
+        /// Invalid component value.
+        value: f64,
+    },
+
+    /// A coordinate-chart transform produced a non-finite velocity component.
+    NonFiniteChartVelocity {
+        /// Velocity component index.
+        component: usize,
+        /// Invalid component value.
+        value: f64,
+    },
+
     /// Generated coordinate component is not finite.
     NonFiniteGeneratedCoordinate {
         /// Step index that produced the invalid state.
@@ -1115,6 +1334,51 @@ impl fmt::Display for NonlocalRelativityError {
                 formatter,
                 "history backend reported {retained_samples} retained samples but sample \
                  {requested_sample} was unavailable"
+            ),
+            Self::InvalidTransportSegmentStep(step) => write!(
+                formatter,
+                "discrete-transport segment step must be finite; got {step}"
+            ),
+            Self::NonFiniteTransportChristoffel { rho, mu, nu, value } => write!(
+                formatter,
+                "transport Christoffel symbol Gamma^{rho}_({mu} {nu}) is not finite; got {value}"
+            ),
+            Self::NonFiniteTransportedVector {
+                retained_index,
+                component,
+                value,
+            } => write!(
+                formatter,
+                "transported vector component {component} for retained sample \
+                 {retained_index} is not finite; got {value}"
+            ),
+            Self::InvalidProperTimeTolerance(tolerance) => write!(
+                formatter,
+                "proper-time tolerance must be finite and positive; got {tolerance}"
+            ),
+            Self::ProperTimeNormDrift {
+                step,
+                metric_norm,
+                tolerance,
+            } => write!(
+                formatter,
+                "metric norm at step {step} is not within tolerance {tolerance} of -1; got {metric_norm}"
+            ),
+            Self::NonTimelikeMetricNorm { metric_norm } => write!(
+                formatter,
+                "metric norm must be negative (timelike) to estimate proper time; got {metric_norm}"
+            ),
+            Self::InvalidCylindricalRadius(radius) => write!(
+                formatter,
+                "cylindrical radial coordinate must be finite and strictly positive; got {radius}"
+            ),
+            Self::NonFiniteChartCoordinate { component, value } => write!(
+                formatter,
+                "chart-transformed coordinate at index {component} is not finite; got {value}"
+            ),
+            Self::NonFiniteChartVelocity { component, value } => write!(
+                formatter,
+                "chart-transformed velocity at index {component} is not finite; got {value}"
             ),
             Self::NonFiniteGeneratedCoordinate { step, index, value } => write!(
                 formatter,
@@ -1524,7 +1788,11 @@ where
     let mut history_diagnostics = Vec::with_capacity(config.steps + 1);
 
     states.push(initial_state);
-    history_backend.push_velocity(initial_state.velocity)?;
+    history_backend.push_entry(
+        background,
+        &history_transport,
+        HistoryEntry::new(initial_state.coordinates, initial_state.velocity, 0.0),
+    )?;
 
     let initial_metric = validated_metric(background, &initial_state.coordinates, 0)?;
     let initial_metric_norm = validated_metric_norm(
@@ -1565,7 +1833,12 @@ where
             config,
         })?;
         states.push(next_state);
-        history_backend.push_velocity(next_state.velocity)?;
+        let next_parameter = (step_index + 1) as f64 * config.step;
+        history_backend.push_entry(
+            background,
+            &history_transport,
+            HistoryEntry::new(next_state.coordinates, next_state.velocity, next_parameter),
+        )?;
     }
 
     let final_step = config.steps;
@@ -1802,7 +2075,7 @@ fn finite_ratio(numerator: f64, denominator: f64) -> Option<f64> {
     if ratio.is_finite() { Some(ratio) } else { None }
 }
 
-fn validate_initial_state<const D: usize>(
+pub(crate) fn validate_initial_state<const D: usize>(
     state: &WorldlineState<D>,
 ) -> Result<(), NonlocalRelativityError> {
     for (index, value) in state.coordinates.iter().copied().enumerate()
@@ -1824,7 +2097,7 @@ fn validate_initial_state<const D: usize>(
     Ok(())
 }
 
-fn validated_metric<B, const D: usize>(
+pub(crate) fn validated_metric<B, const D: usize>(
     background: &B,
     coordinates: &[f64; D],
     step: usize,
@@ -2023,7 +2296,7 @@ where
     caputo_velocity_memory_at_step(&transported_history, step, order, step_index)
 }
 
-fn validate_history_velocity<const D: usize>(
+pub(crate) fn validate_history_velocity<const D: usize>(
     velocity: &[f64; D],
     sample: usize,
 ) -> NonlocalResult<()> {
