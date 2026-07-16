@@ -241,6 +241,44 @@ This comparison has real limits:
 - the comparison is a controlled numerical demonstration on one worldline
   family, not a general covariance proof.
 
+## Exact Flat-Spacetime Transport (Validation Oracle)
+
+`DiscreteConnectionTransport`'s accumulated error can be validated against a
+known-exact answer in one specific case: flat spacetime, in the
+Cartesian/cylindrical chart pair already established above. Parallel
+transport on a flat (curvature-free) manifold is path-independent —
+transporting along two different paths between the same two points differs
+only by transport around the closed loop formed by one path followed by the
+reverse of the other, and a flat connection has trivial holonomy around every
+contractible loop. `exact_cylindrical_minkowski_transport` uses this
+directly, with no discretization:
+
+1. convert the vector to the Cartesian chart at the source point;
+2. leave it unchanged (the Cartesian connection vanishes identically, so
+   transport along *any* path does nothing to the Cartesian components);
+3. convert back to the cylindrical chart at the destination point.
+
+This is exact **only** for this flat-spacetime chart pair, along paths that
+stay within a simply connected region of the chart (in particular, paths
+that do not wind around `r = 0`). It is not a general bitensor propagator; it
+does not extend to `Schwarzschild` or any other curved background, where
+`DiscreteConnectionTransport` remains a discrete approximation with no
+closed-form exact counterpart in this crate.
+
+`transport_vector_along_polyline` exposes the same per-segment mechanism
+`HistoryBackend::push_entry` uses internally, applied directly to an explicit
+waypoint list, independent of the full simulation/backend machinery.
+`examples/exact_transport_convergence.rs` transports a fixed test vector
+along a straight-line Cartesian path (converted to cylindrical waypoints) at
+increasing waypoint density and compares the numerical result to the exact
+oracle. With the shipped parameters, the error shrinks by a factor of
+essentially `4` each time the waypoint count doubles — second-order
+convergence, consistent with the Heun predictor-corrector scheme's local
+truncation order — from `~3.5e-5` at 4 waypoints to `~3.5e-8` at 128. This is
+a direct validation of `DiscreteConnectionTransport`'s numerical correctness
+against a known-exact answer, strictly stronger than comparing two
+discretizations to each other.
+
 ## Curvature-Modulated Memory (Phase 4)
 
 Phase 4 adds one more additive, opt-in `MemoryLaw`: a deterministic scalar
@@ -456,6 +494,11 @@ disagreement with physical data is not claimed.
   already produced; it does not change the coordinate-dependence discussed
   above, and it composes with, but does not replace, the transported-memory
   discretization error already documented for `DiscreteConnectionTransport`.
+- `exact_cylindrical_minkowski_transport` is exact only for flat spacetime in
+  the Cartesian/cylindrical chart pair, and only along paths that stay within
+  a simply connected region of the chart (paths winding around `r = 0` are
+  out of scope). It provides no exact reference for `Schwarzschild` or any
+  curved background.
 
 ## Roadmap
 
@@ -473,12 +516,18 @@ diagnostics and explicit failure modes.
 
 Phase 3's `DiscreteConnectionTransport` is an initial, explicitly discrete and
 approximate step toward transported history — a segment-by-segment numerical
-scheme, not an analytic construction. Future research may still study kernels
-defined with exact bitensors, analytic parallel propagators, proper-time
-history sampled at its own adaptive resolution, or other covariant
-constructions. These remain research directions only and are not established
-physics in this crate; `DiscreteConnectionTransport` does not preempt or
-substitute for them, and it is not presented as covariant.
+scheme, not an analytic construction. `exact_cylindrical_minkowski_transport`
+adds one exact closed-form case, for flat spacetime only, exploiting
+path-independence of transport under a curvature-free connection; it is a
+validation oracle for the discrete scheme in that one case, not a general
+bitensor propagator. Future research may still study exact or analytic
+propagators for **curved** backgrounds (where no closed-form shortcut like
+flatness's path-independence is available), proper-time history sampled at
+its own adaptive resolution, or other covariant constructions. These remain
+research directions only and are not established physics in this crate;
+neither `DiscreteConnectionTransport` nor `exact_cylindrical_minkowski_transport`
+preempts or substitutes for them, and neither is presented as a general
+covariance proof.
 
 ### 3. Hypothetical Field-Equation Work
 

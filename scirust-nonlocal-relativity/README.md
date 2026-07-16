@@ -207,6 +207,34 @@ constant — it is not a discretization artifact, it is the chart-dependence
 itself. This is a controlled numerical demonstration, not a proof of exact
 agreement between charts, and not a claim of covariance.
 
+### Exact flat-spacetime transport (validation oracle)
+
+Parallel transport on a flat (curvature-free) manifold is path-independent:
+transporting along two different paths between the same two points differs
+only by transport around the closed loop formed by one path followed by the
+reverse of the other, and a flat connection has trivial holonomy around every
+contractible loop. `exact_cylindrical_minkowski_transport` uses this directly,
+with **no discretization**: it converts the vector to the Cartesian chart
+(where its components are unchanged by transport along any path, since the
+Cartesian connection vanishes identically), then converts back to the
+cylindrical chart at the destination. This is exact only for this specific
+flat-spacetime chart pair, along paths that stay within a simply connected
+region (in particular, that do not wind around `r = 0`); it is not a general
+bitensor propagator, and it does **not** extend to `Schwarzschild` or any
+other curved background.
+
+`transport_vector_along_polyline` exposes `DiscreteConnectionTransport`'s
+per-segment mechanism directly over an explicit waypoint list, independent of
+the full simulation/backend machinery. `examples/exact_transport_convergence.rs`
+transports a fixed test vector along the same straight-line path at
+increasing waypoint density and compares the numerical result against the
+exact oracle: with the shipped parameters, the error shrinks by a factor of
+essentially 4 each time the waypoint count doubles (second-order convergence,
+consistent with the underlying Heun predictor-corrector scheme), reaching
+`~3.5e-8` at 128 waypoints from `~3.5e-5` at 4. This directly validates
+`DiscreteConnectionTransport`'s correctness against a known-exact answer,
+rather than only against another discretization.
+
 ## Phase 4: curvature-modulated memory (research hook)
 
 Phase 4 adds one more additive, opt-in `MemoryLaw`: a deterministic scalar
@@ -260,6 +288,7 @@ cargo run -p scirust-nonlocal-relativity --example schwarzschild_memory
 cargo run -p scirust-nonlocal-relativity --example convergence_study
 cargo run -p scirust-nonlocal-relativity --example coordinate_covariance
 cargo run -p scirust-nonlocal-relativity --example curvature_modulated_memory
+cargo run -p scirust-nonlocal-relativity --example exact_transport_convergence
 ```
 
 The first example compares `kappa = 0` with a small positive coupling for an
@@ -270,4 +299,7 @@ raw coordinate memory and `DiscreteConnectionTransport` memory across
 Cartesian and cylindrical Minkowski charts, at three refinement levels.
 `curvature_modulated_memory` prints deterministic CSV rows comparing
 unmodulated and Schwarzschild-Kretschmann-modulated memory, at two
-refinement levels and with both transport strategies.
+refinement levels and with both transport strategies. `exact_transport_convergence`
+prints deterministic CSV rows showing `DiscreteConnectionTransport`'s
+numerical error against the exact flat-spacetime transport oracle shrinking
+under path refinement.

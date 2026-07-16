@@ -50,6 +50,21 @@ not a covariant field theory; and no empirical validation is claimed.**
   each retained sample before the Caputo evaluation.
 - `examples/curvature_modulated_memory.rs`.
 
+### Follow-up: exact flat-spacetime transport oracle (this work)
+
+- `exact_cylindrical_minkowski_transport`: a closed-form (non-discretized)
+  parallel transport for flat spacetime in the Cartesian/cylindrical chart
+  pair, exploiting the path-independence of transport under a curvature-free
+  connection.
+- `transport_vector_along_polyline`: exposes `DiscreteConnectionTransport`'s
+  per-segment mechanism directly over an explicit waypoint list, independent
+  of the full simulation/backend machinery.
+- `examples/exact_transport_convergence.rs`: demonstrates
+  `DiscreteConnectionTransport`'s numerical error converging to the exact
+  oracle under path refinement (second-order, `~3.5e-5` to `~3.5e-8` from 4
+  to 128 waypoints with the shipped parameters) — a direct validation against
+  a known-exact answer, not just against another discretization.
+
 ## Validations Performed
 
 - `cargo fmt --all -- --check` clean.
@@ -68,6 +83,10 @@ not a covariant field theory; and no empirical validation is claimed.**
   declarations (`struct`/`enum`/`trait`/`fn`) whose name suggests a modified
   field equation, Einstein tensor, or stress-energy structure, and fails if
   one is found.
+- `DiscreteConnectionTransport` validated directly against the exact
+  flat-spacetime oracle under refinement, in addition to the cross-chart
+  disagreement comparison: 7 dedicated tests plus a CSV-producing example,
+  confirming second-order convergence to a known-exact answer.
 
 ## Complexities (as actually implemented)
 
@@ -93,6 +112,10 @@ not a covariant field theory; and no empirical validation is claimed.**
   appropriate to each background).
 - `SchwarzschildKretschmannModulator` assumes evaluation points are in the
   Schwarzschild exterior (`r` strictly greater than the horizon radius).
+- `exact_cylindrical_minkowski_transport` assumes flat spacetime and a path
+  staying within a simply connected region of the chart (not winding around
+  `r = 0`); path-independence of transport does not hold once curvature is
+  non-zero.
 
 ## Limitations
 
@@ -101,7 +124,10 @@ not a covariant field theory; and no empirical validation is claimed.**
   shrinking under refinement) but do not eliminate it.
 - `DiscreteConnectionTransport` is a discrete, segment-by-segment
   approximation, not an exact bitensor propagator, and its cost is
-  asymptotically worse than the coordinate-memory baseline.
+  asymptotically worse than the coordinate-memory baseline. It now has a
+  known-exact reference for validation in the flat-spacetime case only;
+  curved backgrounds (`Schwarzschild`) still have no exact reference in this
+  crate.
 - `NormalizedTimelikeProperTime` validates but does not adapt the step; drift
   beyond tolerance is a hard error, not a corrected trajectory.
 - `SchwarzschildKretschmannModulator`'s `beta` and reference length are free,
@@ -112,8 +138,11 @@ not a covariant field theory; and no empirical validation is claimed.**
 
 ## Future Work (not implemented here)
 
-- Exact analytic bitensor parallel propagators, as a replacement for the
-  discrete segment-by-segment transport.
+- Exact analytic bitensor parallel propagators for **curved** backgrounds, as
+  a replacement for the discrete segment-by-segment transport. (The flat-
+  spacetime case now has an exact closed-form reference,
+  `exact_cylindrical_minkowski_transport`; this does not extend to curved
+  backgrounds, where flatness's path-independence argument does not apply.)
 - Proper-time history sampled at its own adaptive resolution.
 - Curvature modulators for backgrounds other than Schwarzschild, or built
   from invariants other than the Kretschmann scalar.
@@ -139,3 +168,6 @@ exact bitensor propagator or a proof of covariance.
 `SchwarzschildKretschmannModulator` is a phenomenological scalar reweighting,
 not a consequence of general relativity, a quantum-gravity prediction, or an
 experimentally derived law.
+`exact_cylindrical_minkowski_transport` is exact only for flat spacetime; it
+is not a general bitensor propagator and must never be described as valid
+for curved backgrounds.
