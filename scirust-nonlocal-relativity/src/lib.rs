@@ -55,7 +55,7 @@ pub use modulation::{
 };
 pub use proper_time::{
     ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
-    simulate_nonlocal_worldline_with_mode,
+    proper_time_caputo_velocity_memory, simulate_nonlocal_worldline_with_mode,
 };
 pub use transport::{DiscreteConnectionTransport, HistoryEntry, transport_vector_along_polyline};
 

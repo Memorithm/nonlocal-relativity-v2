@@ -183,6 +183,23 @@ a resampling of the trajectory onto a uniform proper-time grid: the returned
 increments are generally non-uniform and **must never** be passed to
 `scirust_fractional::caputo_l1_uniform`, which requires uniform spacing.
 
+**Proper-time-based Caputo memory (non-uniform grid).** `proper_time_caputo_velocity_memory`
+evaluates the Caputo velocity-memory vector of an already-computed
+affine-parameter trajectory with respect to its own estimated, generally
+non-uniform proper-time axis, using the new
+`scirust_fractional::caputo_l1_nonuniform` operator — the general L1 scheme
+without the uniform-grid assumption, validated independently in
+`scirust-fractional` (exactness for linear functions on a non-uniform grid,
+and numerical agreement with `caputo_l1_uniform` on a uniform one). This is
+a pure post-hoc diagnostic: it does not feed back into the live integration
+loop and is unrelated to `NormalizedTimelikeProperTime` mode, which advances
+the state equation with a uniform proper-time step by construction. Because
+the memory-force law is built to keep `g(u,u)` close to constant along an
+accepted trajectory, the proper-time and affine-based memory values differ
+mainly by a predictable rescaling (Caputo derivatives scale by `c^(-alpha)`
+under a linear reparametrization at constant rate `c`), not by a large
+physical effect — see `examples/proper_time_memory_comparison.rs`.
+
 ### Coordinate-chart comparison
 
 The Caputo velocity memory is evaluated componentwise in whatever chart the
@@ -289,6 +306,7 @@ cargo run -p scirust-nonlocal-relativity --example convergence_study
 cargo run -p scirust-nonlocal-relativity --example coordinate_covariance
 cargo run -p scirust-nonlocal-relativity --example curvature_modulated_memory
 cargo run -p scirust-nonlocal-relativity --example exact_transport_convergence
+cargo run -p scirust-nonlocal-relativity --example proper_time_memory_comparison
 ```
 
 The first example compares `kappa = 0` with a small positive coupling for an
@@ -302,4 +320,6 @@ unmodulated and Schwarzschild-Kretschmann-modulated memory, at two
 refinement levels and with both transport strategies. `exact_transport_convergence`
 prints deterministic CSV rows showing `DiscreteConnectionTransport`'s
 numerical error against the exact flat-spacetime transport oracle shrinking
-under path refinement.
+under path refinement. `proper_time_memory_comparison` prints deterministic
+CSV rows comparing affine-parameter and proper-time-based Caputo memory on
+the same Schwarzschild exterior trajectory, at three refinement levels.

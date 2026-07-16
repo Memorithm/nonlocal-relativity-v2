@@ -213,6 +213,41 @@ non-uniform, and they must never be passed to
 `scirust_fractional::caputo_l1_uniform`, which requires uniform sample
 spacing.
 
+## Proper-Time-Based Caputo Memory (Non-Uniform Grid, Follow-Up)
+
+`scirust_fractional::caputo_l1_nonuniform` generalizes the L1 scheme to an
+explicitly non-uniform temporal grid: on each subinterval `[t_k, t_(k+1)]`
+the derivative is approximated by the finite difference
+`(f_(k+1) - f_k) / (t_(k+1) - t_k)`, and the Caputo weight kernel is
+integrated exactly over that subinterval using the *actual* sample times
+rather than an assumed uniform step. It is validated independently
+(exactness for linear functions on a non-uniform grid, and numerical
+agreement with `caputo_l1_uniform` on a uniform one) and does not change
+`caputo_l1_uniform` at all.
+
+`proper_time_caputo_velocity_memory` uses this operator to evaluate the
+Caputo velocity-memory vector of an already-computed affine-parameter
+trajectory with respect to its own estimated proper-time axis (built from
+`affine_trajectory_proper_time`'s cumulative estimates), resolving the gap
+that function's own documentation flagged: "must never be passed to
+`caputo_l1_uniform`". This is a **pure post-hoc diagnostic** over an
+already-computed trajectory — it does not feed back into the live
+integration loop, does not change any accepted state, and is unrelated to
+`NormalizedTimelikeProperTime` mode (which advances the state equation with
+a *uniform* proper-time step by construction, and never needs this
+operator).
+
+Because the memory-force law is built to be orthogonal to the four-velocity,
+`g(u,u)` stays close to constant along an accepted trajectory (up to a small,
+refinement-shrinking numerical drift), so proper time advances at an
+approximately constant rate `c = sqrt(-g(u,u))` relative to the affine
+parameter. A Caputo derivative computed against a linearly rescaled
+parameter differs from the original by a factor of `c^(-alpha)` — a fact
+about the Caputo operator's own scaling behavior, not a discretization
+artifact — so the difference between proper-time-based and affine-based
+memory is expected to stay roughly constant under refinement, not shrink to
+zero. `examples/proper_time_memory_comparison.rs` shows exactly this.
+
 ## Coordinate-Chart Comparison (Phase 3)
 
 `CylindricalMinkowski` is the same flat spacetime as `Minkowski`, expressed
@@ -446,7 +481,10 @@ small positive `kappa`, and independent implementations:
 - estimated proper-time increments along an affine-parameter trajectory, and
   metric-norm drift from `-1` under `NormalizedTimelikeProperTime` mode;
 - the Schwarzschild-Kretschmann modulation weight and its effect on final
-  radius, for `beta = 0` versus small positive `beta`, under refinement.
+  radius, for `beta = 0` versus small positive `beta`, under refinement;
+- the L2 norm difference between affine-parameter-based and
+  proper-time-based Caputo velocity memory on the same trajectory, under
+  refinement.
 
 These are numerical observables of this discretized model. Agreement or
 disagreement with physical data is not claimed.
@@ -499,6 +537,11 @@ disagreement with physical data is not claimed.
   a simply connected region of the chart (paths winding around `r = 0` are
   out of scope). It provides no exact reference for `Schwarzschild` or any
   curved background.
+- `proper_time_caputo_velocity_memory` is a post-hoc diagnostic over an
+  already-computed trajectory; it does not make the live integration loop
+  adaptive, and its non-uniform proper-time axis is itself only a
+  first-order-accurate estimate from `affine_trajectory_proper_time`, not an
+  independently resolved proper-time integration.
 
 ## Roadmap
 
@@ -522,12 +565,19 @@ path-independence of transport under a curvature-free connection; it is a
 validation oracle for the discrete scheme in that one case, not a general
 bitensor propagator. Future research may still study exact or analytic
 propagators for **curved** backgrounds (where no closed-form shortcut like
-flatness's path-independence is available), proper-time history sampled at
-its own adaptive resolution, or other covariant constructions. These remain
-research directions only and are not established physics in this crate;
-neither `DiscreteConnectionTransport` nor `exact_cylindrical_minkowski_transport`
-preempts or substitutes for them, and neither is presented as a general
-covariance proof.
+flatness's path-independence is available), or other covariant
+constructions. These remain research directions only and are not
+established physics in this crate; neither `DiscreteConnectionTransport` nor
+`exact_cylindrical_minkowski_transport` preempts or substitutes for them, and
+neither is presented as a general covariance proof.
+
+`scirust_fractional::caputo_l1_nonuniform` and
+`proper_time_caputo_velocity_memory` partially resolve the "proper-time
+history sampled at its own resolution" item: the Caputo evaluator itself no
+longer requires a uniform grid, and a genuinely non-uniform proper-time axis
+can be used post hoc. What remains open is *adaptive* resolution — letting
+the live integration loop itself choose a non-uniform step, rather than
+resampling a uniformly-stepped trajectory after the fact.
 
 ### 3. Hypothetical Field-Equation Work
 
