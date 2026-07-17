@@ -82,6 +82,46 @@ not a covariant field theory; and no empirical validation is claimed.**
   proper-time-based memory on a Schwarzschild trajectory across refinement
   levels.
 
+### Follow-up: curved-background exact transport, adaptive stepping, and a second modulator (this work)
+
+- `exact_schwarzschild_circular_orbit_transport`,
+  `schwarzschild_circular_orbit_four_velocity`,
+  `schwarzschild_circular_orbit_angular_velocity`: an exact, closed-form
+  parallel transport along a circular equatorial geodesic orbit in a
+  **curved** (Schwarzschild) background, via the matrix exponential of the
+  constant transport generator that this special path family produces (a
+  different mechanism than flat spacetime's path-independence). Validated
+  against `DiscreteConnectionTransport` under refinement (second order,
+  matching the flat-spacetime oracle's pattern) and against two exact,
+  refinement-independent conservation laws of parallel transport under any
+  metric-compatible connection (`g(V,V)` and `g(V,u)` constant).
+- `AdaptiveNonlocalConfig`, `simulate_nonlocal_worldline_adaptive`: an
+  integration loop that chooses its own non-uniform affine-parameter step,
+  using the classical embedded Heun-Euler pair for error control (no extra
+  acceleration evaluation beyond one ordinary Heun step) and
+  `caputo_l1_nonuniform` for the memory force against the resulting
+  non-uniform history. Coordinate memory only (no `HistoryTransport` or
+  `HistoryModulator` composability yet). Cross-validated against a very fine
+  fixed-step `HeunPeceStepper` run on the same trajectory (agreement to
+  `1.0e-4` in the shipped example/test parameters); demonstrated reaching a
+  comparable or better accuracy than an 800-step fixed run with as few as 23
+  accepted steps at a loose tolerance in `examples/adaptive_worldline.rs`.
+- `ReissnerNordstrom` (in `scirust-relativity`): a second fixed background
+  (static, charged, spherically symmetric), with exact analytic Christoffel
+  symbols (the same general `f(r)`-metric formula Schwarzschild already
+  uses, with `f(r) = 1 - 2M/r + Q^2/r^2`), validated against
+  `numerical_christoffel` and against exact agreement with `Schwarzschild`
+  at `charge = 0`.
+- `ReissnerNordstromFieldModulator`: a curvature-adjacent modulator built
+  from the electromagnetic field invariant `F_(mu nu) F^(mu nu) = 2 Q^2 /
+  r^4` of the Reissner-Nordström background's radial Coulomb field — not a
+  curvature invariant, and not the Kretschmann scalar
+  `SchwarzschildKretschmannModulator` uses. Same `beta = 0` bit-identical
+  bypass pattern.
+- `examples/schwarzschild_orbit_transport.rs`,
+  `examples/adaptive_worldline.rs`,
+  `examples/reissner_nordstrom_field_modulation.rs`.
+
 ## Validations Performed
 
 - `cargo fmt --all -- --check` clean.
@@ -91,8 +131,11 @@ not a covariant field theory; and no empirical validation is claimed.**
 - `cargo clippy --locked -p scirust-fractional -p scirust-relativity -p scirust-nonlocal-relativity --all-targets -- -D warnings`
   clean.
 - All crate examples (`schwarzschild_memory`, `convergence_study`,
-  `coordinate_covariance`, `curvature_modulated_memory`) run to completion
-  and produce deterministic CSV output.
+  `coordinate_covariance`, `curvature_modulated_memory`,
+  `exact_transport_convergence`, `proper_time_memory_comparison`,
+  `schwarzschild_orbit_transport`, `adaptive_worldline`,
+  `reissner_nordstrom_field_modulation`) run to completion and produce
+  deterministic CSV output.
 - Bit-for-bit regression: every Phase 1/2 test file is unmodified and passes
   unchanged; Phase 3/4 additions include explicit bit-identity tests for the
   compatibility paths (`beta = 0`, identity transport, affine mode).
@@ -104,6 +147,18 @@ not a covariant field theory; and no empirical validation is claimed.**
   flat-spacetime oracle under refinement, in addition to the cross-chart
   disagreement comparison: 7 dedicated tests plus a CSV-producing example,
   confirming second-order convergence to a known-exact answer.
+- `DiscreteConnectionTransport` validated the same way against the
+  circular-equatorial-orbit exact oracle in the **curved** Schwarzschild
+  background (11 dedicated tests plus a CSV-producing example), including
+  two exact conservation-law checks independent of the discrete method.
+- `ReissnerNordstrom`'s exact analytic Christoffel symbols cross-checked
+  against `numerical_christoffel` (central finite differences) and against
+  bit-for-bit/machine-precision agreement with `Schwarzschild` at zero
+  charge (10 dedicated tests).
+- `simulate_nonlocal_worldline_adaptive` cross-validated against a very fine
+  independent fixed-step `HeunPeceStepper` run on the same trajectory, in
+  addition to bit-for-bit determinism, non-uniform-step, target-reaching,
+  and typed-error-on-budget-exhaustion tests (8 dedicated tests).
 
 ## Complexities (as actually implemented)
 
@@ -115,6 +170,9 @@ not a covariant field theory; and no empirical validation is claimed.**
 | Curvature modulation (`ModulatedCaputoCoordinateMemory`) | Adds `O(1)` work per retained sample per evaluation on top of whichever transport/backend it wraps |
 | Non-uniform Caputo (`caputo_l1_nonuniform`) | `O(N)` per evaluation, same order as `caputo_l1_uniform` |
 | Proper-time memory (`proper_time_caputo_velocity_memory`) | `O(D * N)` for one post-hoc evaluation over an `N`-sample trajectory (builds the proper-time axis once, then one non-uniform Caputo evaluation per component) |
+| Exact circular-orbit transport (`exact_schwarzschild_circular_orbit_transport`) | `O(1)`: one Christoffel evaluation plus a fixed-size (4x4) matrix exponential, independent of path length or refinement |
+| Adaptive worldline integration (`simulate_nonlocal_worldline_adaptive`) | `O(D * N^2)` in the best case (no rejections) over `N` accepted steps, matching the coordinate-memory baseline's order; each accepted-step attempt costs one extra `O(D * N)` non-uniform Caputo evaluation at the trial point, and a rejected attempt is discarded and retried at a smaller step |
+| Reissner-Nordström field modulation (`ReissnerNordstromFieldModulator`) | Adds `O(1)` work per retained sample per evaluation, identical in structure to `SchwarzschildKretschmannModulator` |
 
 ## Assumptions
 
@@ -138,6 +196,21 @@ not a covariant field theory; and no empirical validation is claimed.**
 - `proper_time_caputo_velocity_memory` assumes every sampled state is
   timelike; its proper-time axis is only as accurate as
   `affine_trajectory_proper_time`'s first-order quadrature.
+- `exact_schwarzschild_circular_orbit_transport` assumes the transport path
+  is exactly a circular equatorial geodesic orbit (`r` constant, `theta =
+  pi/2`, the specific four-velocity `schwarzschild_circular_orbit_four_velocity`
+  returns) at a radius strictly exceeding `3 M`; it is not valid for any
+  other path, including non-circular, non-equatorial, or non-geodesic ones.
+- `simulate_nonlocal_worldline_adaptive` assumes plain coordinate memory
+  (no geometric transport, no curvature/field modulation); composing
+  adaptivity with either is future work, not silently approximated.
+- `ReissnerNordstrom` assumes sub-extremal parameters (`charge^2 <
+  mass^2`), guaranteeing two distinct, real horizons; extremal and
+  super-extremal parameters are rejected at construction.
+- `ReissnerNordstromFieldModulator` assumes evaluation points are in the
+  Reissner-Nordström exterior (`r` strictly greater than the outer horizon
+  radius), mirroring `SchwarzschildKretschmannModulator`'s Schwarzschild
+  exterior assumption.
 
 ## Limitations
 
@@ -159,25 +232,50 @@ not a covariant field theory; and no empirical validation is claimed.**
   compression is included anywhere in the crate.
 - `proper_time_caputo_velocity_memory` is a post-hoc diagnostic, not an
   adaptive integrator: it resamples an already uniformly-stepped trajectory
-  onto an estimated proper-time axis after the fact, rather than letting the
-  live integration loop choose its own non-uniform step.
+  onto an estimated proper-time axis after the fact. A genuinely adaptive
+  live loop now exists (`simulate_nonlocal_worldline_adaptive`), but it does
+  not yet support geometric transport or curvature modulation (see above).
+- `exact_schwarzschild_circular_orbit_transport` is exact only for the
+  circular-equatorial-orbit special case; it has no known-exact reference
+  for an eccentric, inclined, or otherwise general curved path, and neither
+  it nor `DiscreteConnectionTransport` closes that gap.
+- `simulate_nonlocal_worldline_adaptive`'s step-doubling-free embedded error
+  estimate (Heun-Euler) is a standard but relatively simple adaptive scheme;
+  it does not include event handling, dense output, or higher-order
+  embedded pairs.
+- `ReissnerNordstromFieldModulator`'s `beta` and reference length are, like
+  `SchwarzschildKretschmannModulator`'s, free, uncalibrated phenomenological
+  parameters, specific to the Reissner-Nordström exterior chart.
 
 ## Future Work (not implemented here)
 
-- Exact analytic bitensor parallel propagators for **curved** backgrounds, as
-  a replacement for the discrete segment-by-segment transport. (The flat-
-  spacetime case now has an exact closed-form reference,
-  `exact_cylindrical_minkowski_transport`; this does not extend to curved
-  backgrounds, where flatness's path-independence argument does not apply.)
-- Proper-time history sampled at its own **adaptive** resolution — i.e. an
-  integration loop that itself chooses a non-uniform step. (The Caputo
-  operator's own uniform-grid restriction is no longer the blocker:
-  `caputo_l1_nonuniform` removes it. What remains is adaptive step
-  selection in the live loop, not just post-hoc resampling.)
-- Curvature modulators for backgrounds other than Schwarzschild, or built
-  from invariants other than the Kretschmann scalar.
-- Any investigation of modified field equations — explicitly out of scope
-  for this crate; see the next section.
+- General curved-path exact parallel transport (a full bitensor propagator),
+  as a replacement for the discrete segment-by-segment transport in the
+  general case. (The flat-spacetime case has an exact closed-form reference,
+  `exact_cylindrical_minkowski_transport`, and the circular-equatorial-orbit
+  case in a curved background now also has one,
+  `exact_schwarzschild_circular_orbit_transport`; neither extends to a
+  general curved path, where neither flatness's path-independence nor a
+  circular orbit's constant-transport-generator argument applies.)
+- Composing the adaptive-step integrator
+  (`simulate_nonlocal_worldline_adaptive`, delivered this round) with
+  `HistoryTransport` (geometric transport) or `HistoryModulator`
+  (curvature/field modulation). Adaptive step *selection* itself is no
+  longer the blocker; it currently supports only plain coordinate memory,
+  because `WorldlineStepper` and `MemoryLaw` thread a single fixed
+  `NonlocalConfig` step that a variable step size cannot satisfy without
+  changing those contracts.
+- Curvature or field modulators for backgrounds other than Schwarzschild or
+  Reissner-Nordström (delivered this round), or built from invariants other
+  than the Kretschmann scalar or the electromagnetic field invariant
+  delivered this round — for example a rotating background, or the
+  Ricci-squared invariant that a non-vacuum background other than the
+  traceless-stress-tensor Reissner-Nordström case would make nonzero.
+- **Any investigation of modified field equations is not future work for
+  this crate — it is permanently out of scope.** This is not a deferred
+  item awaiting a future round; it is excluded by the crate's own
+  non-negotiable scientific boundary (see the next section), and no future
+  change to this crate should attempt it.
 
 ## Explicitly Forbidden Claims
 
@@ -201,3 +299,16 @@ experimentally derived law.
 `exact_cylindrical_minkowski_transport` is exact only for flat spacetime; it
 is not a general bitensor propagator and must never be described as valid
 for curved backgrounds.
+`exact_schwarzschild_circular_orbit_transport` is exact only for a circular
+equatorial geodesic orbit in Schwarzschild; it is not a general bitensor
+propagator either, and must never be described as valid for a general
+curved path (eccentric, inclined, non-geodesic, or otherwise).
+`simulate_nonlocal_worldline_adaptive` is a standard embedded-Runge-Kutta
+adaptive step-size scheme applied to this crate's existing ordinary state
+equation; it is not a new numerical method, does not change the state
+equation, and does not extend to a claim about physical accuracy beyond
+what the underlying discretization already provides.
+`ReissnerNordstromFieldModulator` is a phenomenological scalar reweighting,
+like `SchwarzschildKretschmannModulator`; it is not a consequence of general
+relativity or electromagnetism, a quantum-field-theory prediction, or an
+experimentally derived law.

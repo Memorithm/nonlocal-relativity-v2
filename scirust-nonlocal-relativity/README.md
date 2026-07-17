@@ -252,6 +252,27 @@ consistent with the underlying Heun predictor-corrector scheme), reaching
 `DiscreteConnectionTransport`'s correctness against a known-exact answer,
 rather than only against another discretization.
 
+### Exact curved-background transport (circular orbit, follow-up)
+
+The flat-spacetime oracle above is exact because curvature is zero, so
+transport is path-independent. Schwarzschild has nonzero curvature, so that
+argument does not apply — but along a **circular equatorial geodesic
+orbit** (fixed `r`, `theta = pi/2`, constant four-velocity), Schwarzschild's
+Christoffel symbols are constant (they depend only on `r` and `theta`), so
+the transport equation reduces to a linear, constant-coefficient ODE with
+the exact closed-form solution `V(lambda) = exp(-lambda A) V(0)` for the
+fixed generator `A`. `exact_schwarzschild_circular_orbit_transport` (with
+`schwarzschild_circular_orbit_four_velocity` and
+`schwarzschild_circular_orbit_angular_velocity`) evaluates this via a
+deterministic 4x4 matrix exponential, reusing the same already-validated
+`Schwarzschild::christoffel` this crate uses everywhere else. Validated
+against two exact conservation laws that hold for parallel transport under
+*any* metric-compatible connection (`g(V,V)` and `g(V,u)` constant), and
+against `DiscreteConnectionTransport`'s second-order convergence under path
+refinement in `examples/schwarzschild_orbit_transport.rs`. **Exact only for
+a circular equatorial geodesic orbit** at radius strictly exceeding `3 M`;
+not a general bitensor propagator, and not valid for any other path.
+
 ## Phase 4: curvature-modulated memory (research hook)
 
 Phase 4 adds one more additive, opt-in `MemoryLaw`: a deterministic scalar
@@ -288,6 +309,58 @@ of the Einstein field equations. No structure resembling a modified field
 equation, Einstein tensor, or stress-energy tensor is introduced anywhere in
 this crate.
 
+## Reissner-Nordström field modulation (follow-up)
+
+`SchwarzschildKretschmannModulator` is tied to one background and, since
+Schwarzschild is vacuum (Ricci tensor identically zero), essentially one
+available curvature invariant. This follow-up adds a second background,
+`scirust_relativity::ReissnerNordstrom` (a static, charged, spherically
+symmetric black hole, with exact analytic Christoffel symbols using the
+same general lapse-function formula Schwarzschild already uses, reducing to
+`Schwarzschild` exactly at `charge = 0`), and
+`ReissnerNordstromFieldModulator`, a modulator built from the
+electromagnetic field invariant `F_(mu nu) F^(mu nu) = 2 Q^2 / r^4` of the
+background's radial Coulomb field — not a curvature invariant. The weight
+is `q = 1 + beta * L^2 * |F^2|` (note `L^2`, not `L^4`: this invariant has a
+different length-dimension than the Kretschmann scalar). Same `beta = 0.0`
+bit-identical bypass pattern as `SchwarzschildKretschmannModulator`. This
+crate uses the Reissner-Nordström metric exactly as it uses Schwarzschild's:
+fixed, externally specified background data — nothing here solves the
+Einstein or Maxwell equations, or computes the field's backreaction on the
+metric.
+
+## Adaptive-step worldline integration (follow-up)
+
+Every integrator above advances a fixed affine-parameter step for a fixed
+step count, and `proper_time_caputo_velocity_memory` only resamples an
+already uniformly-stepped trajectory after the fact.
+`simulate_nonlocal_worldline_adaptive` (with `AdaptiveNonlocalConfig`) closes
+this gap: the live loop chooses its own non-uniform affine-parameter step,
+using the classical embedded Heun-Euler pair (the same Euler predictor and
+Heun corrector `HeunPeceStepper` already computes, reused as a
+first-order/second-order error estimate — no extra acceleration evaluation
+beyond one ordinary Heun step) for step-size control, and evaluating the
+memory force with `scirust_fractional::caputo_l1_nonuniform` directly
+against the resulting non-uniform history. A step that cannot meet
+tolerance without shrinking below the configured floor, or a run that
+exceeds its accepted-step budget before reaching the target affine
+parameter, is a typed error — never a silently out-of-tolerance or
+truncated trajectory. The returned trajectory samples a non-uniform axis:
+it must **never** be passed to `affine_trajectory_proper_time`, whose `step`
+argument assumes uniform spacing.
+
+This is deliberately narrower than the fixed-step architecture: coordinate
+memory only, no `HistoryTransport` or `HistoryModulator` composability,
+because `WorldlineStepper`/`MemoryLaw` thread a single fixed
+`NonlocalConfig` step that a variable step size cannot satisfy without
+changing those contracts. Cross-validated against a very fine independent
+fixed-step `HeunPeceStepper` run (agreement to `1.0e-4` or better with the
+shipped parameters); `examples/adaptive_worldline.rs` shows it reaching
+comparable or better accuracy than an 800-step fixed run with as few as 23
+accepted steps at a loose tolerance. This is a standard adaptive-Runge-Kutta
+technique, not a new numerical method, and does not change the underlying
+state equation.
+
 ## Convergence studies
 
 `run_convergence_study` compares the same final affine parameter at `h`,
@@ -307,6 +380,9 @@ cargo run -p scirust-nonlocal-relativity --example coordinate_covariance
 cargo run -p scirust-nonlocal-relativity --example curvature_modulated_memory
 cargo run -p scirust-nonlocal-relativity --example exact_transport_convergence
 cargo run -p scirust-nonlocal-relativity --example proper_time_memory_comparison
+cargo run -p scirust-nonlocal-relativity --example schwarzschild_orbit_transport
+cargo run -p scirust-nonlocal-relativity --example reissner_nordstrom_field_modulation
+cargo run -p scirust-nonlocal-relativity --example adaptive_worldline
 ```
 
 The first example compares `kappa = 0` with a small positive coupling for an
@@ -323,3 +399,13 @@ numerical error against the exact flat-spacetime transport oracle shrinking
 under path refinement. `proper_time_memory_comparison` prints deterministic
 CSV rows comparing affine-parameter and proper-time-based Caputo memory on
 the same Schwarzschild exterior trajectory, at three refinement levels.
+`schwarzschild_orbit_transport` prints deterministic CSV rows showing
+`DiscreteConnectionTransport`'s numerical error against the exact
+circular-orbit transport oracle in the curved Schwarzschild background
+shrinking under path refinement. `reissner_nordstrom_field_modulation`
+prints deterministic CSV rows comparing unmodulated and
+electromagnetic-field-modulated memory on a Reissner-Nordström exterior
+trajectory, at two refinement levels. `adaptive_worldline` prints
+deterministic CSV rows comparing the adaptive integrator's accepted-step
+count and accuracy against an independent fine fixed-step reference, across
+tightening error tolerances.

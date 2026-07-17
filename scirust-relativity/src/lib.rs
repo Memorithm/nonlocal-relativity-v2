@@ -6,7 +6,8 @@
 //! - covariant metric tensors;
 //! - deterministic metric inversion;
 //! - numerical Levi-Civita Christoffel symbols;
-//! - four-dimensional Minkowski and Schwarzschild spacetimes;
+//! - four-dimensional Minkowski, Schwarzschild, and Reissner-Nordström
+//!   spacetimes;
 //! - geodesic equations compatible with `scirust-sim`.
 //!
 //! The crate does not assume that fractional calculus modifies general
@@ -37,6 +38,7 @@ mod error;
 mod geodesic;
 mod metric;
 mod minkowski;
+mod reissner_nordstrom;
 mod schwarzschild;
 
 pub use connection::{Connection, numerical_christoffel};
@@ -44,4 +46,5 @@ pub use error::RelativityError;
 pub use geodesic::GeodesicSystem;
 pub use metric::{Metric, invert_metric, metric_norm};
 pub use minkowski::Minkowski;
+pub use reissner_nordstrom::ReissnerNordstrom;
 pub use schwarzschild::Schwarzschild;
