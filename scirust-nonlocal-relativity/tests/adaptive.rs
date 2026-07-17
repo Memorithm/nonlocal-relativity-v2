@@ -1,9 +1,12 @@
 use scirust_nonlocal_relativity::{
-    AdaptiveNonlocalConfig, CaputoCoordinateMemory, CompleteUniformHistory, HeunPeceStepper,
-    IdentityHistoryTransport, NonlocalConfig, NonlocalRelativityError, NonlocalSimulationPolicy,
-    WorldlineState, simulate_nonlocal_worldline_adaptive, simulate_nonlocal_worldline_with_policy,
+    AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, BoundedShortMemoryHistory,
+    CaputoCoordinateMemory, CompleteUniformHistory, DiscreteConnectionTransport, HeunPeceStepper,
+    IdentityHistoryModulator, IdentityHistoryTransport, NonlocalConfig, NonlocalRelativityError,
+    NonlocalSimulationPolicy, ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
+    WorldlineState, simulate_nonlocal_worldline_adaptive,
+    simulate_nonlocal_worldline_adaptive_with_policy, simulate_nonlocal_worldline_with_policy,
 };
-use scirust_relativity::{Minkowski, Schwarzschild};
+use scirust_relativity::{Minkowski, ReissnerNordstrom, Schwarzschild};
 use std::f64::consts::FRAC_PI_2;
 
 fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -283,4 +286,357 @@ fn adaptive_matches_fine_fixed_step_heun_pece_closely() {
             1.0e-4,
         );
     }
+}
+
+/// Golden bit-for-bit regression captured from the pre-refactor
+/// implementation of `simulate_nonlocal_worldline_adaptive` (a hand-rolled
+/// history loop with no `HistoryBackend`/`HistoryTransport`/
+/// `HistoryModulator` involvement), before it was reimplemented as a thin
+/// wrapper over `simulate_nonlocal_worldline_adaptive_with_policy` with
+/// `CompleteUniformHistory`, `IdentityHistoryTransport`, and
+/// `IdentityHistoryModulator`. Composing these identity components must
+/// reproduce the original numbers exactly, not merely approximately.
+#[test]
+fn adaptive_reproduces_pre_refactor_golden_values_bit_for_bit() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.8, 5_000, 30)
+            .unwrap();
+
+    let trajectory = simulate_nonlocal_worldline_adaptive(&background, initial, config).unwrap();
+
+    assert_eq!(trajectory.len(), 353);
+
+    let final_state = trajectory.final_state().unwrap();
+    let expected_coordinates_bits: [u64; 4] = [
+        0x3fee99d338548003,
+        0x4023fbe788e8c53d,
+        0x3ff921fb54442d18,
+        0x3f9efcc35f493b88,
+    ];
+    let expected_velocity_bits: [u64; 4] = [
+        0x3ff3209f6d5766ff,
+        0xbf84797d45a810cd,
+        0x3bf46a6831b53a3a,
+        0x3fa361e1756df532,
+    ];
+    for component in 0..4
+    {
+        assert_eq!(
+            final_state.coordinates[component].to_bits(),
+            expected_coordinates_bits[component],
+            "coordinate {component}"
+        );
+        assert_eq!(
+            final_state.velocity[component].to_bits(),
+            expected_velocity_bits[component],
+            "velocity {component}"
+        );
+    }
+
+    let final_diagnostics = trajectory.final_diagnostics().unwrap();
+    assert_eq!(
+        final_diagnostics.affine_parameter.to_bits(),
+        0x3fe999999999999a
+    );
+    assert_eq!(
+        final_diagnostics.memory_l2_norm.to_bits(),
+        0x3f345109f7290677
+    );
+}
+
+#[test]
+fn adaptive_with_identity_policy_matches_plain_entry_point_bit_for_bit() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.8, 5_000, 30)
+            .unwrap();
+
+    let plain = simulate_nonlocal_worldline_adaptive(&background, initial, config).unwrap();
+    let explicit = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            IdentityHistoryModulator,
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(plain.len(), explicit.len());
+    for (left, right) in plain.states().iter().zip(explicit.states())
+    {
+        for component in 0..4
+        {
+            assert_eq!(
+                left.coordinates[component].to_bits(),
+                right.coordinates[component].to_bits()
+            );
+            assert_eq!(
+                left.velocity[component].to_bits(),
+                right.velocity[component].to_bits()
+            );
+        }
+    }
+}
+
+#[test]
+fn adaptive_composes_with_discrete_connection_transport() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.6, 5_000, 30)
+            .unwrap();
+
+    let transported = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            DiscreteConnectionTransport,
+            IdentityHistoryModulator,
+        ),
+    )
+    .unwrap();
+
+    for state in transported.states()
+    {
+        assert!(state.coordinates.iter().all(|value| value.is_finite()));
+        assert!(state.velocity.iter().all(|value| value.is_finite()));
+    }
+
+    let identity = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            IdentityHistoryModulator,
+        ),
+    )
+    .unwrap();
+
+    // DiscreteConnectionTransport must actually change the numerical result
+    // here (Schwarzschild is curved), not silently fall back to identity
+    // behavior.
+    let transported_final = transported.final_state().unwrap();
+    let identity_final = identity.final_state().unwrap();
+    let differs = (0..4).any(|component| {
+        transported_final.coordinates[component] != identity_final.coordinates[component]
+    });
+    assert!(differs, "transported and identity results were identical");
+}
+
+#[test]
+fn adaptive_composes_with_schwarzschild_kretschmann_modulator() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.6, 5_000, 30)
+            .unwrap();
+
+    let baseline_modulator = SchwarzschildKretschmannModulator::try_new(mass, 1.0, 0.0).unwrap();
+    let coupled_modulator = SchwarzschildKretschmannModulator::try_new(mass, 1.0, 0.5).unwrap();
+
+    let baseline = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            baseline_modulator,
+        ),
+    )
+    .unwrap();
+    let coupled = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            coupled_modulator,
+        ),
+    )
+    .unwrap();
+
+    for state in coupled.states()
+    {
+        assert!(state.coordinates.iter().all(|value| value.is_finite()));
+    }
+
+    let baseline_final = baseline.final_state().unwrap();
+    let coupled_final = coupled.final_state().unwrap();
+    let differs = (0..4).any(|component| {
+        baseline_final.coordinates[component] != coupled_final.coordinates[component]
+    });
+    assert!(differs, "modulated and baseline results were identical");
+}
+
+#[test]
+fn adaptive_beta_zero_modulator_matches_identity_modulator_bit_for_bit() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.6, 5_000, 30)
+            .unwrap();
+    let beta_zero_modulator = SchwarzschildKretschmannModulator::try_new(mass, 1.0, 0.0).unwrap();
+
+    let with_beta_zero = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            beta_zero_modulator,
+        ),
+    )
+    .unwrap();
+    let with_identity = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            IdentityHistoryModulator,
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(with_beta_zero.len(), with_identity.len());
+    for (left, right) in with_beta_zero.states().iter().zip(with_identity.states())
+    {
+        for component in 0..4
+        {
+            assert_eq!(
+                left.coordinates[component].to_bits(),
+                right.coordinates[component].to_bits()
+            );
+            assert_eq!(
+                left.velocity[component].to_bits(),
+                right.velocity[component].to_bits()
+            );
+        }
+    }
+}
+
+#[test]
+fn adaptive_composes_with_reissner_nordstrom_field_modulator() {
+    let mass = 1.0;
+    let charge = 0.4;
+    let background = ReissnerNordstrom::try_new(mass, charge).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.6, 5_000, 30)
+            .unwrap();
+
+    let modulator = ReissnerNordstromFieldModulator::try_new(background, 1.0, 0.5).unwrap();
+
+    let modulated = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            IdentityHistoryTransport,
+            modulator,
+        ),
+    )
+    .unwrap();
+
+    for state in modulated.states()
+    {
+        assert!(state.coordinates.iter().all(|value| value.is_finite()));
+        assert!(state.velocity.iter().all(|value| value.is_finite()));
+    }
+}
+
+#[test]
+fn adaptive_composes_with_both_transport_and_modulation_together() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.6, 5_000, 30)
+            .unwrap();
+    let modulator = SchwarzschildKretschmannModulator::try_new(mass, 1.0, 0.3).unwrap();
+
+    let trajectory = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            CompleteUniformHistory::<4>::new(),
+            DiscreteConnectionTransport,
+            modulator,
+        ),
+    )
+    .unwrap();
+
+    for state in trajectory.states()
+    {
+        assert!(state.coordinates.iter().all(|value| value.is_finite()));
+        assert!(state.velocity.iter().all(|value| value.is_finite()));
+    }
+    for diagnostics in trajectory.diagnostics()
+    {
+        assert!(diagnostics.memory_l2_norm.is_finite());
+        assert!(diagnostics.memory_force_l2_norm.is_finite());
+    }
+}
+
+#[test]
+fn adaptive_composes_with_bounded_short_memory() {
+    let mass = 1.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let mut initial = circular_schwarzschild_state(mass, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.4, 5_000, 30)
+            .unwrap();
+
+    let trajectory = simulate_nonlocal_worldline_adaptive_with_policy(
+        &background,
+        initial,
+        config,
+        AdaptiveSimulationPolicy::new(
+            BoundedShortMemoryHistory::<4>::new(6).unwrap(),
+            IdentityHistoryTransport,
+            IdentityHistoryModulator,
+        ),
+    )
+    .unwrap();
+
+    for state in trajectory.states()
+    {
+        assert!(state.coordinates.iter().all(|value| value.is_finite()));
+    }
+    assert!(
+        trajectory
+            .history_diagnostics()
+            .iter()
+            .all(|diagnostics| diagnostics.retained_samples <= 6),
+        "bounded short memory retained more than its window"
+    );
 }

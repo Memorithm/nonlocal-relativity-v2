@@ -349,17 +349,64 @@ truncated trajectory. The returned trajectory samples a non-uniform axis:
 it must **never** be passed to `affine_trajectory_proper_time`, whose `step`
 argument assumes uniform spacing.
 
-This is deliberately narrower than the fixed-step architecture: coordinate
-memory only, no `HistoryTransport` or `HistoryModulator` composability,
-because `WorldlineStepper`/`MemoryLaw` thread a single fixed
-`NonlocalConfig` step that a variable step size cannot satisfy without
-changing those contracts. Cross-validated against a very fine independent
-fixed-step `HeunPeceStepper` run (agreement to `1.0e-4` or better with the
-shipped parameters); `examples/adaptive_worldline.rs` shows it reaching
-comparable or better accuracy than an 800-step fixed run with as few as 23
-accepted steps at a loose tolerance. This is a standard adaptive-Runge-Kutta
-technique, not a new numerical method, and does not change the underlying
-state equation.
+Cross-validated against a very fine independent fixed-step `HeunPeceStepper`
+run (agreement to `1.0e-4` or better with the shipped parameters);
+`examples/adaptive_worldline.rs` shows it reaching comparable or better
+accuracy than an 800-step fixed run with as few as 23 accepted steps at a
+loose tolerance. This is a standard adaptive-Runge-Kutta technique, not a
+new numerical method, and does not change the underlying state equation.
+
+**Composing adaptive stepping with transport and modulation (follow-up).**
+`simulate_nonlocal_worldline_adaptive` does not itself reuse `MemoryLaw` or
+`WorldlineStepper` — both thread a single fixed `NonlocalConfig` step
+through their signatures, which a variable step size cannot satisfy — but
+[`crate::HistoryTransport`] and [`crate::HistoryModulator`] never depended
+on a fixed step in the first place (`transport_segment` and `weight` both
+take the step or the entry directly), so they compose cleanly.
+`simulate_nonlocal_worldline_adaptive_with_policy` takes an
+`AdaptiveSimulationPolicy<H, T, M>` (a history backend, a transport, and a
+modulator, mirroring `NonlocalSimulationPolicy`'s role for the fixed-step
+path) and reuses `HistoryBackend::push_entry` — the exact mechanism
+`CompleteUniformHistory` and `BoundedShortMemoryHistory` already use to
+transport every retained vector across each newly accepted segment — so
+`DiscreteConnectionTransport`, `SchwarzschildKretschmannModulator`, and
+`ReissnerNordstromFieldModulator` all compose with adaptive stepping exactly
+as they compose with the fixed-step integrators, including together.
+`simulate_nonlocal_worldline_adaptive` is now defined as the
+`IdentityHistoryTransport` + `IdentityHistoryModulator` +
+`CompleteUniformHistory` special case of this function (verified to
+reproduce its pre-composition behavior bit-for-bit).
+`examples/adaptive_transported_modulated.rs` runs all four combinations of
+identity/discrete transport and unmodulated/Kretschmann-modulated memory on
+the same trajectory and tolerance.
+
+## Kerr background (follow-up)
+
+`scirust_relativity::Kerr` (mass `M`, spin `a = J/M`) is a third fixed
+background: a stationary, axisymmetric, **rotating** black hole in standard
+Boyer-Lindquist coordinates. Unlike `Schwarzschild` and `ReissnerNordstrom`,
+its connection is evaluated by central finite differences
+(`scirust_relativity::numerical_christoffel`), not an exact analytic
+formula — Kerr's Christoffel symbols are algebraically far more complex (the
+metric depends on both `r` and `theta` and has a nonzero off-diagonal
+`t`-`phi` term), and hand-deriving them risked a transcription error with no
+independent way to catch it. At `a = 0` the metric reduces to
+`Schwarzschild`'s exactly, and the finite-difference Christoffel symbols
+agree with `Schwarzschild`'s exact analytic ones to the finite-difference
+tolerance — this crate's test suite checks both directly, alongside a
+frame-dragging sign check (the ZAMO angular velocity `-g_tphi/g_phiphi` is
+positive for positive spin, matching the Lense-Thirring precession
+direction) and symmetric/hand-derived-value checks.
+
+This crate's worldline and memory machinery runs on `Kerr` completely
+unmodified — the only Kerr-specific code is its `Metric`/`Connection`
+implementations. `examples/kerr_worldline.rs` runs a stationary observer
+(deliberately not a Kerr circular orbit, which has no simple closed form
+and is not derived or claimed anywhere in this crate) at increasing spin,
+showing the coordinate `phi` stay exactly zero at `spin = 0` and pick up a
+positive, spin-scaling drift at `spin > 0` — frame dragging emerging from
+the geodesic equation and the finite-difference Christoffel symbols working
+together, without being hand-coded anywhere.
 
 ## Convergence studies
 
@@ -383,6 +430,8 @@ cargo run -p scirust-nonlocal-relativity --example proper_time_memory_comparison
 cargo run -p scirust-nonlocal-relativity --example schwarzschild_orbit_transport
 cargo run -p scirust-nonlocal-relativity --example reissner_nordstrom_field_modulation
 cargo run -p scirust-nonlocal-relativity --example adaptive_worldline
+cargo run -p scirust-nonlocal-relativity --example adaptive_transported_modulated
+cargo run -p scirust-nonlocal-relativity --example kerr_worldline
 ```
 
 The first example compares `kappa = 0` with a small positive coupling for an
@@ -408,4 +457,10 @@ electromagnetic-field-modulated memory on a Reissner-Nordström exterior
 trajectory, at two refinement levels. `adaptive_worldline` prints
 deterministic CSV rows comparing the adaptive integrator's accepted-step
 count and accuracy against an independent fine fixed-step reference, across
-tightening error tolerances.
+tightening error tolerances. `adaptive_transported_modulated` prints
+deterministic CSV rows comparing all four combinations of identity/discrete
+transport and unmodulated/Kretschmann-modulated memory under adaptive
+stepping, on the same trajectory and tolerance. `kerr_worldline` prints
+deterministic CSV rows for a stationary observer in the Kerr background at
+increasing spin, showing frame dragging emerge as a spin-scaling drift in
+the `phi` coordinate.

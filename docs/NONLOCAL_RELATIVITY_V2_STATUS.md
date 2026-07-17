@@ -122,6 +122,33 @@ not a covariant field theory; and no empirical validation is claimed.**
   `examples/adaptive_worldline.rs`,
   `examples/reissner_nordstrom_field_modulation.rs`.
 
+### Follow-up: adaptive composability and a Kerr background (this work)
+
+- `simulate_nonlocal_worldline_adaptive_with_policy`, `AdaptiveSimulationPolicy<H, T, M>`:
+  composes the adaptive integrator with `HistoryTransport` and
+  `HistoryModulator` — `DiscreteConnectionTransport`,
+  `SchwarzschildKretschmannModulator`, and `ReissnerNordstromFieldModulator`
+  now all work under adaptive stepping, individually and together, by
+  reusing `HistoryBackend::push_entry` (the same segment-transport
+  mechanism the fixed-step integrators already use). `simulate_nonlocal_worldline_adaptive`
+  is now defined as the `IdentityHistoryTransport` +
+  `IdentityHistoryModulator` + `CompleteUniformHistory` special case,
+  verified to reproduce its pre-composition numbers bit-for-bit against a
+  captured golden regression value.
+- `Kerr` (in `scirust-relativity`): a rotating (stationary, axisymmetric)
+  background in standard Boyer-Lindquist coordinates. Unlike every other
+  background in this crate, its connection is evaluated by central finite
+  differences (`numerical_christoffel`) rather than an exact analytic
+  formula — an explicit, disclosed tradeoff given the far greater algebraic
+  complexity of Kerr's Christoffel symbols. Validated at `spin = 0` against
+  `Schwarzschild` (metric bit-for-bit, Christoffel symbols to
+  finite-difference tolerance), against the known Lense-Thirring
+  frame-dragging sign, and end-to-end via a stationary-observer worldline
+  simulation showing spin-scaling frame dragging emerge from the ordinary
+  geodesic equation with no Kerr-specific code beyond the metric and
+  connection.
+- `examples/adaptive_transported_modulated.rs`, `examples/kerr_worldline.rs`.
+
 ## Validations Performed
 
 - `cargo fmt --all -- --check` clean.
@@ -134,8 +161,8 @@ not a covariant field theory; and no empirical validation is claimed.**
   `coordinate_covariance`, `curvature_modulated_memory`,
   `exact_transport_convergence`, `proper_time_memory_comparison`,
   `schwarzschild_orbit_transport`, `adaptive_worldline`,
-  `reissner_nordstrom_field_modulation`) run to completion and produce
-  deterministic CSV output.
+  `reissner_nordstrom_field_modulation`, `adaptive_transported_modulated`,
+  `kerr_worldline`) run to completion and produce deterministic CSV output.
 - Bit-for-bit regression: every Phase 1/2 test file is unmodified and passes
   unchanged; Phase 3/4 additions include explicit bit-identity tests for the
   compatibility paths (`beta = 0`, identity transport, affine mode).
@@ -158,7 +185,19 @@ not a covariant field theory; and no empirical validation is claimed.**
 - `simulate_nonlocal_worldline_adaptive` cross-validated against a very fine
   independent fixed-step `HeunPeceStepper` run on the same trajectory, in
   addition to bit-for-bit determinism, non-uniform-step, target-reaching,
-  and typed-error-on-budget-exhaustion tests (8 dedicated tests).
+  and typed-error-on-budget-exhaustion tests (16 dedicated tests including
+  the transport/modulation composition follow-up below).
+- `simulate_nonlocal_worldline_adaptive_with_policy` validated against a
+  bit-for-bit golden regression captured from the pre-composition
+  implementation, and tested composing `DiscreteConnectionTransport`,
+  `SchwarzschildKretschmannModulator`, `ReissnerNordstromFieldModulator`,
+  `BoundedShortMemoryHistory`, and combinations thereof, each checked for
+  finiteness and (where applicable) a measurable, non-identical departure
+  from the identity baseline.
+- `Kerr` validated at `spin = 0` against `Schwarzschild`'s metric
+  (bit-for-bit) and exact analytic Christoffel symbols (finite-difference
+  tolerance), plus a frame-dragging sign check and a symmetric-metric check
+  (11 dedicated tests).
 
 ## Complexities (as actually implemented)
 
@@ -173,6 +212,8 @@ not a covariant field theory; and no empirical validation is claimed.**
 | Exact circular-orbit transport (`exact_schwarzschild_circular_orbit_transport`) | `O(1)`: one Christoffel evaluation plus a fixed-size (4x4) matrix exponential, independent of path length or refinement |
 | Adaptive worldline integration (`simulate_nonlocal_worldline_adaptive`) | `O(D * N^2)` in the best case (no rejections) over `N` accepted steps, matching the coordinate-memory baseline's order; each accepted-step attempt costs one extra `O(D * N)` non-uniform Caputo evaluation at the trial point, and a rejected attempt is discarded and retried at a smaller step |
 | Reissner-Nordström field modulation (`ReissnerNordstromFieldModulator`) | Adds `O(1)` work per retained sample per evaluation, identical in structure to `SchwarzschildKretschmannModulator` |
+| Adaptive worldline with transport/modulation (`simulate_nonlocal_worldline_adaptive_with_policy`) | Same order as plain adaptive integration; `DiscreteConnectionTransport` composed in adds the same `O(D^3)` per-retained-vector transport cost the fixed-step path pays, applied once per accepted (and once per trial) segment |
+| Kerr connection (`Kerr::christoffel`) | `O(1)` per evaluation: `numerical_christoffel` evaluates the metric `2D+1 = 9` times (central differences in each of 4 directions) and inverts one 4x4 metric, versus `O(1)` for Schwarzschild/Reissner-Nordström's single closed-form evaluation — asymptotically the same order, a larger constant factor |
 
 ## Assumptions
 
@@ -201,9 +242,6 @@ not a covariant field theory; and no empirical validation is claimed.**
   pi/2`, the specific four-velocity `schwarzschild_circular_orbit_four_velocity`
   returns) at a radius strictly exceeding `3 M`; it is not valid for any
   other path, including non-circular, non-equatorial, or non-geodesic ones.
-- `simulate_nonlocal_worldline_adaptive` assumes plain coordinate memory
-  (no geometric transport, no curvature/field modulation); composing
-  adaptivity with either is future work, not silently approximated.
 - `ReissnerNordstrom` assumes sub-extremal parameters (`charge^2 <
   mass^2`), guaranteeing two distinct, real horizons; extremal and
   super-extremal parameters are rejected at construction.
@@ -211,6 +249,15 @@ not a covariant field theory; and no empirical validation is claimed.**
   Reissner-Nordström exterior (`r` strictly greater than the outer horizon
   radius), mirroring `SchwarzschildKretschmannModulator`'s Schwarzschild
   exterior assumption.
+- `simulate_nonlocal_worldline_adaptive_with_policy` assumes its supplied
+  `HistoryBackend` retains complete or explicitly bounded history
+  consistently with the fixed-step architecture's own assumptions about
+  that backend; adaptivity changes only the affine-parameter grid, not the
+  history-retention contract.
+- `Kerr` assumes sub-extremal parameters (`spin^2 < mass^2`); its
+  `Christoffel` symbols are a finite-difference approximation with a fixed
+  internal difference step, not an exact analytic result, unlike every
+  other background in this crate.
 
 ## Limitations
 
@@ -228,13 +275,14 @@ not a covariant field theory; and no empirical validation is claimed.**
 - `SchwarzschildKretschmannModulator`'s `beta` and reference length are free,
   uncalibrated phenomenological parameters specific to the Schwarzschild
   exterior chart.
-- No adaptive stepping, event handling, error estimation, or history
-  compression is included anywhere in the crate.
+- Event handling, error estimation beyond the embedded Heun-Euler pair, and
+  history compression are not included anywhere in the crate.
 - `proper_time_caputo_velocity_memory` is a post-hoc diagnostic, not an
   adaptive integrator: it resamples an already uniformly-stepped trajectory
   onto an estimated proper-time axis after the fact. A genuinely adaptive
-  live loop now exists (`simulate_nonlocal_worldline_adaptive`), but it does
-  not yet support geometric transport or curvature modulation (see above).
+  live loop exists (`simulate_nonlocal_worldline_adaptive`), and it now
+  composes with geometric transport and curvature/field modulation via
+  `simulate_nonlocal_worldline_adaptive_with_policy`.
 - `exact_schwarzschild_circular_orbit_transport` is exact only for the
   circular-equatorial-orbit special case; it has no known-exact reference
   for an eccentric, inclined, or otherwise general curved path, and neither
@@ -242,10 +290,19 @@ not a covariant field theory; and no empirical validation is claimed.**
 - `simulate_nonlocal_worldline_adaptive`'s step-doubling-free embedded error
   estimate (Heun-Euler) is a standard but relatively simple adaptive scheme;
   it does not include event handling, dense output, or higher-order
-  embedded pairs.
+  embedded pairs. It still does not compose with `WorldlineStepper` or
+  `MemoryLaw` (as opposed to `HistoryTransport`/`HistoryModulator`, which it
+  now does), since those two traits thread a single fixed `NonlocalConfig`
+  step through their signatures.
 - `ReissnerNordstromFieldModulator`'s `beta` and reference length are, like
   `SchwarzschildKretschmannModulator`'s, free, uncalibrated phenomenological
   parameters, specific to the Reissner-Nordström exterior chart.
+- `Kerr`'s Christoffel symbols are evaluated by finite differences, not an
+  exact analytic formula; they carry a small, difference-step-dependent
+  truncation error that every other background in this crate avoids. No
+  Kerr-specific circular-orbit, transport, or modulation construction is
+  provided; the crate's Kerr example uses only a simple stationary initial
+  state for exactly this reason.
 
 ## Future Work (not implemented here)
 
@@ -257,20 +314,24 @@ not a covariant field theory; and no empirical validation is claimed.**
   `exact_schwarzschild_circular_orbit_transport`; neither extends to a
   general curved path, where neither flatness's path-independence nor a
   circular orbit's constant-transport-generator argument applies.)
-- Composing the adaptive-step integrator
-  (`simulate_nonlocal_worldline_adaptive`, delivered this round) with
-  `HistoryTransport` (geometric transport) or `HistoryModulator`
-  (curvature/field modulation). Adaptive step *selection* itself is no
-  longer the blocker; it currently supports only plain coordinate memory,
-  because `WorldlineStepper` and `MemoryLaw` thread a single fixed
-  `NonlocalConfig` step that a variable step size cannot satisfy without
-  changing those contracts.
-- Curvature or field modulators for backgrounds other than Schwarzschild or
-  Reissner-Nordström (delivered this round), or built from invariants other
-  than the Kretschmann scalar or the electromagnetic field invariant
-  delivered this round — for example a rotating background, or the
-  Ricci-squared invariant that a non-vacuum background other than the
-  traceless-stress-tensor Reissner-Nordström case would make nonzero.
+- Composing the adaptive-step integrator with `WorldlineStepper` or
+  `MemoryLaw` themselves (as opposed to `HistoryTransport`/
+  `HistoryModulator`, composed this round via
+  `simulate_nonlocal_worldline_adaptive_with_policy`). Both traits still
+  thread a single fixed `NonlocalConfig` step through their signatures
+  (`StepperContext` for the former), which a variable step size cannot
+  satisfy without changing those contracts.
+- An exact analytic Kerr connection, as a replacement for the
+  finite-difference Christoffel symbols delivered this round; Kerr-specific
+  transport, modulation, or circular-orbit constructions (this round
+  deliberately used only a simple stationary initial state, avoiding any
+  Kerr orbital-mechanics formula).
+- Curvature or field modulators for backgrounds other than Schwarzschild,
+  Reissner-Nordström, or Kerr (all delivered), or built from invariants
+  other than the Kretschmann scalar or the electromagnetic field invariant
+  delivered so far — for example the Ricci-squared invariant that a
+  non-vacuum background other than the traceless-stress-tensor
+  Reissner-Nordström case would make nonzero.
 - **Any investigation of modified field equations is not future work for
   this crate — it is permanently out of scope.** This is not a deferred
   item awaiting a future round; it is excluded by the crate's own
@@ -312,3 +373,12 @@ what the underlying discretization already provides.
 like `SchwarzschildKretschmannModulator`; it is not a consequence of general
 relativity or electromagnetism, a quantum-field-theory prediction, or an
 experimentally derived law.
+`Kerr`'s Christoffel symbols are a finite-difference numerical
+approximation, not an exact analytic result like `Schwarzschild`'s or
+`ReissnerNordstrom`'s; this must always be disclosed alongside any use of
+`Kerr`, and no claim of machine-precision exactness may be made for it.
+`simulate_nonlocal_worldline_adaptive_with_policy` composes standard,
+independently-established components (an embedded Runge-Kutta pair, the
+existing `HistoryTransport`/`HistoryModulator` contracts); the composition
+itself is not a new physical claim beyond what each component already
+carries.
