@@ -30,13 +30,20 @@
 //! special case, `IdentityHistoryTransport` and `IdentityHistoryModulator`
 //! composed with `CompleteUniformHistory`.
 //!
-//! This does **not** reuse [`crate::MemoryLaw`] or [`crate::WorldlineStepper`]:
-//! both thread a single fixed [`NonlocalConfig`] step through their
-//! signatures ([`crate::StepperContext`] for the latter), which a variable
-//! step size cannot satisfy without changing those contracts. Composing
-//! adaptive stepping with a curvature-modulated *and* transported pipeline
-//! together is exercised in this crate's tests exactly as the fixed-step
-//! architecture exercises it.
+//! This module's controller does **not** itself reuse [`crate::MemoryLaw`] or
+//! [`crate::WorldlineStepper`]: both thread a single fixed [`NonlocalConfig`]
+//! step through their signatures ([`crate::StepperContext`] for the latter),
+//! which this module's embedded-pair controller cannot satisfy without
+//! changing those contracts. Composing adaptive stepping with a
+//! curvature-modulated *and* transported pipeline together is exercised in
+//! this crate's tests exactly as the fixed-step architecture exercises it.
+//!
+//! [`crate::adaptive_stepper`] closes the `MemoryLaw`/`WorldlineStepper` gap
+//! left open here, for [`crate::SemiImplicitEulerStepper`] specifically, via
+//! a different step-size-control mechanism (classical step-doubling rather
+//! than this module's embedded pair); see that module's documentation for
+//! the mechanism and for precisely why [`crate::HeunPeceStepper`] still
+//! cannot be composed either way.
 
 use crate::{
     CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry, HistoryModulator,

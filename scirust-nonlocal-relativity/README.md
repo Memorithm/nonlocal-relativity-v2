@@ -380,6 +380,52 @@ reproduce its pre-composition behavior bit-for-bit).
 identity/discrete transport and unmodulated/Kretschmann-modulated memory on
 the same trajectory and tolerance.
 
+## Composing adaptive stepping with `MemoryLaw` and `WorldlineStepper` (follow-up)
+
+`simulate_nonlocal_worldline_adaptive_with_policy`'s embedded Heun-Euler
+controller still does not reuse `MemoryLaw` or `WorldlineStepper` themselves
+(as opposed to `HistoryTransport`/`HistoryModulator`, composed above): both
+traits thread a single fixed `NonlocalConfig` step through their signatures,
+and `CaputoCoordinateMemory` specifically applies that one step to the
+*entire* retained history via `caputo_l1_uniform`, which is only correct
+when every accepted segment shares it.
+
+`simulate_nonlocal_worldline_adaptive_with_stepper_policy` closes this for
+`SemiImplicitEulerStepper` specifically. Two new `MemoryLaw` implementations,
+`NonuniformCaputoCoordinateMemory` and
+`NonuniformModulatedCaputoCoordinateMemory<M>`, read each retained sample's
+own recorded parameter and evaluate `caputo_l1_nonuniform` directly instead
+of assuming uniform spacing — they compose with the fixed-step architecture
+too, not only the adaptive one, since `MemoryLaw` was already generic over
+the history backend. Error control uses classical step-doubling (one full
+step compared against two half steps, since semi-implicit Euler is
+first-order and has no natural embedded higher-order partner) rather than an
+embedded pair, with the same `1/(p+1) = 0.5` growth/shrink exponent as the
+embedded controller above, since semi-implicit Euler is also a first-order
+method.
+
+`HeunPeceStepper` is deliberately **not** offered here, and cannot be
+without changing its existing body: its predictor pushes a provisional
+history entry whose parameter it computes as `(step_index + 1) as f64 *
+config.step`, reconstructing an absolute affine parameter by multiplying an
+integer step count by one step size. That is exact under the fixed-step
+architecture, where every accepted step shares that size, but wrong the
+moment accepted step sizes vary, which adaptive stepping does by
+construction — there is no single `step` value for which `step_index * step`
+equals the true accumulated parameter along a non-uniform trajectory. See
+`adaptive_stepper.rs`'s module documentation for the full mechanism and
+reasoning.
+
+`AdaptiveStepperPolicy<H, L, T>` (a history backend, a `MemoryLaw`, and a
+transport) mirrors `NonlocalSimulationPolicy`'s role for this path, narrowed
+to the components it actually varies — there is no stepper type parameter,
+since `SemiImplicitEulerStepper` is the only sound choice.
+`simulate_nonlocal_worldline_adaptive_with_stepper` is the
+`NonuniformCaputoCoordinateMemory` + `IdentityHistoryTransport` +
+`CompleteUniformHistory` special case. `examples/adaptive_worldline_stepper.rs`
+runs several `MemoryLaw`/transport combinations on the same trajectory and
+tolerance, plus a sanity-anchor row against the plain entry point.
+
 ## Kerr background (follow-up)
 
 `scirust_relativity::Kerr` (mass `M`, spin `a = J/M`) is a third fixed
@@ -432,6 +478,7 @@ cargo run -p scirust-nonlocal-relativity --example reissner_nordstrom_field_modu
 cargo run -p scirust-nonlocal-relativity --example adaptive_worldline
 cargo run -p scirust-nonlocal-relativity --example adaptive_transported_modulated
 cargo run -p scirust-nonlocal-relativity --example kerr_worldline
+cargo run -p scirust-nonlocal-relativity --example adaptive_worldline_stepper
 ```
 
 The first example compares `kappa = 0` with a small positive coupling for an
@@ -463,4 +510,7 @@ transport and unmodulated/Kretschmann-modulated memory under adaptive
 stepping, on the same trajectory and tolerance. `kerr_worldline` prints
 deterministic CSV rows for a stationary observer in the Kerr background at
 increasing spin, showing frame dragging emerge as a spin-scaling drift in
-the `phi` coordinate.
+the `phi` coordinate. `adaptive_worldline_stepper` prints deterministic CSV
+rows comparing several `MemoryLaw`/transport combinations under the
+step-doubling adaptive integrator (`simulate_nonlocal_worldline_adaptive_with_stepper_policy`),
+plus a sanity-anchor row against the plain entry point.
