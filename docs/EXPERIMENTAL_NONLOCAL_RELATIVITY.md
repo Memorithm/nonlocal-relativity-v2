@@ -527,23 +527,120 @@ accumulated non-uniform affine-parameter axis — not
 argument assumes uniform spacing; read `diagnostics()[i].affine_parameter`
 directly instead.
 
-This is deliberately narrower than the fixed-step architecture: it always
-uses complete coordinate-memory history, with no `HistoryTransport` or
-`HistoryModulator` composability, because `WorldlineStepper` and
-`MemoryLaw` thread a single fixed `NonlocalConfig` step through
-`StepperContext`, which a variable step size cannot satisfy without
-changing those contracts. `examples/adaptive_worldline.rs` cross-validates
-the adaptive path against a very fine, independent fixed-step
-`HeunPeceStepper` run (agreement to `1.0e-4` or better with the shipped
-parameters) and demonstrates it reaching comparable or better accuracy than
-an 800-step fixed run with as few as 23 accepted steps at a loose tolerance
-— a concrete illustration of *why* adaptive stepping is useful here, not
-merely that it runs.
+`simulate_nonlocal_worldline_adaptive` does not itself reuse `WorldlineStepper`
+or `MemoryLaw` — both thread a single fixed `NonlocalConfig` step through
+their signatures (`StepperContext` for the former), which a variable step
+size cannot satisfy without changing those contracts.
+`examples/adaptive_worldline.rs` cross-validates the adaptive path against a
+very fine, independent fixed-step `HeunPeceStepper` run (agreement to
+`1.0e-4` or better with the shipped parameters) and demonstrates it reaching
+comparable or better accuracy than an 800-step fixed run with as few as 23
+accepted steps at a loose tolerance — a concrete illustration of *why*
+adaptive stepping is useful here, not merely that it runs.
 
 This is a standard numerical technique applied to this crate's existing
 state equation. It does not change the state equation, does not claim
 improved physical accuracy beyond what the underlying discretization
 already provides, and is not a new numerical method.
+
+### Composing Adaptive Stepping with Transport and Modulation (Follow-Up)
+
+`WorldlineStepper` and `MemoryLaw` are the blockers for reusing the
+fixed-step architecture directly, but `HistoryTransport` and
+`HistoryModulator` were never coupled to a fixed step in the first place:
+`HistoryTransport::transport_segment` takes its segment step as an explicit
+argument, and `HistoryModulator::weight` takes only a `HistoryEntry` — so
+both compose with a variable step size exactly as they are.
+`simulate_nonlocal_worldline_adaptive_with_policy` takes an
+`AdaptiveSimulationPolicy<H, T, M>` bundling a `HistoryBackend`, a
+`HistoryTransport`, and a `HistoryModulator` (mirroring
+`NonlocalSimulationPolicy`'s role for the fixed-step path, narrowed to the
+three components adaptive stepping actually varies), and reuses
+`HistoryBackend::push_entry` — the identical mechanism
+`CompleteUniformHistory` and `BoundedShortMemoryHistory` already use to
+transport every retained vector across each newly accepted segment for the
+fixed-step integrators — to transport history across each adaptively-sized
+accepted segment. Each retained sample is weighted by the modulator before
+the non-uniform Caputo evaluation, exactly like
+`ModulatedCaputoCoordinateMemory` does for the fixed-step path, just with
+`caputo_l1_nonuniform` in place of `caputo_l1_uniform`.
+
+`simulate_nonlocal_worldline_adaptive` is now defined as the special case
+`AdaptiveSimulationPolicy::new(CompleteUniformHistory::new(),
+IdentityHistoryTransport, IdentityHistoryModulator)`; a dedicated
+bit-for-bit regression test (captured from the pre-composition
+implementation before it was refactored) confirms this reproduces the
+original numbers exactly, not merely approximately.
+`DiscreteConnectionTransport`, `SchwarzschildKretschmannModulator`, and
+`ReissnerNordstromFieldModulator` all compose with adaptive stepping —
+individually and together — exactly as they compose with the fixed-step
+integrators; `examples/adaptive_transported_modulated.rs` runs all four
+combinations of identity/discrete transport and unmodulated/modulated
+memory on the same trajectory and tolerance, showing each component
+measurably changes the result while every combination remains finite and
+well-behaved.
+
+## Kerr Background (Follow-Up)
+
+Every background used so far (`Minkowski`, `Schwarzschild`,
+`ReissnerNordstrom`) is static: its metric does not depend on time, and none
+has an off-diagonal `t`-`phi` term. `scirust_relativity::Kerr` (mass `M`,
+spin `a = J/M`) is a **rotating** background — stationary and axisymmetric,
+but not static, in standard Boyer-Lindquist coordinates:
+
+```text
+Sigma = r^2 + a^2 cos^2(theta)
+Delta = r^2 - 2 M r + a^2
+
+g_tt   = -(1 - 2 M r / Sigma)
+g_tphi = -2 M a r sin^2(theta) / Sigma
+g_rr   = Sigma / Delta
+g_thetatheta = Sigma
+g_phiphi = (r^2 + a^2 + 2 M a^2 r sin^2(theta) / Sigma) sin^2(theta)
+```
+
+At `a = 0`, `Sigma = r^2`, `Delta = r^2 - 2Mr`, and every component reduces
+algebraically to `Schwarzschild`'s exactly (`g_tphi` vanishes).
+
+**Unlike `Schwarzschild` and `ReissnerNordstrom`, `Kerr`'s connection is
+evaluated by central finite differences** (`numerical_christoffel`), not an
+exact analytic formula. Kerr's Christoffel symbols are algebraically far
+more complex than either of those backgrounds': the metric depends on both
+`r` and `theta` (not `r` alone), and the off-diagonal `t`-`phi` term
+couples further components together, so many more symbols are nonzero and
+mix all four coordinates. Hand-deriving them by the same process used for
+`ReissnerNordstrom` (structurally verifying a general formula against
+already-correct code, term by term) is not available here — there is no
+comparably simple general formula this crate already implements correctly
+that Kerr's Christoffels reduce to — so hand-derivation would carry a real
+risk of a transcription error with no independent way to catch it in this
+codebase. Using `numerical_christoffel`, itself already validated elsewhere
+in this crate against every background with an exact analytic connection,
+trades exact analytic Christoffels for a small, documented finite-difference
+truncation error. This is an explicit, honestly disclosed engineering
+choice, not an oversight, and is stated directly in `Kerr`'s own
+documentation.
+
+This choice is validated three ways: (1) at `a = 0`, the metric matches
+`Schwarzschild`'s bit-for-bit and the finite-difference Christoffel symbols
+match `Schwarzschild`'s exact analytic ones to the finite-difference
+tolerance; (2) the zero-angular-momentum-observer (ZAMO) angular velocity
+`-g_tphi / g_phiphi` is positive for positive spin outside the horizon,
+matching the well-known Lense-Thirring frame-dragging direction (a weak-field
+expansion of this same ratio reduces to the standard `2 M a / r^3` result);
+(3) `examples/kerr_worldline.rs` runs this crate's ordinary worldline and
+memory machinery — completely unmodified, with no Kerr-specific code beyond
+`Kerr::components`/`Kerr::christoffel` themselves — on a stationary
+observer at increasing spin, and frame dragging emerges as expected: the
+`phi` coordinate stays exactly zero at `spin = 0` and picks up a positive,
+spin-scaling drift at `spin > 0`, entirely from the geodesic equation and
+the finite-difference Christoffel symbols working together.
+
+The stationary-observer initial state deliberately avoids any Kerr-specific
+circular-orbit formula. Unlike Schwarzschild's, a Kerr circular equatorial
+orbit's four-velocity involves a prograde/retrograde asymmetry and an
+ISCO shift that depend on `a` in a more complex way; this crate does not
+derive, implement, or claim such a formula anywhere.
 
 ## Numerical Algorithms
 
@@ -673,7 +770,13 @@ small positive `kappa`, and independent implementations:
 - the adaptive integrator's accepted-step count and combined
   coordinate-and-velocity local error estimate, as a function of the
   configured error tolerance, and its final-state distance to an
-  independent fine fixed-step reference.
+  independent fine fixed-step reference;
+- the adaptive integrator's final state and memory norm across identity and
+  discrete transport, and unmodulated and curvature-modulated memory,
+  composed individually and together, on the same trajectory and tolerance;
+- the ZAMO angular velocity `-g_tphi / g_phiphi` in Kerr, as a function of
+  spin, and the coordinate `phi` drift of a stationary-observer trajectory
+  at increasing spin.
 
 These are numerical observables of this discretized model. Agreement or
 disagreement with physical data is not claimed.
@@ -697,10 +800,7 @@ disagreement with physical data is not claimed.
   compatibility.
 - Null and nearly null worldlines are outside this first implementation.
 - Event handling and history compression are not included anywhere in the
-  crate. Adaptive stepping now exists
-  (`simulate_nonlocal_worldline_adaptive`) but only for plain coordinate
-  memory; it does not compose with geometric transport or curvature
-  modulation.
+  crate.
 - `DiscreteConnectionTransport` is a discrete, segment-by-segment
   approximation of parallel transport, not an exact analytic bitensor
   propagator; its discretization error grows with the segment step and the
@@ -739,15 +839,24 @@ disagreement with physical data is not claimed.
   in Schwarzschild; it provides no exact reference for any other path
   (eccentric, inclined, non-geodesic) or for any other curved background.
 - `simulate_nonlocal_worldline_adaptive`'s embedded Heun-Euler error
-  estimate is a relatively simple adaptive scheme (no dense output, no
-  event handling, no higher-order embedded pair); it also does not compose
-  with `HistoryTransport` or `HistoryModulator`, so it cannot yet be used
-  together with transported or curvature-modulated memory.
+  estimate is a relatively simple adaptive scheme: no dense output, no
+  event handling, no higher-order embedded pair. It now composes with
+  `HistoryTransport` and `HistoryModulator` via
+  `simulate_nonlocal_worldline_adaptive_with_policy`, so transported and
+  curvature/field-modulated memory are no longer exclusive to the
+  fixed-step path.
 - `ReissnerNordstrom` and `ReissnerNordstromFieldModulator` are, like
   `Schwarzschild` and `SchwarzschildKretschmannModulator`, a fixed
   background and a phenomenological reweighting specific to that
   background's exterior chart; `beta` and the reference length are free,
   uncalibrated parameters.
+- `Kerr`'s connection is evaluated by finite differences
+  (`numerical_christoffel`), not an exact analytic formula like every other
+  background in this crate; it carries a small, step-size-dependent
+  truncation error instead of being exact to machine precision. No
+  Kerr-specific circular-orbit, transport, or modulation construction is
+  provided; `examples/kerr_worldline.rs` uses only a simple stationary
+  initial state for exactly this reason.
 
 ## Roadmap
 
@@ -788,10 +897,21 @@ requires a uniform grid, a genuinely non-uniform proper-time axis can be used
 post hoc, and the live integration loop can now choose its own non-uniform
 affine-parameter step directly, via a standard embedded Heun-Euler error
 estimate — not merely resample a uniformly-stepped trajectory after the
-fact. What remains open is composing that adaptive loop with geometric
-transport or curvature modulation, which the current
-`WorldlineStepper`/`MemoryLaw` fixed-step contracts do not support without
-further changes.
+fact. `simulate_nonlocal_worldline_adaptive_with_policy` further composes
+that adaptive loop with `HistoryTransport` and `HistoryModulator` (see
+"Composing Adaptive Stepping with Transport and Modulation" above); what
+remains open there is composing adaptivity with `WorldlineStepper` or
+`MemoryLaw` themselves, which still thread a single fixed `NonlocalConfig`
+step through their signatures.
+
+`scirust_relativity::Kerr` extends the background catalog to a rotating
+spacetime, evaluated by finite-difference Christoffel symbols rather than
+an exact analytic formula (see "Kerr Background" above) — a deliberate,
+disclosed engineering tradeoff, not a claim of the same precision
+`Schwarzschild` and `ReissnerNordstrom` provide. Future research may still
+study an exact analytic Kerr connection, Kerr-specific transport or
+modulation constructions, or additional backgrounds (other rotating or
+non-vacuum spacetimes). These remain research directions only.
 
 ### 3. Hypothetical Field-Equation Work
 

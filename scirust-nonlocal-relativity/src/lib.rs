@@ -46,7 +46,10 @@ mod modulation;
 mod proper_time;
 mod transport;
 
-pub use adaptive::{AdaptiveNonlocalConfig, simulate_nonlocal_worldline_adaptive};
+pub use adaptive::{
+    AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, simulate_nonlocal_worldline_adaptive,
+    simulate_nonlocal_worldline_adaptive_with_policy,
+};
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
     cylindrical_to_cartesian_coordinates, cylindrical_to_cartesian_velocity,
