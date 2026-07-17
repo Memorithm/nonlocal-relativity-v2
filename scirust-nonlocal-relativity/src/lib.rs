@@ -39,19 +39,26 @@ use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
 
+mod adaptive;
 mod charts;
+mod curved_transport;
 mod modulation;
 mod proper_time;
 mod transport;
 
+pub use adaptive::{AdaptiveNonlocalConfig, simulate_nonlocal_worldline_adaptive};
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
     cylindrical_to_cartesian_coordinates, cylindrical_to_cartesian_velocity,
     exact_cylindrical_minkowski_transport,
 };
+pub use curved_transport::{
+    exact_schwarzschild_circular_orbit_transport, schwarzschild_circular_orbit_angular_velocity,
+    schwarzschild_circular_orbit_four_velocity,
+};
 pub use modulation::{
     HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
-    SchwarzschildKretschmannModulator,
+    ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
 };
 pub use proper_time::{
     ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
@@ -884,7 +891,7 @@ pub struct NonlocalTrajectory<const D: usize> {
 }
 
 impl<const D: usize> NonlocalTrajectory<D> {
-    fn new(
+    pub(crate) fn new(
         states: Vec<WorldlineState<D>>,
         diagnostics: Vec<StepDiagnostics>,
         history_diagnostics: Vec<HistoryDiagnostics>,
@@ -1294,6 +1301,41 @@ pub enum NonlocalRelativityError {
         /// Fractional-calculus error.
         source: FractionalError,
     },
+
+    /// A circular-orbit radius is non-finite or does not exceed the
+    /// existence bound `3 M` for a circular equatorial geodesic.
+    InvalidCircularOrbitRadius(f64),
+
+    /// An adaptive-stepping configuration parameter is non-finite or outside
+    /// its required range.
+    InvalidAdaptiveConfiguration {
+        /// Name of the offending configuration field.
+        field: &'static str,
+        /// Rejected value.
+        value: f64,
+    },
+
+    /// The adaptive integrator accepted its configured maximum number of
+    /// steps without reaching the target affine parameter.
+    AdaptiveStepBudgetExhausted {
+        /// Number of accepted steps taken.
+        accepted_steps: usize,
+        /// Affine parameter actually reached.
+        reached_parameter: f64,
+        /// Requested target affine parameter.
+        target_affine_parameter: f64,
+    },
+
+    /// The adaptive integrator rejected a single step more times than the
+    /// configured retry budget while shrinking toward the tolerance.
+    AdaptiveRejectionBudgetExhausted {
+        /// Accepted step index at which the retry budget was exhausted.
+        accepted_step: usize,
+        /// Most recently attempted step size.
+        attempted_step: f64,
+        /// Most recent local error estimate.
+        error_estimate: f64,
+    },
 }
 
 impl fmt::Display for NonlocalRelativityError {
@@ -1525,6 +1567,33 @@ impl fmt::Display for NonlocalRelativityError {
             } => write!(
                 formatter,
                 "Caputo memory evaluation failed at step {step}, component {component}: {source}"
+            ),
+            Self::InvalidCircularOrbitRadius(radius) => write!(
+                formatter,
+                "circular-orbit radius must be finite and exceed 3 M; got {radius}"
+            ),
+            Self::InvalidAdaptiveConfiguration { field, value } => write!(
+                formatter,
+                "adaptive configuration field '{field}' is invalid; got {value}"
+            ),
+            Self::AdaptiveStepBudgetExhausted {
+                accepted_steps,
+                reached_parameter,
+                target_affine_parameter,
+            } => write!(
+                formatter,
+                "adaptive integrator exhausted its budget of {accepted_steps} accepted steps at \
+                 affine parameter {reached_parameter}, short of target {target_affine_parameter}"
+            ),
+            Self::AdaptiveRejectionBudgetExhausted {
+                accepted_step,
+                attempted_step,
+                error_estimate,
+            } => write!(
+                formatter,
+                "adaptive integrator exhausted its rejection budget after accepted step \
+                 {accepted_step}, last attempted step {attempted_step} with error estimate \
+                 {error_estimate}"
             ),
         }
     }
@@ -2030,7 +2099,11 @@ fn semi_implicit_euler_step<const D: usize>(
     Ok(WorldlineState::new(next_coordinates, next_velocity))
 }
 
-fn validate_generated_velocity(value: f64, step: usize, index: usize) -> NonlocalResult<()> {
+pub(crate) fn validate_generated_velocity(
+    value: f64,
+    step: usize,
+    index: usize,
+) -> NonlocalResult<()> {
     if !value.is_finite()
     {
         return Err(NonlocalRelativityError::NonFiniteGeneratedVelocity { step, index, value });
@@ -2039,7 +2112,11 @@ fn validate_generated_velocity(value: f64, step: usize, index: usize) -> Nonloca
     Ok(())
 }
 
-fn validate_generated_coordinate(value: f64, step: usize, index: usize) -> NonlocalResult<()> {
+pub(crate) fn validate_generated_coordinate(
+    value: f64,
+    step: usize,
+    index: usize,
+) -> NonlocalResult<()> {
     if !value.is_finite()
     {
         return Err(NonlocalRelativityError::NonFiniteGeneratedCoordinate { step, index, value });
@@ -2108,7 +2185,7 @@ fn refinement_endpoint<const D: usize>(
     })
 }
 
-fn checked_l2_distance<const D: usize>(
+pub(crate) fn checked_l2_distance<const D: usize>(
     left: &[f64; D],
     right: &[f64; D],
     quantity: &'static str,
@@ -2190,7 +2267,7 @@ where
     Ok(metric)
 }
 
-fn validated_metric_norm<const D: usize>(
+pub(crate) fn validated_metric_norm<const D: usize>(
     metric: &[[f64; D]; D],
     velocity: &[f64; D],
     floor: f64,
@@ -2215,7 +2292,7 @@ fn validated_metric_norm<const D: usize>(
     Ok(norm)
 }
 
-fn validated_christoffel<B, const D: usize>(
+pub(crate) fn validated_christoffel<B, const D: usize>(
     background: &B,
     coordinates: &[f64; D],
     step: usize,
@@ -2491,7 +2568,7 @@ where
     })
 }
 
-fn validate_vector<const D: usize, F>(
+pub(crate) fn validate_vector<const D: usize, F>(
     vector: &[f64; D],
     step: usize,
     error: F,
@@ -2510,7 +2587,7 @@ where
     Ok(())
 }
 
-fn validate_diagnostics(
+pub(crate) fn validate_diagnostics(
     diagnostics: &StepDiagnostics,
     step: usize,
 ) -> Result<(), NonlocalRelativityError> {

@@ -314,6 +314,68 @@ a direct validation of `DiscreteConnectionTransport`'s numerical correctness
 against a known-exact answer, strictly stronger than comparing two
 discretizations to each other.
 
+## Exact Curved-Background Transport (Circular Orbit, Follow-Up)
+
+`exact_cylindrical_minkowski_transport` is exact because flat spacetime has
+zero curvature, so transport is path-independent. Schwarzschild has nonzero
+curvature everywhere outside its horizon, so that argument does not apply
+there — but a *different* structural fact makes one more exact case
+available: along a **circular equatorial geodesic orbit** (constant `r`,
+`theta = pi/2`, the four-velocity `u = (u^t, 0, 0, u^phi)` returned by
+`schwarzschild_circular_orbit_four_velocity`), Schwarzschild's Christoffel
+symbols are constant, because they depend only on `r` and `theta`
+(stationarity and axisymmetry), both fixed along this path. The parallel
+transport equation
+
+```text
+dV^mu/dlambda = -Gamma^mu_(alpha beta) u^alpha V^beta
+```
+
+therefore reduces, along this one path family, to a **linear,
+constant-coefficient** ODE `dV/dlambda = -A V` for the fixed generator
+`A^mu_beta = Gamma^mu_(alpha beta) u^alpha`, with the exact closed-form
+solution `V(lambda) = exp(-lambda A) V(0)`.
+`exact_schwarzschild_circular_orbit_transport` evaluates this directly,
+using the same already-validated `Schwarzschild::christoffel` this crate
+uses everywhere else (no new Christoffel derivation), and a deterministic
+4x4 matrix exponential (scaling-and-squaring with a fixed-length Taylor
+series — a standard numerical linear algebra primitive, not a new numerical
+method or physics construction).
+
+`schwarzschild_circular_orbit_angular_velocity` returns
+`sqrt(M / r^3)` (the general-relativistic form of Kepler's third law, exact
+for circular equatorial orbits in these coordinates) and
+`schwarzschild_circular_orbit_four_velocity` returns the corresponding
+proper-time-normalized four-velocity (`g(u,u) = -1`); both require `r`
+finite and strictly greater than `3 M`, the existence bound for a circular
+equatorial timelike geodesic (a separate, larger bound at `6 M`, the
+innermost *stable* circular orbit, is not enforced, since stability is
+irrelevant to evaluating transport along a mathematically valid orbit).
+
+This is validated three ways, none of which assumes the answer:
+
+1. **Metric-compatibility conservation.** For *any* metric-compatible
+   connection, parallel transport preserves inner products along any curve:
+   `g(V, V)` and `g(V, u)` must stay exactly constant. These are checked
+   directly and are true regardless of whether the specific closed-form
+   solution above is correct — they test the general transport contract.
+2. **Convergence to `DiscreteConnectionTransport`.** Exactly mirroring
+   `examples/exact_transport_convergence.rs`'s flat-spacetime pattern,
+   `examples/schwarzschild_orbit_transport.rs` shows the discrete scheme's
+   numerical error against this new oracle shrinking at second order under
+   path refinement (`error_ratio_to_previous` converging to `4.0`).
+3. **Round-trip and determinism.** Forward transport followed by the
+   reverse (`-delta_lambda`) recovers the original vector; repeated
+   evaluation is bit-for-bit identical; `delta_lambda = 0` returns the input
+   vector bit-for-bit unchanged.
+
+**This is exact only for a circular equatorial geodesic orbit.** It is
+**not** a general bitensor propagator, does **not** extend to eccentric,
+inclined, or non-geodesic paths, and must never be described as valid for a
+general curved trajectory. `DiscreteConnectionTransport` remains the only
+transport strategy available for such paths, with no exact reference to
+validate against there.
+
 ## Curvature-Modulated Memory (Phase 4)
 
 Phase 4 adds one more additive, opt-in `MemoryLaw`: a deterministic scalar
@@ -365,6 +427,123 @@ No structure resembling a modified field equation, an Einstein tensor, or a
 stress-energy tensor is introduced anywhere in this crate. This is
 mechanically checked by a dedicated test that scans the crate's own source
 for item declarations using such names.
+
+## Reissner-Nordström Field Modulation (Follow-Up)
+
+`SchwarzschildKretschmannModulator` is tied to one background and one
+invariant. Schwarzschild is a vacuum solution, so its Ricci tensor vanishes
+identically and the Kretschmann scalar is essentially the only nontrivial
+polynomial curvature invariant available — there is no independent "other
+invariant" to build a second Schwarzschild modulator from. This follow-up
+instead adds a second **background**,
+`scirust_relativity::ReissnerNordstrom` (a static, spherically symmetric,
+electrically charged black hole), and a modulator built from a genuinely
+different kind of invariant.
+
+`ReissnerNordstrom`'s metric shares Schwarzschild's `(t, r, theta, phi)`
+structure with lapse `f(r) = 1 - 2 M/r + Q^2/r^2` in place of `1 - 2M/r`. Its
+Christoffel symbols use the same general formula that this lapse structure
+always produces (verified, term by term, against the existing Schwarzschild
+implementation while designing this follow-up), so they are exact and
+analytic, not finite-differenced. At `charge = 0` the metric and Christoffel
+symbols reduce to `Schwarzschild`'s exactly (bit-identical for the metric,
+machine-precision-identical for the Christoffel symbols, which take a
+different but mathematically equivalent computational path); this crate's
+test suite checks this directly, alongside an independent cross-check
+against `scirust_relativity::numerical_christoffel`. Construction requires a
+strictly positive finite mass and a finite charge satisfying the
+sub-extremal bound `charge^2 < mass^2`, guaranteeing two distinct, real
+horizons.
+
+`ReissnerNordstromFieldModulator` weights retained history samples by the
+electromagnetic field invariant of the background's radial Coulomb field,
+not a curvature invariant:
+
+```text
+F^2 = F_(mu nu) F^(mu nu) = 2 Q^2 / r^4
+q = 1 + beta * L^2 * |F^2|
+```
+
+Note the reference-length power `L^2`, not `L^4`: in the geometric units
+this crate uses (charge carries the same dimension as mass), `F^2` has
+dimension `length^-2`, unlike the Kretschmann scalar's `length^-4`, so a
+different power is needed to make the product dimensionless. This crate
+uses the Reissner-Nordström metric exactly as it uses Schwarzschild's:
+as fixed, externally specified background data. Nothing here solves the
+Einstein or Maxwell equations, or computes the electromagnetic field's
+backreaction on the metric — the metric formula is simply taken as known,
+the same way Schwarzschild's is.
+
+Construction and evaluation follow the same pattern as
+`SchwarzschildKretschmannModulator`: a strictly positive finite reference
+length and a finite non-negative `beta`; a finite radius strictly outside
+the outer horizon; a finite positive resulting weight; and **`beta ==
+0.0` is a full bypass** returning exactly `1.0` without computing the field
+invariant, reproducing the unmodulated baseline bit-for-bit.
+
+**This law must never be described as:**
+
+- a unique consequence of general relativity or electromagnetism;
+- a quantum-gravity or quantum-electrodynamics prediction;
+- an experimentally derived law;
+- a modification of the Einstein field equations or Maxwell's equations.
+
+## Adaptive-Step Worldline Integration (Follow-Up)
+
+Every integrator described so far advances a **fixed** affine-parameter
+step `h` for a fixed number of steps (`NonlocalConfig::step`/`steps`), and
+`proper_time_caputo_velocity_memory` only *resamples* an already
+uniformly-stepped trajectory after the fact. `simulate_nonlocal_worldline_adaptive`
+closes the remaining gap: the live integration loop chooses its own
+non-uniform affine-parameter step, using
+`AdaptiveNonlocalConfig` (an error tolerance, step bounds, and a target
+affine parameter in place of a fixed step and step count).
+
+The step-size controller is the classical **embedded Heun-Euler pair**, a
+standard, well-established adaptive-Runge-Kutta technique: the same Euler
+predictor and Heun corrector this crate's `HeunPeceStepper` already computes
+serve as a first-order/second-order embedded pair, so the local error
+estimate `||corrected - predicted||` (combined coordinate and velocity L2
+distance) costs no acceleration evaluation beyond what one ordinary Heun
+step already needs. A step is accepted when the estimate is within
+`error_tolerance`, and the next step size is proposed from the standard
+`safety * (tolerance / error)^(1/2)` control law (exponent `1/2` for the
+embedded pair's lower order, `p = 1`); a rejected step shrinks and retries,
+bounded by `max_rejections_per_step`, and a step that would need to shrink
+below `min_step` to meet tolerance is a typed error
+(`AdaptiveRejectionBudgetExhausted`), never a silently-accepted
+out-of-tolerance result. Integration stops once the accumulated affine
+parameter reaches `target_affine_parameter` (the final step is clamped so
+it does not overshoot); exceeding `max_accepted_steps` before reaching the
+target is a typed error (`AdaptiveStepBudgetExhausted`), never a silently
+truncated trajectory.
+
+Because the resulting history is non-uniform by construction, the memory
+force is evaluated with `caputo_l1_nonuniform` directly against the
+accumulated non-uniform affine-parameter axis — not
+`caputo_l1_uniform`, and not a post-hoc resample. The returned
+`NonlocalTrajectory` therefore samples a generally non-uniform axis: it must
+**never** be passed to `affine_trajectory_proper_time`, whose `step`
+argument assumes uniform spacing; read `diagnostics()[i].affine_parameter`
+directly instead.
+
+This is deliberately narrower than the fixed-step architecture: it always
+uses complete coordinate-memory history, with no `HistoryTransport` or
+`HistoryModulator` composability, because `WorldlineStepper` and
+`MemoryLaw` thread a single fixed `NonlocalConfig` step through
+`StepperContext`, which a variable step size cannot satisfy without
+changing those contracts. `examples/adaptive_worldline.rs` cross-validates
+the adaptive path against a very fine, independent fixed-step
+`HeunPeceStepper` run (agreement to `1.0e-4` or better with the shipped
+parameters) and demonstrates it reaching comparable or better accuracy than
+an 800-step fixed run with as few as 23 accepted steps at a loose tolerance
+— a concrete illustration of *why* adaptive stepping is useful here, not
+merely that it runs.
+
+This is a standard numerical technique applied to this crate's existing
+state equation. It does not change the state equation, does not claim
+improved physical accuracy beyond what the underlying discretization
+already provides, and is not a new numerical method.
 
 ## Numerical Algorithms
 
@@ -484,7 +663,17 @@ small positive `kappa`, and independent implementations:
   radius, for `beta = 0` versus small positive `beta`, under refinement;
 - the L2 norm difference between affine-parameter-based and
   proper-time-based Caputo velocity memory on the same trajectory, under
-  refinement.
+  refinement;
+- `DiscreteConnectionTransport`'s numerical error against the exact
+  circular-equatorial-orbit transport oracle in Schwarzschild, under path
+  refinement;
+- the Reissner-Nordström electromagnetic-field-invariant modulation weight
+  and its effect on final radius, for `beta = 0` versus small positive
+  `beta`;
+- the adaptive integrator's accepted-step count and combined
+  coordinate-and-velocity local error estimate, as a function of the
+  configured error tolerance, and its final-state distance to an
+  independent fine fixed-step reference.
 
 These are numerical observables of this discretized model. Agreement or
 disagreement with physical data is not claimed.
@@ -507,8 +696,11 @@ disagreement with physical data is not claimed.
   by the caller; the crate validates finiteness but does not prove geometric
   compatibility.
 - Null and nearly null worldlines are outside this first implementation.
-- No adaptive stepping, event handling, error estimation, or history
-  compression is included.
+- Event handling and history compression are not included anywhere in the
+  crate. Adaptive stepping now exists
+  (`simulate_nonlocal_worldline_adaptive`) but only for plain coordinate
+  memory; it does not compose with geometric transport or curvature
+  modulation.
 - `DiscreteConnectionTransport` is a discrete, segment-by-segment
   approximation of parallel transport, not an exact analytic bitensor
   propagator; its discretization error grows with the segment step and the
@@ -542,6 +734,20 @@ disagreement with physical data is not claimed.
   adaptive, and its non-uniform proper-time axis is itself only a
   first-order-accurate estimate from `affine_trajectory_proper_time`, not an
   independently resolved proper-time integration.
+- `exact_schwarzschild_circular_orbit_transport` is exact only for a
+  circular equatorial geodesic orbit at a radius strictly exceeding `3 M`
+  in Schwarzschild; it provides no exact reference for any other path
+  (eccentric, inclined, non-geodesic) or for any other curved background.
+- `simulate_nonlocal_worldline_adaptive`'s embedded Heun-Euler error
+  estimate is a relatively simple adaptive scheme (no dense output, no
+  event handling, no higher-order embedded pair); it also does not compose
+  with `HistoryTransport` or `HistoryModulator`, so it cannot yet be used
+  together with transported or curvature-modulated memory.
+- `ReissnerNordstrom` and `ReissnerNordstromFieldModulator` are, like
+  `Schwarzschild` and `SchwarzschildKretschmannModulator`, a fixed
+  background and a phenomenological reweighting specific to that
+  background's exterior chart; `beta` and the reference length are free,
+  uncalibrated parameters.
 
 ## Roadmap
 
@@ -559,33 +765,44 @@ diagnostics and explicit failure modes.
 
 Phase 3's `DiscreteConnectionTransport` is an initial, explicitly discrete and
 approximate step toward transported history — a segment-by-segment numerical
-scheme, not an analytic construction. `exact_cylindrical_minkowski_transport`
-adds one exact closed-form case, for flat spacetime only, exploiting
-path-independence of transport under a curvature-free connection; it is a
-validation oracle for the discrete scheme in that one case, not a general
-bitensor propagator. Future research may still study exact or analytic
-propagators for **curved** backgrounds (where no closed-form shortcut like
-flatness's path-independence is available), or other covariant
+scheme, not an analytic construction. Two exact closed-form cases now exist
+as validation oracles for it, neither a general bitensor propagator:
+`exact_cylindrical_minkowski_transport` for flat spacetime (exploiting
+path-independence of transport under a curvature-free connection), and
+`exact_schwarzschild_circular_orbit_transport` for a circular equatorial
+orbit in a **curved** background (exploiting the constancy of the transport
+generator along that one special path family — a different mathematical
+mechanism than path-independence, which curved spacetime does not have in
+general). Future research may still study exact or analytic propagators for
+a general curved path (where neither shortcut applies), or other covariant
 constructions. These remain research directions only and are not
-established physics in this crate; neither `DiscreteConnectionTransport` nor
-`exact_cylindrical_minkowski_transport` preempts or substitutes for them, and
-neither is presented as a general covariance proof.
+established physics in this crate; none of `DiscreteConnectionTransport`,
+`exact_cylindrical_minkowski_transport`, or
+`exact_schwarzschild_circular_orbit_transport` preempts or substitutes for
+them, and none is presented as a general covariance proof.
 
-`scirust_fractional::caputo_l1_nonuniform` and
-`proper_time_caputo_velocity_memory` partially resolve the "proper-time
-history sampled at its own resolution" item: the Caputo evaluator itself no
-longer requires a uniform grid, and a genuinely non-uniform proper-time axis
-can be used post hoc. What remains open is *adaptive* resolution — letting
-the live integration loop itself choose a non-uniform step, rather than
-resampling a uniformly-stepped trajectory after the fact.
+`scirust_fractional::caputo_l1_nonuniform`, `proper_time_caputo_velocity_memory`,
+and `simulate_nonlocal_worldline_adaptive` together resolve the "proper-time
+history sampled at its own resolution" item: the Caputo evaluator no longer
+requires a uniform grid, a genuinely non-uniform proper-time axis can be used
+post hoc, and the live integration loop can now choose its own non-uniform
+affine-parameter step directly, via a standard embedded Heun-Euler error
+estimate — not merely resample a uniformly-stepped trajectory after the
+fact. What remains open is composing that adaptive loop with geometric
+transport or curvature modulation, which the current
+`WorldlineStepper`/`MemoryLaw` fixed-step contracts do not support without
+further changes.
 
 ### 3. Hypothetical Field-Equation Work
 
-Any future field-equation investigation would require a separate mathematical
-and numerical contract, independent validation, and clear distinction from
-established general relativity. This crate does not implement such work, and
-this roadmap item is not a claim that fractional field equations are
-established physics. Phase 4's `SchwarzschildKretschmannModulator` is not a
-step toward this item: it is a phenomenological scalar reweighting of a
+This item is **not future work for this crate — it is permanently out of
+scope**, excluded by the non-negotiable scientific boundary stated at the
+top of this document and in the top-level `README.md`. Any field-equation
+investigation would require a separate mathematical and numerical contract,
+independent validation, and clear distinction from established general
+relativity; this crate does not implement such work and will not, and no
+future change to this crate should attempt it. Neither
+`SchwarzschildKretschmannModulator` nor `ReissnerNordstromFieldModulator` is
+a step toward this item: both are phenomenological scalar reweightings of a
 trajectory-level history force, with no Einstein tensor, stress-energy
-tensor, or field equation anywhere in its construction.
+tensor, or field equation anywhere in their construction.
