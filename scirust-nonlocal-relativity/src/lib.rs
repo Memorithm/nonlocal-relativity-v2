@@ -40,15 +40,21 @@ use std::fmt;
 use std::str::FromStr;
 
 mod adaptive;
+mod adaptive_stepper;
 mod charts;
 mod curved_transport;
 mod modulation;
+mod nonuniform_memory;
 mod proper_time;
 mod transport;
 
 pub use adaptive::{
     AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, simulate_nonlocal_worldline_adaptive,
     simulate_nonlocal_worldline_adaptive_with_policy,
+};
+pub use adaptive_stepper::{
+    AdaptiveStepperPolicy, simulate_nonlocal_worldline_adaptive_with_stepper,
+    simulate_nonlocal_worldline_adaptive_with_stepper_policy,
 };
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
@@ -62,6 +68,9 @@ pub use curved_transport::{
 pub use modulation::{
     HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
     ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
+};
+pub use nonuniform_memory::{
+    NonuniformCaputoCoordinateMemory, NonuniformModulatedCaputoCoordinateMemory,
 };
 pub use proper_time::{
     ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
@@ -2076,9 +2085,9 @@ where
     })
 }
 
-struct StepEvaluation<const D: usize> {
-    acceleration: [f64; D],
-    diagnostics: StepDiagnostics,
+pub(crate) struct StepEvaluation<const D: usize> {
+    pub(crate) acceleration: [f64; D],
+    pub(crate) diagnostics: StepDiagnostics,
 }
 
 fn semi_implicit_euler_step<const D: usize>(
@@ -2459,19 +2468,19 @@ pub(crate) fn validate_history_velocity<const D: usize>(
     Ok(())
 }
 
-struct StepEvaluationInput<'a, B, H, L, T, const D: usize> {
-    background: &'a B,
-    state: &'a WorldlineState<D>,
-    history: &'a H,
-    memory_law: &'a L,
-    transport: &'a T,
-    initial_metric_norm: f64,
-    affine_parameter: f64,
-    step_index: usize,
-    config: NonlocalConfig,
+pub(crate) struct StepEvaluationInput<'a, B, H, L, T, const D: usize> {
+    pub(crate) background: &'a B,
+    pub(crate) state: &'a WorldlineState<D>,
+    pub(crate) history: &'a H,
+    pub(crate) memory_law: &'a L,
+    pub(crate) transport: &'a T,
+    pub(crate) initial_metric_norm: f64,
+    pub(crate) affine_parameter: f64,
+    pub(crate) step_index: usize,
+    pub(crate) config: NonlocalConfig,
 }
 
-fn evaluate_step_with_policy<B, H, L, T, const D: usize>(
+pub(crate) fn evaluate_step_with_policy<B, H, L, T, const D: usize>(
     input: StepEvaluationInput<'_, B, H, L, T, D>,
 ) -> NonlocalResult<StepEvaluation<D>>
 where

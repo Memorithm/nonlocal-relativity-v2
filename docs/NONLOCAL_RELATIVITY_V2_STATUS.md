@@ -149,6 +149,33 @@ not a covariant field theory; and no empirical validation is claimed.**
   connection.
 - `examples/adaptive_transported_modulated.rs`, `examples/kerr_worldline.rs`.
 
+### This round
+
+- `NonuniformCaputoCoordinateMemory` and
+  `NonuniformModulatedCaputoCoordinateMemory<M>` (in
+  `scirust-nonlocal-relativity::nonuniform_memory`): two new `MemoryLaw`
+  implementations, the existing trait unmodified, that read each retained
+  sample's own recorded `HistoryEntry::parameter` and evaluate
+  `caputo_l1_nonuniform` directly instead of applying one
+  `NonlocalConfig::step` value to the whole retained history. They compose
+  with both the fixed-step and adaptive architectures.
+- `AdaptiveStepperPolicy<H, L, T>` and
+  `simulate_nonlocal_worldline_adaptive_with_stepper_policy` (in
+  `scirust-nonlocal-relativity::adaptive_stepper`): a second adaptive-step
+  integrator, the first to genuinely reuse `MemoryLaw` and `WorldlineStepper`
+  (`SemiImplicitEulerStepper` specifically) rather than a bespoke parallel
+  mechanism. Error control uses classical step-doubling (one full trial step
+  compared against two half steps) rather than an embedded pair, since
+  semi-implicit Euler has no natural embedded higher-order partner.
+  `HeunPeceStepper` is deliberately excluded: its predictor's
+  provisional-point parameter formula (`step_index * config.step`) assumes
+  uniform step spacing, which adaptive stepping violates by construction; see
+  `adaptive_stepper.rs`'s module documentation for the full reasoning.
+  `simulate_nonlocal_worldline_adaptive_with_stepper` is the
+  `NonuniformCaputoCoordinateMemory` + `IdentityHistoryTransport` +
+  `CompleteUniformHistory` special case.
+- `examples/adaptive_worldline_stepper.rs`.
+
 ## Validations Performed
 
 - `cargo fmt --all -- --check` clean.
@@ -162,7 +189,8 @@ not a covariant field theory; and no empirical validation is claimed.**
   `exact_transport_convergence`, `proper_time_memory_comparison`,
   `schwarzschild_orbit_transport`, `adaptive_worldline`,
   `reissner_nordstrom_field_modulation`, `adaptive_transported_modulated`,
-  `kerr_worldline`) run to completion and produce deterministic CSV output.
+  `kerr_worldline`, `adaptive_worldline_stepper`) run to completion and
+  produce deterministic CSV output.
 - Bit-for-bit regression: every Phase 1/2 test file is unmodified and passes
   unchanged; Phase 3/4 additions include explicit bit-identity tests for the
   compatibility paths (`beta = 0`, identity transport, affine mode).
@@ -198,6 +226,19 @@ not a covariant field theory; and no empirical validation is claimed.**
   (bit-for-bit) and exact analytic Christoffel symbols (finite-difference
   tolerance), plus a frame-dragging sign check and a symmetric-metric check
   (11 dedicated tests).
+- `simulate_nonlocal_worldline_adaptive_with_stepper_policy` cross-validated
+  against a very fine independent fixed-step `SemiImplicitEulerStepper` run
+  using the same `NonuniformCaputoCoordinateMemory` law, in addition to
+  bit-for-bit determinism, non-uniform-step, target-reaching, step-budget-
+  and (newly, explicitly counted) rejection-budget-exhaustion tests, and the
+  same transport/modulation composition coverage
+  (`simulate_nonlocal_worldline_adaptive_with_policy` received the previous
+  round) — 16 dedicated tests. `NonuniformCaputoCoordinateMemory` separately
+  cross-validated against `CaputoCoordinateMemory` under the fixed-step
+  architecture at uniform spacing (numerically close, and observed to agree
+  bit-for-bit for at least one tested configuration, though the two Caputo
+  evaluators reach that value by different floating-point paths and are not
+  guaranteed to coincide exactly for every input).
 
 ## Complexities (as actually implemented)
 
@@ -214,6 +255,8 @@ not a covariant field theory; and no empirical validation is claimed.**
 | Reissner-Nordström field modulation (`ReissnerNordstromFieldModulator`) | Adds `O(1)` work per retained sample per evaluation, identical in structure to `SchwarzschildKretschmannModulator` |
 | Adaptive worldline with transport/modulation (`simulate_nonlocal_worldline_adaptive_with_policy`) | Same order as plain adaptive integration; `DiscreteConnectionTransport` composed in adds the same `O(D^3)` per-retained-vector transport cost the fixed-step path pays, applied once per accepted (and once per trial) segment |
 | Kerr connection (`Kerr::christoffel`) | `O(1)` per evaluation: `numerical_christoffel` evaluates the metric `2D+1 = 9` times (central differences in each of 4 directions) and inverts one 4x4 metric, versus `O(1)` for Schwarzschild/Reissner-Nordström's single closed-form evaluation — asymptotically the same order, a larger constant factor |
+| Non-uniform memory laws (`NonuniformCaputoCoordinateMemory`, `NonuniformModulatedCaputoCoordinateMemory`) | `O(D * N)` per evaluation over `N` retained samples, same order as `CaputoCoordinateMemory`/`ModulatedCaputoCoordinateMemory` |
+| Adaptive worldline with a genuine `WorldlineStepper` (`simulate_nonlocal_worldline_adaptive_with_stepper_policy`) | `O(D * N^2)` in the best case (no rejections) over `N` accepted steps, matching the plain adaptive integrator's order; each accepted-step attempt costs three `SemiImplicitEulerStepper::advance` calls plus one extra `O(D * N)` memory-law evaluation at the trial midpoint (step-doubling, versus the embedded pair's one extra evaluation at the trial endpoint), and a rejected attempt is discarded and retried at a smaller step |
 
 ## Assumptions
 
@@ -258,6 +301,12 @@ not a covariant field theory; and no empirical validation is claimed.**
   `Christoffel` symbols are a finite-difference approximation with a fixed
   internal difference step, not an exact analytic result, unlike every
   other background in this crate.
+- `simulate_nonlocal_worldline_adaptive_with_stepper_policy` assumes
+  `SemiImplicitEulerStepper` specifically; it does not accept a stepper type
+  parameter at all, because `HeunPeceStepper`'s existing predictor-parameter
+  formula is unsound under a varying step size (see the Limitations entry
+  below), and no other `WorldlineStepper` implementation exists in this
+  crate to consider.
 
 ## Limitations
 
@@ -287,13 +336,27 @@ not a covariant field theory; and no empirical validation is claimed.**
   circular-equatorial-orbit special case; it has no known-exact reference
   for an eccentric, inclined, or otherwise general curved path, and neither
   it nor `DiscreteConnectionTransport` closes that gap.
-- `simulate_nonlocal_worldline_adaptive`'s step-doubling-free embedded error
-  estimate (Heun-Euler) is a standard but relatively simple adaptive scheme;
-  it does not include event handling, dense output, or higher-order
-  embedded pairs. It still does not compose with `WorldlineStepper` or
-  `MemoryLaw` (as opposed to `HistoryTransport`/`HistoryModulator`, which it
-  now does), since those two traits thread a single fixed `NonlocalConfig`
-  step through their signatures.
+- `simulate_nonlocal_worldline_adaptive`'s embedded error estimate
+  (Heun-Euler) is a standard but relatively simple adaptive scheme; it does
+  not include event handling, dense output, or higher-order embedded pairs.
+  It still does not itself compose with `WorldlineStepper` or `MemoryLaw`
+  (as opposed to `HistoryTransport`/`HistoryModulator`, which it now does),
+  since those two traits thread a single fixed `NonlocalConfig` step through
+  their signatures.
+- `simulate_nonlocal_worldline_adaptive_with_stepper_policy` closes the
+  `WorldlineStepper`/`MemoryLaw` gap above only for `SemiImplicitEulerStepper`
+  and only via a different mechanism (classical step-doubling, not an
+  embedded pair) — it does not generalize
+  `simulate_nonlocal_worldline_adaptive_with_policy`'s controller itself.
+  `HeunPeceStepper` cannot be composed either way without changing its
+  existing body: its predictor reconstructs an absolute affine parameter as
+  `step_index * config.step`, which is exact only when every accepted step
+  shares that size. Separately, this integrator actively counts rejections
+  against `AdaptiveNonlocalConfig::max_rejections_per_step`, which
+  `simulate_nonlocal_worldline_adaptive_with_policy`'s retry loop validates
+  but does not consult (that loop instead stops shrinking once the trial
+  step falls below `min_step`) — a pre-existing, harmless discrepancy this
+  round did not change in the earlier loop.
 - `ReissnerNordstromFieldModulator`'s `beta` and reference length are, like
   `SchwarzschildKretschmannModulator`'s, free, uncalibrated phenomenological
   parameters, specific to the Reissner-Nordström exterior chart.
@@ -314,13 +377,22 @@ not a covariant field theory; and no empirical validation is claimed.**
   `exact_schwarzschild_circular_orbit_transport`; neither extends to a
   general curved path, where neither flatness's path-independence nor a
   circular orbit's constant-transport-generator argument applies.)
-- Composing the adaptive-step integrator with `WorldlineStepper` or
-  `MemoryLaw` themselves (as opposed to `HistoryTransport`/
-  `HistoryModulator`, composed this round via
-  `simulate_nonlocal_worldline_adaptive_with_policy`). Both traits still
-  thread a single fixed `NonlocalConfig` step through their signatures
-  (`StepperContext` for the former), which a variable step size cannot
-  satisfy without changing those contracts.
+- Composing `HeunPeceStepper` specifically with adaptive stepping (the
+  `MemoryLaw` half of this gap, and the `WorldlineStepper` half for
+  `SemiImplicitEulerStepper`, were closed this round by
+  `simulate_nonlocal_worldline_adaptive_with_stepper_policy`, via classical
+  step-doubling rather than an embedded pair). `HeunPeceStepper::advance`'s
+  predictor reconstructs an absolute affine parameter as `step_index *
+  config.step`, exact only when every accepted step shares that size; doing
+  this soundly under a varying step size would require `StepperContext` to
+  carry the true accumulated parameter directly instead of deriving it from
+  `step_index`, changing that existing, already-tested struct and
+  `HeunPeceStepper::advance`'s body itself.
+- Generalizing `simulate_nonlocal_worldline_adaptive_with_policy`'s embedded
+  Heun-Euler controller itself to use a genuine `WorldlineStepper`/
+  `MemoryLaw` pair, rather than adding a second, narrower adaptive entry
+  point (`simulate_nonlocal_worldline_adaptive_with_stepper_policy`) beside
+  it, as this round did.
 - An exact analytic Kerr connection, as a replacement for the
   finite-difference Christoffel symbols delivered this round; Kerr-specific
   transport, modulation, or circular-orbit constructions (this round
@@ -382,3 +454,16 @@ independently-established components (an embedded Runge-Kutta pair, the
 existing `HistoryTransport`/`HistoryModulator` contracts); the composition
 itself is not a new physical claim beyond what each component already
 carries.
+`simulate_nonlocal_worldline_adaptive_with_stepper_policy` composes standard,
+independently-established components (classical step-doubling, the existing
+`MemoryLaw`/`SemiImplicitEulerStepper` contracts); it must never be
+described as composing with `HeunPeceStepper`, as more accurate than
+`simulate_nonlocal_worldline_adaptive_with_policy`'s embedded pair, or as a
+new numerical method.
+`NonuniformCaputoCoordinateMemory` and
+`NonuniformModulatedCaputoCoordinateMemory` must never be described as
+bit-identical to `CaputoCoordinateMemory`/`ModulatedCaputoCoordinateMemory`
+under uniform spacing as a general guarantee; they are algebraically
+equivalent term-by-term in exact arithmetic, but whether two runs agree to
+the bit or only closely is a property of the specific floating-point input,
+not something either type guarantees for every input.

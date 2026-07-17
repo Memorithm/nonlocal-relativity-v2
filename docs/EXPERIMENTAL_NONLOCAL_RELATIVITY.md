@@ -530,7 +530,11 @@ directly instead.
 `simulate_nonlocal_worldline_adaptive` does not itself reuse `WorldlineStepper`
 or `MemoryLaw` — both thread a single fixed `NonlocalConfig` step through
 their signatures (`StepperContext` for the former), which a variable step
-size cannot satisfy without changing those contracts.
+size cannot satisfy without changing those contracts. (A later follow-up,
+"Composing Adaptive Stepping with `MemoryLaw` and `WorldlineStepper`" below,
+closes this for `SemiImplicitEulerStepper` specifically, via a different
+step-size-control mechanism; `HeunPeceStepper` still cannot be composed
+either way, for a precise, disclosed reason given there.)
 `examples/adaptive_worldline.rs` cross-validates the adaptive path against a
 very fine, independent fixed-step `HeunPeceStepper` run (agreement to
 `1.0e-4` or better with the shipped parameters) and demonstrates it reaching
@@ -579,6 +583,90 @@ combinations of identity/discrete transport and unmodulated/modulated
 memory on the same trajectory and tolerance, showing each component
 measurably changes the result while every combination remains finite and
 well-behaved.
+
+### Composing Adaptive Stepping with `MemoryLaw` and `WorldlineStepper` (Follow-Up)
+
+`WorldlineStepper` and `MemoryLaw` remain blockers for
+`simulate_nonlocal_worldline_adaptive_with_policy`'s embedded-pair
+controller (the previous section) for the reason already given: both thread
+a single fixed `NonlocalConfig` step through their signatures, and
+`CaputoCoordinateMemory` specifically applies that one step to the *entire*
+retained history via `caputo_l1_uniform`.
+`simulate_nonlocal_worldline_adaptive_with_stepper_policy` closes this gap,
+but only partially and only by a different mechanism — classical
+step-doubling rather than an embedded pair — not by generalizing the
+embedded-pair controller itself.
+
+**The memory-law half of the gap is closed completely.** Two new types,
+`NonuniformCaputoCoordinateMemory` and
+`NonuniformModulatedCaputoCoordinateMemory<M>`, implement the *existing*
+`MemoryLaw` trait unmodified: instead of applying one `NonlocalConfig::step`
+value to the whole retained history, they read each retained sample's own
+recorded `HistoryEntry::parameter` and evaluate `caputo_l1_nonuniform`
+directly. Because `MemoryLaw::memory_vector` already receives
+`history: &H where H: HistoryBackend<D>` — which already exposes
+`HistoryBackend::entry`, since `ModulatedCaputoCoordinateMemory` already
+needs it for `HistoryModulator::weight` — no trait signature changed. These
+two types compose with the fixed-step architecture too
+(`simulate_nonlocal_worldline_with_policy`), not only the adaptive one:
+under uniform spacing they produce numerically close results to
+`CaputoCoordinateMemory`/`ModulatedCaputoCoordinateMemory` (the two Caputo
+evaluators are algebraically equivalent term-by-term under exactly uniform
+spacing, though they reach that value by different floating-point paths, so
+whether two runs agree to the bit or only closely is a property of the
+specific input, not something either type guarantees).
+
+**The stepper half is closed only for `SemiImplicitEulerStepper`.**
+`SemiImplicitEulerStepper::advance`'s body reads only `context.state`,
+`context.accepted_acceleration`, and `context.config.step` (the current
+trial step size) — it never reconstructs an absolute affine parameter from
+`context.step_index`, so it is safe to call with a varying step size across
+accepted steps. `HeunPeceStepper::advance` is not: its predictor pushes a
+provisional history entry whose parameter it computes as
+`(context.step_index + 1) as f64 * context.config.step`, an absolute affine
+parameter reconstructed by multiplying an integer step count by *one* step
+size. That formula is exact under the fixed-step architecture, where every
+accepted step shares that size, but wrong the moment accepted step sizes
+vary — there is no single `step` value for which `step_index * step` equals
+the true accumulated parameter along a non-uniform trajectory. Fixing this
+would require `StepperContext` to carry the true accumulated parameter
+directly instead of deriving it from `step_index`, changing that existing,
+already-tested struct and `HeunPeceStepper::advance`'s body itself — out of
+scope for an additive change, and not attempted here.
+
+Since `SemiImplicitEulerStepper` alone has no natural embedded higher-order
+partner (unlike the Euler-predictor/Heun-corrector pair the previous
+section's controller reuses), error control instead uses classical
+**step-doubling**: one full trial step of size `h` is compared against two
+steps of size `h/2` (with a memory-law evaluation at the midpoint, against a
+throwaway provisional history clone — the same pattern
+`HeunPeceStepper::advance`'s predictor push already uses). Semi-implicit
+Euler is a first-order method (local truncation error `O(h^2)`, same as the
+embedded pair's lower method), so the same `1/(p+1) = 0.5` growth/shrink
+exponent applies, and for a first-order method the Richardson error estimate
+needs no rescaling: the raw one-step/two-half-step difference is already the
+local error estimate, used directly.
+
+`AdaptiveStepperPolicy<H, L, T>` bundles a `HistoryBackend`, a `MemoryLaw`,
+and a `HistoryTransport` (mirroring `NonlocalSimulationPolicy`'s role for
+the fixed-step path, narrowed further than `AdaptiveSimulationPolicy` above:
+there is no stepper type parameter, since `SemiImplicitEulerStepper` is the
+only sound choice). `simulate_nonlocal_worldline_adaptive_with_stepper` is
+the `NonuniformCaputoCoordinateMemory` + `IdentityHistoryTransport` +
+`CompleteUniformHistory` special case.
+`examples/adaptive_worldline_stepper.rs` runs several `MemoryLaw`/transport
+combinations on the same trajectory and tolerance, plus a sanity-anchor row
+against the plain entry point.
+
+One further, independent note: `AdaptiveNonlocalConfig::max_rejections_per_step`
+is validated by both adaptive entry points but only actively *counted* by
+this one. `simulate_nonlocal_worldline_adaptive_with_policy`'s retry loop
+stops shrinking only once the trial step falls below
+`AdaptiveNonlocalConfig::min_step`;
+`simulate_nonlocal_worldline_adaptive_with_stepper_policy` counts rejections
+explicitly and returns `AdaptiveRejectionBudgetExhausted` as soon as either
+bound is hit, matching that field's documented meaning ("the maximum number
+of consecutive rejections permitted") precisely.
 
 ## Kerr Background (Follow-Up)
 
