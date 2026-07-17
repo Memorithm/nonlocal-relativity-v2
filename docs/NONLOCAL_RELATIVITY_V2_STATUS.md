@@ -65,6 +65,23 @@ not a covariant field theory; and no empirical validation is claimed.**
   to 128 waypoints with the shipped parameters) — a direct validation against
   a known-exact answer, not just against another discretization.
 
+### Follow-up: non-uniform Caputo operator and proper-time-based memory (this work)
+
+- `scirust_fractional::caputo_l1_nonuniform`: the L1 Caputo scheme
+  generalized to an explicitly non-uniform temporal grid (additive; the
+  existing `caputo_l1_uniform` is unchanged). Validated independently:
+  exactness for linear functions on a non-uniform grid, and numerical
+  agreement with `caputo_l1_uniform` on a uniform grid.
+- `proper_time_caputo_velocity_memory`: a pure post-hoc diagnostic that
+  evaluates Caputo velocity memory against an already-computed trajectory's
+  own non-uniform proper-time axis (from `affine_trajectory_proper_time`),
+  resolving the "must never be passed to `caputo_l1_uniform`" gap that
+  function's own documentation flagged. Does not touch the live integration
+  loop.
+- `examples/proper_time_memory_comparison.rs`: compares affine- and
+  proper-time-based memory on a Schwarzschild trajectory across refinement
+  levels.
+
 ## Validations Performed
 
 - `cargo fmt --all -- --check` clean.
@@ -96,6 +113,8 @@ not a covariant field theory; and no empirical validation is claimed.**
 | Bounded short memory (`BoundedShortMemoryHistory`) | `O(D * N * W)` for window `W` (unchanged) |
 | Discrete parallel transport (`DiscreteConnectionTransport`) | `O(D^3 * N^2)`: `O(N)` transported vectors per accepted step (`O(N^2)` total), each a Christoffel contraction (`O(D^3)`) |
 | Curvature modulation (`ModulatedCaputoCoordinateMemory`) | Adds `O(1)` work per retained sample per evaluation on top of whichever transport/backend it wraps |
+| Non-uniform Caputo (`caputo_l1_nonuniform`) | `O(N)` per evaluation, same order as `caputo_l1_uniform` |
+| Proper-time memory (`proper_time_caputo_velocity_memory`) | `O(D * N)` for one post-hoc evaluation over an `N`-sample trajectory (builds the proper-time axis once, then one non-uniform Caputo evaluation per component) |
 
 ## Assumptions
 
@@ -116,6 +135,9 @@ not a covariant field theory; and no empirical validation is claimed.**
   staying within a simply connected region of the chart (not winding around
   `r = 0`); path-independence of transport does not hold once curvature is
   non-zero.
+- `proper_time_caputo_velocity_memory` assumes every sampled state is
+  timelike; its proper-time axis is only as accurate as
+  `affine_trajectory_proper_time`'s first-order quadrature.
 
 ## Limitations
 
@@ -135,6 +157,10 @@ not a covariant field theory; and no empirical validation is claimed.**
   exterior chart.
 - No adaptive stepping, event handling, error estimation, or history
   compression is included anywhere in the crate.
+- `proper_time_caputo_velocity_memory` is a post-hoc diagnostic, not an
+  adaptive integrator: it resamples an already uniformly-stepped trajectory
+  onto an estimated proper-time axis after the fact, rather than letting the
+  live integration loop choose its own non-uniform step.
 
 ## Future Work (not implemented here)
 
@@ -143,7 +169,11 @@ not a covariant field theory; and no empirical validation is claimed.**
   spacetime case now has an exact closed-form reference,
   `exact_cylindrical_minkowski_transport`; this does not extend to curved
   backgrounds, where flatness's path-independence argument does not apply.)
-- Proper-time history sampled at its own adaptive resolution.
+- Proper-time history sampled at its own **adaptive** resolution — i.e. an
+  integration loop that itself chooses a non-uniform step. (The Caputo
+  operator's own uniform-grid restriction is no longer the blocker:
+  `caputo_l1_nonuniform` removes it. What remains is adaptive step
+  selection in the live loop, not just post-hoc resampling.)
 - Curvature modulators for backgrounds other than Schwarzschild, or built
   from invariants other than the Kretschmann scalar.
 - Any investigation of modified field equations — explicitly out of scope
