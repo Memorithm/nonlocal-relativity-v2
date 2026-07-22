@@ -341,13 +341,22 @@ Heun corrector `HeunPeceStepper` already computes, reused as a
 first-order/second-order error estimate — no extra acceleration evaluation
 beyond one ordinary Heun step) for step-size control, and evaluating the
 memory force with `scirust_fractional::caputo_l1_nonuniform` directly
-against the resulting non-uniform history. A step that cannot meet
-tolerance without shrinking below the configured floor, or a run that
-exceeds its accepted-step budget before reaching the target affine
-parameter, is a typed error — never a silently out-of-tolerance or
-truncated trajectory. The returned trajectory samples a non-uniform axis:
-it must **never** be passed to `affine_trajectory_proper_time`, whose `step`
-argument assumes uniform spacing.
+against the resulting non-uniform history. Step acceptance uses the
+componentwise scaled root-mean-square norm `scaled_local_error_norm`, shared
+with the step-doubling controller: each coordinate and velocity component is
+divided by `abs_tol_i + rel_tol * max(|low_i|, |high_i|)` (from an
+`AdaptiveTolerance`), so the accept/reject decision is far less sensitive to
+the coordinate chart and to differing component magnitudes than the earlier
+unscaled L2 sum — an improvement in scaling robustness, **not** a covariant
+error measure. A run that exceeds its accepted-step budget
+(`AdaptiveStepBudgetExhausted`), a step whose retries exceed
+`max_rejections_per_step` (`AdaptiveRejectionBudgetExhausted`), and a step
+whose proposed shrink would cross `min_step` (the distinct
+`AdaptiveMinimumStepExhausted`) are all typed errors — never a silently
+out-of-tolerance or truncated trajectory. The returned trajectory samples a
+non-uniform axis: it must **never** be passed to
+`affine_trajectory_proper_time`, whose `step` argument assumes uniform
+spacing.
 
 Cross-validated against a very fine independent fixed-step `HeunPeceStepper`
 run (agreement to `1.0e-4` or better with the shipped parameters);
@@ -404,17 +413,20 @@ embedded pair, with the same `1/(p+1) = 0.5` growth/shrink exponent as the
 embedded controller above, since semi-implicit Euler is also a first-order
 method.
 
-`HeunPeceStepper` is deliberately **not** offered here, and cannot be
-without changing its existing body: its predictor pushes a provisional
-history entry whose parameter it computes as `(step_index + 1) as f64 *
-config.step`, reconstructing an absolute affine parameter by multiplying an
-integer step count by one step size. That is exact under the fixed-step
-architecture, where every accepted step shares that size, but wrong the
-moment accepted step sizes vary, which adaptive stepping does by
-construction — there is no single `step` value for which `step_index * step`
-equals the true accumulated parameter along a non-uniform trajectory. See
-`adaptive_stepper.rs`'s module documentation for the full mechanism and
-reasoning.
+`HeunPeceStepper` is deliberately **not** offered here — but no longer for a
+parameter-formula reason. `StepperContext` now carries the true accumulated
+affine parameter (`current_parameter`), and `HeunPeceStepper`'s predictor
+computes its provisional point as `current_parameter + config.step`, so it is
+sound under the non-uniform spacing adaptive stepping produces (this replaced
+an earlier `step_index * config.step` reconstruction that was exact only when
+every accepted step shared one size). The reason it is excluded here is that
+this step-doubling controller's error estimate is specialised to a
+first-order method, whereas Heun is second order, and adaptive Heun-PECE
+already exists as `simulate_nonlocal_worldline_adaptive`'s embedded
+Heun-Euler controller — which computes the same Heun corrector and also
+exposes the Euler predictor the error estimate needs. Adding it here would be
+a strictly inferior duplicate. See `adaptive_stepper.rs`'s module
+documentation for the full reasoning.
 
 `AdaptiveStepperPolicy<H, L, T>` (a history backend, a `MemoryLaw`, and a
 transport) mirrors `NonlocalSimulationPolicy`'s role for this path, narrowed
@@ -425,6 +437,29 @@ since `SemiImplicitEulerStepper` is the only sound choice.
 `CompleteUniformHistory` special case. `examples/adaptive_worldline_stepper.rs`
 runs several `MemoryLaw`/transport combinations on the same trajectory and
 tolerance, plus a sanity-anchor row against the plain entry point.
+
+## v2 hardening: scaled error control and history retention
+
+The v2 hardening round makes the two adaptive controllers share one control
+core and adds a research knob:
+
+- `AdaptiveTolerance { relative, coordinate_absolute, velocity_absolute }` and
+  `scaled_local_error_norm` define the shared componentwise scaled RMS error
+  norm both controllers use. `AdaptiveNonlocalConfig::new` remains a
+  compatibility constructor that seeds a uniform tolerance from one scalar;
+  `AdaptiveNonlocalConfig::with_tolerance` sets the three fields independently.
+- `HistoryRetention` (`EndpointOnly` default / `RefinedAcceptedHistory`) and
+  `simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention` expose
+  the persistent-history retention comparison of the step-doubling controller.
+  The default is unchanged; `RefinedAcceptedHistory` additionally persists each
+  accepted step's midpoint at its true affine parameter. On the shipped
+  experiment (`experiments/nonlocal-relativity-v2`, binary `history_retention`)
+  this does **not** improve endpoint accuracy while roughly doubling the memory
+  cost, so it is research-only and `EndpointOnly` stays the default.
+
+These are numerical-controller improvements. They do not change the state
+equation, are coordinate-componentwise (not covariant), and carry no physical
+claim.
 
 ## Kerr background (follow-up)
 

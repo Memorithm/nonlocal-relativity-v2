@@ -14,6 +14,37 @@ not a covariant field theory; and no empirical validation is claimed.**
 
 ## Delivered Features
 
+### v2 Hardening round (latest)
+
+- **Scaled adaptive error norm.** Both adaptive controllers now use one shared
+  componentwise scaled root-mean-square local-error norm
+  (`scaled_local_error_norm`) with an `AdaptiveTolerance`
+  (relative + separate coordinate/velocity absolute tolerances), replacing the
+  earlier unscaled sum of coordinate and velocity L2 differences against one
+  absolute tolerance. `AdaptiveNonlocalConfig::new` stays as a compatibility
+  constructor (uniform tolerance); `with_tolerance` sets the three fields
+  independently. This improves scaling/chart robustness but is not a covariant
+  measure.
+- **Consistent rejection budgets.** Both controllers enforce
+  `max_rejections_per_step` identically through one shared control routine, and
+  report a proposed shrink below `min_step` as the new distinct
+  `AdaptiveMinimumStepExhausted` error (vs `AdaptiveRejectionBudgetExhausted`).
+- **True affine parameter in `StepperContext`.** `HeunPeceStepper` derives its
+  provisional point from `current_parameter + step` instead of
+  `step_index * step`, making it sound under non-uniform spacing.
+- **Shared controller infrastructure.** The step-size proposal, rejection
+  budget, and target clamp are centralised in `adaptive_control`; both
+  controllers are behaviour-preserving (bit-for-bit goldens for each).
+- **History-retention research comparison.** New `HistoryRetention`
+  (`EndpointOnly` default / `RefinedAcceptedHistory`) and a research entry
+  point, with a deterministic experiment
+  (`experiments/nonlocal-relativity-v2`) and the evidence-based decision to
+  keep `EndpointOnly` (retaining midpoints did not improve endpoint accuracy
+  while roughly doubling memory cost).
+- **Reproducible CI + experiment suite.** A focused workflow for the three
+  crates (fmt, clippy, tests, doctests, `git diff --check`, forbidden-marker
+  scan, all examples in release), and a deterministic experiment crate.
+
 ### Phase 1/2 (prior work, unchanged)
 
 - Fixed-background test-particle worldline integration on any
@@ -167,10 +198,11 @@ not a covariant field theory; and no empirical validation is claimed.**
   mechanism. Error control uses classical step-doubling (one full trial step
   compared against two half steps) rather than an embedded pair, since
   semi-implicit Euler has no natural embedded higher-order partner.
-  `HeunPeceStepper` is deliberately excluded: its predictor's
-  provisional-point parameter formula (`step_index * config.step`) assumes
-  uniform step spacing, which adaptive stepping violates by construction; see
-  `adaptive_stepper.rs`'s module documentation for the full reasoning.
+  `HeunPeceStepper` is deliberately excluded (at this round its predictor's
+  provisional-point parameter formula `step_index * config.step` assumed
+  uniform spacing; the v2 hardening round below removed that formula, so the
+  exclusion now rests on the error-estimator specialisation reason instead —
+  see `adaptive_stepper.rs`'s module documentation).
   `simulate_nonlocal_worldline_adaptive_with_stepper` is the
   `NonuniformCaputoCoordinateMemory` + `IdentityHistoryTransport` +
   `CompleteUniformHistory` special case.
@@ -315,10 +347,10 @@ not a covariant field theory; and no empirical validation is claimed.**
   shrinking under refinement) but do not eliminate it.
 - `DiscreteConnectionTransport` is a discrete, segment-by-segment
   approximation, not an exact bitensor propagator, and its cost is
-  asymptotically worse than the coordinate-memory baseline. It now has a
-  known-exact reference for validation in the flat-spacetime case only;
-  curved backgrounds (`Schwarzschild`) still have no exact reference in this
-  crate.
+  asymptotically worse than the coordinate-memory baseline. No exact reference
+  is currently implemented for a general curved path; an exact special-case
+  oracle exists only for flat-spacetime transport and for Schwarzschild
+  circular equatorial geodesic orbits.
 - `NormalizedTimelikeProperTime` validates but does not adapt the step; drift
   beyond tolerance is a hard error, not a corrected trajectory.
 - `SchwarzschildKretschmannModulator`'s `beta` and reference length are free,
@@ -348,15 +380,19 @@ not a covariant field theory; and no empirical validation is claimed.**
   and only via a different mechanism (classical step-doubling, not an
   embedded pair) — it does not generalize
   `simulate_nonlocal_worldline_adaptive_with_policy`'s controller itself.
-  `HeunPeceStepper` cannot be composed either way without changing its
-  existing body: its predictor reconstructs an absolute affine parameter as
-  `step_index * config.step`, which is exact only when every accepted step
-  shares that size. Separately, this integrator actively counts rejections
-  against `AdaptiveNonlocalConfig::max_rejections_per_step`, which
-  `simulate_nonlocal_worldline_adaptive_with_policy`'s retry loop validates
-  but does not consult (that loop instead stops shrinking once the trial
-  step falls below `min_step`) — a pre-existing, harmless discrepancy this
-  round did not change in the earlier loop.
+  `HeunPeceStepper` is now itself sound under a varying step
+  (`StepperContext::current_parameter` carries the true accumulated affine
+  parameter, so its predictor no longer reconstructs it as
+  `step_index * config.step`), but it is deliberately not offered through the
+  step-doubling entry point: that controller's error estimate is specialised
+  to a first-order method, and adaptive Heun-PECE already exists as the
+  embedded Heun-Euler controller (a step-doubling variant would be a strictly
+  inferior duplicate). Both adaptive controllers now enforce
+  `AdaptiveNonlocalConfig::max_rejections_per_step` with identical semantics
+  through one shared control routine, and report a proposed shrink below
+  `min_step` as the distinct `AdaptiveMinimumStepExhausted` error — the
+  earlier inconsistency (the embedded loop ignoring the retry budget) is
+  fixed.
 - `ReissnerNordstromFieldModulator`'s `beta` and reference length are, like
   `SchwarzschildKretschmannModulator`'s, free, uncalibrated phenomenological
   parameters, specific to the Reissner-Nordström exterior chart.

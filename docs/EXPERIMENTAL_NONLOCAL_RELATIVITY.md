@@ -9,6 +9,43 @@ Einstein field equations, the Einstein tensor, the stress-energy tensor,
 matter-generated curvature, or established general relativity. No empirical
 validation is claimed.
 
+## Scientific Boundary
+
+A single-paragraph statement of exactly what this layer is and is not, so no
+reader has to reconstruct it from the sections below.
+
+- **What equation is solved.** A single ordinary first-order state equation
+  for a test particle's coordinates and contravariant velocity,
+  `du^rho/dlambda = a_GR^rho + F_memory^rho`, where `a_GR` is the ordinary
+  geodesic acceleration and `F_memory^rho = -kappa P^rho_sigma m^sigma` is a
+  projected Caputo velocity-memory force. It is **not** a Caputo fractional
+  differential equation for the state itself, and **not** any field equation.
+- **What is held fixed.** The background metric and connection are supplied
+  externally and never change; nothing here solves the Einstein or Maxwell
+  equations or computes any backreaction of the particle on curvature.
+- **What is phenomenological.** The memory coupling `kappa`, the fractional
+  order `alpha`, and every modulator (`SchwarzschildKretschmannModulator`,
+  `ReissnerNordstromFieldModulator`) with its free `beta` and reference
+  length. None is calibrated against data or derived from a field theory.
+- **What is coordinate dependent.** The Caputo memory is evaluated
+  componentwise in whatever chart the background supplies, so it is chart
+  dependent by construction. The Phase 1 scaled error norm reduces the
+  adaptive controllers' sensitivity to the chart and to component magnitudes
+  but is itself componentwise and **not** a covariant measure; discrete
+  transport reduces but does not remove the memory's chart dependence.
+- **What has an exact oracle.** Two, and only two, transport families: flat
+  spacetime (`exact_cylindrical_minkowski_transport`) and Schwarzschild
+  circular equatorial geodesic orbits
+  (`exact_schwarzschild_circular_orbit_transport`). No exact reference is
+  currently implemented for a general curved path.
+- **What has only self-convergence / fine-grid reference.** Everything else:
+  `run_convergence_study` (self-convergence at `h`, `h/2`, `h/4`) and the
+  adaptive/retention comparisons against a fine independent fixed-step run.
+  These are numerical consistency diagnostics, not validations of the model.
+- **What has not been empirically validated.** The physical model, in full.
+  No result here is evidence of new physics, and none should be described as
+  experimentally confirmed.
+
 ## Index Conventions
 
 - Coordinates are `x^rho`.
@@ -372,9 +409,13 @@ This is validated three ways, none of which assumes the answer:
 **This is exact only for a circular equatorial geodesic orbit.** It is
 **not** a general bitensor propagator, does **not** extend to eccentric,
 inclined, or non-geodesic paths, and must never be described as valid for a
-general curved trajectory. `DiscreteConnectionTransport` remains the only
-transport strategy available for such paths, with no exact reference to
-validate against there.
+general curved trajectory. For a general curved path, `DiscreteConnectionTransport`
+remains the only transport strategy, and — to state the exact-reference status
+precisely — **no exact reference is currently implemented for a general curved
+path; an exact special-case oracle exists only for the two families
+implemented here: flat-spacetime transport (`exact_cylindrical_minkowski_transport`)
+and Schwarzschild circular equatorial geodesic orbits
+(`exact_schwarzschild_circular_orbit_transport`).**
 
 ## Curvature-Modulated Memory (Phase 4)
 
@@ -503,20 +544,33 @@ The step-size controller is the classical **embedded Heun-Euler pair**, a
 standard, well-established adaptive-Runge-Kutta technique: the same Euler
 predictor and Heun corrector this crate's `HeunPeceStepper` already computes
 serve as a first-order/second-order embedded pair, so the local error
-estimate `||corrected - predicted||` (combined coordinate and velocity L2
-distance) costs no acceleration evaluation beyond what one ordinary Heun
-step already needs. A step is accepted when the estimate is within
-`error_tolerance`, and the next step size is proposed from the standard
-`safety * (tolerance / error)^(1/2)` control law (exponent `1/2` for the
-embedded pair's lower order, `p = 1`); a rejected step shrinks and retries,
-bounded by `max_rejections_per_step`, and a step that would need to shrink
-below `min_step` to meet tolerance is a typed error
-(`AdaptiveRejectionBudgetExhausted`), never a silently-accepted
-out-of-tolerance result. Integration stops once the accumulated affine
-parameter reaches `target_affine_parameter` (the final step is clamped so
-it does not overshoot); exceeding `max_accepted_steps` before reaching the
-target is a typed error (`AdaptiveStepBudgetExhausted`), never a silently
-truncated trajectory.
+estimate costs no acceleration evaluation beyond what one ordinary Heun step
+already needs. The error estimate is the **componentwise scaled
+root-mean-square norm** `scaled_local_error_norm` (shared with the
+step-doubling controller): for each coordinate and velocity component,
+`ratio_i = (high_i - low_i) / (abs_tol_i + rel_tol * max(|low_i|, |high_i|))`,
+and the norm is `sqrt(mean_i ratio_i^2)`. The tolerances come from an
+`AdaptiveTolerance` (a relative tolerance and separate coordinate/velocity
+absolute tolerances); `AdaptiveNonlocalConfig::new` seeds a uniform
+`AdaptiveTolerance` from the single scalar `error_tolerance` for
+compatibility, and `with_tolerance` sets the three fields independently. A
+step is accepted when the norm is `<= 1`, and the next step size is proposed
+from the standard `safety * norm^(-1/2)` control law (exponent `1/2` for the
+lower method order `p = 1`). This scaling improves robustness to the
+coordinate chart and to differing component magnitudes; it is **not** a
+geometrically invariant error measure and does not establish coordinate
+covariance.
+
+A rejected step shrinks and retries, and the retry budget
+`max_rejections_per_step` is now actively enforced by **both** adaptive
+controllers with identical semantics: exceeding the retry count is a typed
+`AdaptiveRejectionBudgetExhausted`, while a proposed shrink that would cross
+`min_step` is the **distinct** typed error `AdaptiveMinimumStepExhausted` —
+never a silently-accepted out-of-tolerance result. Integration stops once the
+accumulated affine parameter reaches `target_affine_parameter` (the final
+step is clamped so it does not overshoot); exceeding `max_accepted_steps`
+before reaching the target is a typed error (`AdaptiveStepBudgetExhausted`),
+never a silently truncated trajectory.
 
 Because the resulting history is non-uniform by construction, the memory
 force is evaluated with `caputo_l1_nonuniform` directly against the
@@ -533,8 +587,13 @@ their signatures (`StepperContext` for the former), which a variable step
 size cannot satisfy without changing those contracts. (A later follow-up,
 "Composing Adaptive Stepping with `MemoryLaw` and `WorldlineStepper`" below,
 closes this for `SemiImplicitEulerStepper` specifically, via a different
-step-size-control mechanism; `HeunPeceStepper` still cannot be composed
-either way, for a precise, disclosed reason given there.)
+step-size-control mechanism. `HeunPeceStepper` is now itself sound under a
+varying step — `StepperContext` carries the true accumulated affine parameter,
+so its predictor no longer reconstructs the parameter from `step_index` — but
+it is deliberately not offered through the step-doubling entry point because
+that controller's error estimate is specialised to a first-order method, and
+adaptive Heun-PECE already exists as this embedded Heun-Euler controller; see
+that follow-up for the full reasoning.)
 `examples/adaptive_worldline.rs` cross-validates the adaptive path against a
 very fine, independent fixed-step `HeunPeceStepper` run (agreement to
 `1.0e-4` or better with the shipped parameters) and demonstrates it reaching
@@ -616,23 +675,25 @@ spacing, though they reach that value by different floating-point paths, so
 whether two runs agree to the bit or only closely is a property of the
 specific input, not something either type guarantees).
 
-**The stepper half is closed only for `SemiImplicitEulerStepper`.**
-`SemiImplicitEulerStepper::advance`'s body reads only `context.state`,
-`context.accepted_acceleration`, and `context.config.step` (the current
-trial step size) — it never reconstructs an absolute affine parameter from
-`context.step_index`, so it is safe to call with a varying step size across
-accepted steps. `HeunPeceStepper::advance` is not: its predictor pushes a
-provisional history entry whose parameter it computes as
-`(context.step_index + 1) as f64 * context.config.step`, an absolute affine
-parameter reconstructed by multiplying an integer step count by *one* step
-size. That formula is exact under the fixed-step architecture, where every
-accepted step shares that size, but wrong the moment accepted step sizes
-vary — there is no single `step` value for which `step_index * step` equals
-the true accumulated parameter along a non-uniform trajectory. Fixing this
-would require `StepperContext` to carry the true accumulated parameter
-directly instead of deriving it from `step_index`, changing that existing,
-already-tested struct and `HeunPeceStepper::advance`'s body itself — out of
-scope for an additive change, and not attempted here.
+**The stepper half is closed only for `SemiImplicitEulerStepper`, for a
+numerical-analysis reason.** Both steppers are now sound under a varying step
+size: `StepperContext` carries `current_parameter`, the true accumulated
+affine parameter at the accepted state, and `HeunPeceStepper::advance`
+computes its provisional predictor point at `current_parameter + config.step`
+rather than reconstructing it as `step_index * config.step` (which was exact
+only when every accepted step shared one size). The reason `HeunPeceStepper`
+is not offered through this step-doubling entry point is therefore no longer a
+parameter-formula bug — it is that this controller's error estimate is
+*specialised to a first-order method* (the raw one-step/two-half-step
+difference is the Richardson estimate only because the divisor `2^p - 1`
+equals `1` for `p = 1`), whereas Heun-PECE is second order. Moreover,
+step-doubling is the wrong adaptive scheme for Heun: a second-order method
+already has a natural embedded first-order partner (its Euler predictor), and
+the embedded Heun-Euler pair the *previous* controller uses **is** adaptive
+Heun-PECE — it computes the same Heun corrector `HeunPeceStepper::advance`
+computes, and additionally exposes the Euler predictor the error estimate
+needs. Adding Heun-PECE here would be a strictly inferior duplicate, not a new
+capability.
 
 Since `SemiImplicitEulerStepper` alone has no natural embedded higher-order
 partner (unlike the Euler-predictor/Heun-corrector pair the previous
@@ -658,15 +719,15 @@ the `NonuniformCaputoCoordinateMemory` + `IdentityHistoryTransport` +
 combinations on the same trajectory and tolerance, plus a sanity-anchor row
 against the plain entry point.
 
-One further, independent note: `AdaptiveNonlocalConfig::max_rejections_per_step`
-is validated by both adaptive entry points but only actively *counted* by
-this one. `simulate_nonlocal_worldline_adaptive_with_policy`'s retry loop
-stops shrinking only once the trial step falls below
-`AdaptiveNonlocalConfig::min_step`;
-`simulate_nonlocal_worldline_adaptive_with_stepper_policy` counts rejections
-explicitly and returns `AdaptiveRejectionBudgetExhausted` as soon as either
-bound is hit, matching that field's documented meaning ("the maximum number
-of consecutive rejections permitted") precisely.
+Both adaptive entry points now enforce
+`AdaptiveNonlocalConfig::max_rejections_per_step` identically, through one
+shared control routine (`adaptive_control::control_step`): each keeps an
+explicit per-accepted-step rejection counter, reset on every acceptance,
+returns `AdaptiveRejectionBudgetExhausted` when the retry count is reached,
+and returns the distinct `AdaptiveMinimumStepExhausted` when a proposed shrink
+would cross `min_step` first. Earlier revisions of the embedded controller
+never consulted the retry budget (it stopped only at `min_step`, and reported
+that as a rejection-budget error); that inconsistency is fixed.
 
 ## Kerr Background (Follow-Up)
 
