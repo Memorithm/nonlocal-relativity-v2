@@ -1,5 +1,5 @@
 use scirust_nonlocal_relativity::{
-    AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, BoundedShortMemoryHistory,
+    AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, AdaptiveTolerance, BoundedShortMemoryHistory,
     CaputoCoordinateMemory, CompleteUniformHistory, DiscreteConnectionTransport, HeunPeceStepper,
     IdentityHistoryModulator, IdentityHistoryTransport, NonlocalConfig, NonlocalRelativityError,
     NonlocalSimulationPolicy, ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
@@ -288,16 +288,22 @@ fn adaptive_matches_fine_fixed_step_heun_pece_closely() {
     }
 }
 
-/// Golden bit-for-bit regression captured from the pre-refactor
-/// implementation of `simulate_nonlocal_worldline_adaptive` (a hand-rolled
-/// history loop with no `HistoryBackend`/`HistoryTransport`/
-/// `HistoryModulator` involvement), before it was reimplemented as a thin
-/// wrapper over `simulate_nonlocal_worldline_adaptive_with_policy` with
-/// `CompleteUniformHistory`, `IdentityHistoryTransport`, and
-/// `IdentityHistoryModulator`. Composing these identity components must
-/// reproduce the original numbers exactly, not merely approximately.
+/// Golden bit-for-bit regression anchor for the deterministic output of
+/// `simulate_nonlocal_worldline_adaptive`.
+///
+/// These values were recomputed for the Phase 1 scaled local-error norm. The
+/// previous golden (353 samples) was captured before the adaptive controllers
+/// switched from the unscaled sum of coordinate and velocity L2 differences
+/// against one absolute tolerance to the componentwise scaled RMS norm
+/// (`scaled_local_error_norm`); that change is a deliberate, documented
+/// correctness improvement, not a regression, so it legitimately changes which
+/// steps are accepted (here 353 -> 176 samples) and therefore the endpoint
+/// bits. The target affine parameter is still reached exactly (`0.8`), and the
+/// identity-policy and plain-entry-point paths still agree bit-for-bit (see
+/// `adaptive_with_identity_policy_matches_plain_entry_point_bit_for_bit`); this
+/// test guards the scaled-norm controller against unintended future drift.
 #[test]
-fn adaptive_reproduces_pre_refactor_golden_values_bit_for_bit() {
+fn adaptive_scaled_norm_golden_values_bit_for_bit() {
     let mass = 1.0;
     let background = Schwarzschild::try_new(mass).unwrap();
     let mut initial = circular_schwarzschild_state(mass, 10.0);
@@ -308,20 +314,20 @@ fn adaptive_reproduces_pre_refactor_golden_values_bit_for_bit() {
 
     let trajectory = simulate_nonlocal_worldline_adaptive(&background, initial, config).unwrap();
 
-    assert_eq!(trajectory.len(), 353);
+    assert_eq!(trajectory.len(), 176);
 
     let final_state = trajectory.final_state().unwrap();
     let expected_coordinates_bits: [u64; 4] = [
-        0x3fee99d338548003,
-        0x4023fbe788e8c53d,
+        0x3fee99d33872904c,
+        0x4023fbe788e8f7f6,
         0x3ff921fb54442d18,
-        0x3f9efcc35f493b88,
+        0x3f9efcc3603d09df,
     ];
     let expected_velocity_bits: [u64; 4] = [
-        0x3ff3209f6d5766ff,
-        0xbf84797d45a810cd,
-        0x3bf46a6831b53a3a,
-        0x3fa361e1756df532,
+        0x3ff3209f6d6aa13e,
+        0xbf84797d4428fc0c,
+        0x3bf46a69ccd61f69,
+        0x3fa361e17609ee9b,
     ];
     for component in 0..4
     {
@@ -344,7 +350,7 @@ fn adaptive_reproduces_pre_refactor_golden_values_bit_for_bit() {
     );
     assert_eq!(
         final_diagnostics.memory_l2_norm.to_bits(),
-        0x3f345109f7290677
+        0x3f34510b8cc1bd6f
     );
 }
 
@@ -638,5 +644,80 @@ fn adaptive_composes_with_bounded_short_memory() {
             .iter()
             .all(|diagnostics| diagnostics.retained_samples <= 6),
         "bounded short memory retained more than its window"
+    );
+}
+
+#[test]
+fn with_tolerance_constructor_exposes_asymmetric_scaled_tolerance() {
+    let tolerance = AdaptiveTolerance::new(1.0e-6, 1.0e-8, 1.0e-10).unwrap();
+    let config = AdaptiveNonlocalConfig::with_tolerance(
+        0.55, 0.02, 0.05, 0.001, 0.2, tolerance, 1.0e-8, 0.8, 5_000, 30,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.tolerance().relative().to_bits(),
+        1.0e-6_f64.to_bits()
+    );
+    assert_eq!(
+        config.tolerance().coordinate_absolute().to_bits(),
+        1.0e-8_f64.to_bits()
+    );
+    assert_eq!(
+        config.tolerance().velocity_absolute().to_bits(),
+        1.0e-10_f64.to_bits()
+    );
+
+    // The configuration still integrates to the target parameter.
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    let trajectory = simulate_nonlocal_worldline_adaptive(&background, initial, config).unwrap();
+    assert_close(
+        trajectory.final_diagnostics().unwrap().affine_parameter,
+        0.8,
+        1.0e-9,
+    );
+}
+
+/// Integration counterpart to the norm-level scale-invariance unit test: the
+/// Schwarzschild time coordinate `t` has a purely gauge origin (the metric is
+/// static, so `t -> t + C` is an exact symmetry of the physics). Adding a
+/// large constant to that arbitrary origin changes the numerical *scale* of
+/// the `t` coordinate from order 1 to order 1e6 without changing anything
+/// physically relevant. Because the scaled RMS norm holds each component to a
+/// relative accuracy, the accepted-step count stays essentially unchanged
+/// rather than being driven by the absolute magnitude of an arbitrarily
+/// offset coordinate. (Observed with the shipped parameters: 73 vs 70 steps.)
+#[test]
+fn scaled_norm_step_count_is_robust_to_arbitrary_coordinate_scale() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let tolerance = AdaptiveTolerance::new(1.0e-7, 1.0e-9, 1.0e-9).unwrap();
+    let config = AdaptiveNonlocalConfig::with_tolerance(
+        0.55, 0.02, 0.05, 0.001, 0.2, tolerance, 1.0e-8, 0.8, 20_000, 30,
+    )
+    .unwrap();
+
+    let mut base = circular_schwarzschild_state(1.0, 10.0);
+    base.velocity[1] = -0.01;
+
+    let mut offset = base;
+    offset.coordinates[0] = 1.0e6;
+
+    let base_steps = simulate_nonlocal_worldline_adaptive(&background, base, config)
+        .unwrap()
+        .len();
+    let offset_steps = simulate_nonlocal_worldline_adaptive(&background, offset, config)
+        .unwrap()
+        .len();
+
+    assert!(base_steps > 10 && offset_steps > 10);
+    // "Not catastrophic": the two accepted-step counts stay within 25% of
+    // each other despite a 1e6-fold change in the t-coordinate's magnitude.
+    let larger = base_steps.max(offset_steps);
+    let smaller = base_steps.min(offset_steps);
+    assert!(
+        (larger - smaller) * 4 <= larger,
+        "step counts diverged too far: base={base_steps}, offset={offset_steps}"
     );
 }

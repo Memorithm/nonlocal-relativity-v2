@@ -40,6 +40,7 @@ use std::fmt;
 use std::str::FromStr;
 
 mod adaptive;
+mod adaptive_control;
 mod adaptive_stepper;
 mod charts;
 mod curved_transport;
@@ -52,6 +53,7 @@ pub use adaptive::{
     AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, simulate_nonlocal_worldline_adaptive,
     simulate_nonlocal_worldline_adaptive_with_policy,
 };
+pub use adaptive_control::{AdaptiveTolerance, scaled_local_error_norm};
 pub use adaptive_stepper::{
     AdaptiveStepperPolicy, simulate_nonlocal_worldline_adaptive_with_stepper,
     simulate_nonlocal_worldline_adaptive_with_stepper_policy,
@@ -2631,7 +2633,11 @@ pub(crate) fn validate_diagnostics(
     Ok(())
 }
 
-fn validate_scalar(quantity: &'static str, value: f64, step: usize) -> NonlocalResult<()> {
+pub(crate) fn validate_scalar(
+    quantity: &'static str,
+    value: f64,
+    step: usize,
+) -> NonlocalResult<()> {
     if !value.is_finite()
     {
         return Err(NonlocalRelativityError::NonFiniteDiagnostic {

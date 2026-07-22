@@ -80,7 +80,7 @@ use crate::{
     HistoryTransport, IdentityHistoryTransport, MemoryLaw, Metric, NonlocalConfig,
     NonlocalRelativityError, NonlocalResult, NonlocalTrajectory, NonuniformCaputoCoordinateMemory,
     SemiImplicitEulerStepper, StepEvaluationInput, StepperContext, WorldlineState,
-    WorldlineStepper, checked_l2_distance, evaluate_step_with_policy, validate_initial_state,
+    WorldlineStepper, evaluate_step_with_policy, scaled_local_error_norm, validate_initial_state,
     validated_metric, validated_metric_norm,
 };
 
@@ -363,18 +363,14 @@ where
                 step_index,
             )?;
 
-            let coordinate_error = checked_l2_distance(
-                &trial.refined_state.coordinates,
-                &trial.full_state.coordinates,
-                "adaptive_stepper_coordinate_error",
+            // Componentwise scaled RMS local error (shared by both adaptive
+            // controllers); the one full step and the two half steps are the
+            // step-doubling Richardson pair.
+            let normalized_error = scaled_local_error_norm(
+                &trial.full_state,
+                &trial.refined_state,
+                config.tolerance(),
             )?;
-            let velocity_error = checked_l2_distance(
-                &trial.refined_state.velocity,
-                &trial.full_state.velocity,
-                "adaptive_stepper_velocity_error",
-            )?;
-            let error_estimate = coordinate_error + velocity_error;
-            let normalized_error = error_estimate / config.error_tolerance();
 
             if normalized_error <= 1.0
             {
@@ -397,7 +393,7 @@ where
                 return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
                     accepted_step: accepted_count,
                     attempted_step: step,
-                    error_estimate,
+                    error_estimate: normalized_error,
                 });
             }
 
@@ -409,7 +405,7 @@ where
                 return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
                     accepted_step: accepted_count,
                     attempted_step: step,
-                    error_estimate,
+                    error_estimate: normalized_error,
                 });
             }
 
