@@ -22,6 +22,9 @@ export NLR_EXPERIMENT_COMMIT="$(git rev-parse HEAD)"
 cargo run --release -p nonlocal-relativity-experiments --bin history_retention
 cargo run --release -p nonlocal-relativity-experiments --bin adaptive_convergence
 cargo run --release -p nonlocal-relativity-experiments --bin complexity_scaling
+cargo run --release -p nonlocal-relativity-experiments --bin bounded_memory_error
+cargo run --release -p nonlocal-relativity-experiments --bin kerr_fd_sensitivity
+cargo run --release -p nonlocal-relativity-experiments --bin modulation_sensitivity
 ```
 
 Output goes to stdout as `#`-commented metadata plus CSV. Redirect it to a file
@@ -96,15 +99,49 @@ transport, `→ 2` (`O(N*W)`) for bounded short memory. Discrete transport share
 complete memory's `O(N^2)` touch count but pays an extra `O(D^3)` Christoffel
 contraction per touch. Scaling only — no wall-clock claim.
 
+### `bounded_memory_error` — Phase 9 short-memory approximation error
+
+Quantifies the accuracy cost of `BoundedShortMemoryHistory` (the `O(N*W)`
+short-memory approximation) against the complete-history oracle (`O(N^2)`), on a
+fixed-step Schwarzschild trajectory of 128 steps. For windows `W ∈ {4, 8, 16,
+32, 64, 129}` it reports the endpoint coordinate/velocity error against the
+oracle and the retained sample count. The error decreases monotonically as `W`
+grows (`~3.7e-6` at `W=4` to `~2.5e-7` at `W=64`) and is **exactly zero** once
+`W` covers every sample (the window then *is* the full history — a bit-for-bit
+match, pinned by `tests/bounded_memory.rs`). This is the truncation cost the
+user opts into by choosing a bounded backend, not a model validation.
+
+### `kerr_fd_sensitivity` — Phase 9 Kerr finite-difference sensitivity
+
+Unlike the analytic backgrounds, `Kerr`'s connection is evaluated by central
+finite differences. At spin `a = 0` the Kerr metric reduces to Schwarzschild
+exactly, so the finite-difference Christoffel symbols can be compared against
+Schwarzschild's **exact analytic** ones. Sweeping the difference step exposes
+the classic central-difference V-curve: the maximum Christoffel-component error
+falls as `~O(h^2)` (`5.8e-8` at `h=1e-2` to `2.7e-11` near `h=1e-4`) then rises
+as floating-point cancellation dominates (`3.2e-9` at `h=1e-6`). This quantifies
+the disclosed truncation cost of the Kerr connection; every other background
+uses exact analytic symbols.
+
+### `modulation_sensitivity` — Phase 9 modulation sensitivity, β=0 baseline
+
+Sweeps `beta` for `SchwarzschildKretschmannModulator` (weight `q = 1 + β·L⁴·K`)
+and reports the endpoint deviation from the unmodulated baseline under adaptive
+stepping. At `beta = 0` the deviation is **exactly zero and bit-identical** to
+the baseline (the modulator's `beta = 0` bypass), and the deviation grows
+monotonically (here ~linearly) with `beta` (`4.1e-11` at `β=0.1` to `8.3e-10` at
+`β=2.0`). `beta` and the reference length are free, uncalibrated phenomenological
+parameters — this quantifies a hook's sensitivity, not a physical effect. (The
+`beta = 0` bit-identity is separately pinned by
+`adaptive_beta_zero_modulator_matches_identity_modulator_bit_for_bit` in
+`tests/adaptive.rs`.)
+
 ### Other scenarios (shipped as crate examples)
 
-Several experiment scenarios listed in the v2 plan already ship as deterministic,
-CSV-producing examples of `scirust-nonlocal-relativity` and are not duplicated
-here: coordinate-chart comparison (`coordinate_covariance`), exact flat-spacetime
+The remaining v2-plan scenarios already ship as deterministic, CSV-producing
+examples of `scirust-nonlocal-relativity` and are not duplicated here:
+coordinate-chart comparison (`coordinate_covariance`), exact flat-spacetime
 transport convergence (`exact_transport_convergence`), exact Schwarzschild
-circular-orbit transport convergence (`schwarzschild_orbit_transport`),
-proper-time vs affine memory (`proper_time_memory_comparison`), field/curvature
-modulation with the `beta = 0` bit-identical baseline
-(`curvature_modulated_memory`, `reissner_nordstrom_field_modulation`), and Kerr
-finite-difference frame dragging (`kerr_worldline`). Run any with
+circular-orbit transport convergence (`schwarzschild_orbit_transport`), and
+proper-time vs affine memory (`proper_time_memory_comparison`). Run any with
 `cargo run --release -p scirust-nonlocal-relativity --example <name>`.
