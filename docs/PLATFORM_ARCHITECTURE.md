@@ -223,12 +223,12 @@ closed-form results**. Current oracle coverage:
 Concrete, actionable items (candidate follow-up increments — none blocks current
 work):
 
-- **Duplicated fractional-memory helpers** in `scirust-nonlocal-relativity`:
-  `nonuniform_caputo_velocity_memory` is byte-for-byte identical in
-  `src/adaptive.rs` and `src/nonuniform_memory.rs`; the
-  `nonuniform_transported_modulated_caputo_velocity_memory[_at_step]` logic is
-  likewise duplicated. **Consolidation target** (extract one shared private
-  helper, prove bit-identical). This is the highest-value dedup.
+- ~~**Duplicated fractional-memory helpers** in `scirust-nonlocal-relativity`:
+  `nonuniform_caputo_velocity_memory` byte-for-byte identical in `adaptive.rs`
+  and `nonuniform_memory.rs`; the transported-modulated variant likewise.~~
+  **Resolved:** both callers now delegate to one shared `nonuniform_kernel`
+  module (`pub(crate)` builders), moved verbatim so the crate's bit-identity
+  golden tests still pass. This removed the highest-value duplication.
 - **Two near-identical step-evaluation functions**: `evaluate_step_with_policy`
   (`lib.rs`, used by fixed-step + step-doubling) and `evaluate_adaptive_step`
   (`adaptive.rs`); they share the metric/Christoffel/gr/force/diagnostics body
@@ -311,9 +311,8 @@ Additive, each validated against an oracle, each one PR:
 
 1. **Coordinate-independence diagnostics** (this increment) — invariants agree
    across charts; adds `MinkowskiSpherical` and `IsotropicSchwarzschild`.
-2. **Consolidate the duplicated non-uniform Caputo memory helpers** in the
-   worldline crate (bit-identity-preserving refactor; pays down the top debt
-   item before it is copied a third time).
+2. **Consolidate the duplicated non-uniform Caputo memory helpers** — *done*
+   (`nonuniform_kernel` module; bit-identity-preserving).
 3. **Reusable tetrad / parallel-transport engine** in the geometry core, with
    holonomy and Jacobi-field checks against maximally symmetric closed forms.
 4. **FLRW background** with its exact curvature oracle.
