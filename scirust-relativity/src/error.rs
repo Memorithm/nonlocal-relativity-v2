@@ -36,6 +36,14 @@ pub enum RelativityError {
 
     /// A parallel-transported vector component evaluated to a non-finite value.
     NonFiniteTransportedVector,
+
+    /// The affine length requested for a geodesic-deviation integration is
+    /// non-finite or non-positive.
+    InvalidAffineLength(f64),
+
+    /// A geodesic-deviation (Jacobi) field component evaluated to a non-finite
+    /// value.
+    NonFiniteDeviationVector,
 }
 
 impl fmt::Display for RelativityError {
@@ -81,6 +89,17 @@ impl fmt::Display for RelativityError {
             Self::NonFiniteTransportedVector =>
             {
                 write!(formatter, "parallel-transported vector is not finite")
+            },
+            Self::InvalidAffineLength(length) =>
+            {
+                write!(
+                    formatter,
+                    "affine length must be finite and positive; got {length}"
+                )
+            },
+            Self::NonFiniteDeviationVector =>
+            {
+                write!(formatter, "geodesic-deviation vector is not finite")
             },
         }
     }

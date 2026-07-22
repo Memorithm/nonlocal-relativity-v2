@@ -14,7 +14,9 @@
 //! - a reusable parallel-transport engine ([`transport_along_segment`],
 //!   [`transport_along_polyline`], [`holonomy_defect`]) validated by metric
 //!   compatibility and the holonomy/curvature identity;
-//! - geodesic equations compatible with `scirust-sim`.
+//! - geodesic equations compatible with `scirust-sim`, and geodesic-deviation
+//!   (Jacobi) fields ([`integrate_geodesic_deviation`]) validated against the
+//!   separation of nearby geodesics.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -45,6 +47,7 @@ mod de_sitter;
 mod error;
 mod flrw;
 mod geodesic;
+mod geodesic_deviation;
 mod isotropic_schwarzschild;
 mod kerr;
 mod metric;
@@ -61,6 +64,7 @@ pub use de_sitter::{AntiDeSitter, DeSitter};
 pub use error::RelativityError;
 pub use flrw::{ExponentialScaleFactor, Flrw, PowerLawScaleFactor, ScaleFactor};
 pub use geodesic::GeodesicSystem;
+pub use geodesic_deviation::{JacobiSample, integrate_geodesic_deviation};
 pub use isotropic_schwarzschild::IsotropicSchwarzschild;
 pub use kerr::Kerr;
 pub use metric::{Metric, invert_metric, metric_norm};
