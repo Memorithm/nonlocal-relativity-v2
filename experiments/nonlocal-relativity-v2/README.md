@@ -22,6 +22,7 @@ export NLR_EXPERIMENT_COMMIT="$(git rev-parse HEAD)"
 cargo run --release -p nonlocal-relativity-experiments --bin history_retention
 cargo run --release -p nonlocal-relativity-experiments --bin adaptive_convergence
 cargo run --release -p nonlocal-relativity-experiments --bin complexity_scaling
+cargo run --release -p nonlocal-relativity-experiments --bin bounded_memory_error
 ```
 
 Output goes to stdout as `#`-commented metadata plus CSV. Redirect it to a file
@@ -95,6 +96,18 @@ implementation-derived complexity: `→ 4` (`O(N^2)`) for complete and discrete
 transport, `→ 2` (`O(N*W)`) for bounded short memory. Discrete transport shares
 complete memory's `O(N^2)` touch count but pays an extra `O(D^3)` Christoffel
 contraction per touch. Scaling only — no wall-clock claim.
+
+### `bounded_memory_error` — Phase 9 short-memory approximation error
+
+Quantifies the accuracy cost of `BoundedShortMemoryHistory` (the `O(N*W)`
+short-memory approximation) against the complete-history oracle (`O(N^2)`), on a
+fixed-step Schwarzschild trajectory of 128 steps. For windows `W ∈ {4, 8, 16,
+32, 64, 129}` it reports the endpoint coordinate/velocity error against the
+oracle and the retained sample count. The error decreases monotonically as `W`
+grows (`~3.7e-6` at `W=4` to `~2.5e-7` at `W=64`) and is **exactly zero** once
+`W` covers every sample (the window then *is* the full history — a bit-for-bit
+match, pinned by `tests/bounded_memory.rs`). This is the truncation cost the
+user opts into by choosing a bounded backend, not a model validation.
 
 ### Other scenarios (shipped as crate examples)
 
