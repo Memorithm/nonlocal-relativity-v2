@@ -82,12 +82,13 @@ The following exists today, is tested, and ships in a green CI:
 - Trait-based backgrounds: `Metric<D>` and `Connection<D>` over const-generic
   dimension, with deterministic metric inversion (`invert_metric`) and typed
   errors (`RelativityError`).
-- Backgrounds with analytic connections: Minkowski, Schwarzschild,
-  Reissner–Nordström, de Sitter, and anti-de Sitter; Kerr with a
-  finite-difference connection whose truncation cost is measured and disclosed.
+- Backgrounds with analytic connections: Minkowski, spherical-chart Minkowski,
+  Schwarzschild, Reissner–Nordström, de Sitter, and anti-de Sitter; Kerr and
+  isotropic-coordinate Schwarzschild with a finite-difference connection whose
+  truncation cost is measured and disclosed.
 - A shared lapse-metric helper (`static_spherical`) for static, spherically
-  symmetric `f(r)` spacetimes, reused by the de Sitter / anti-de Sitter
-  backgrounds.
+  symmetric `f(r)` spacetimes, reused by the de Sitter / anti-de Sitter and
+  spherical-Minkowski backgrounds.
 - **Curvature engine** (`CurvatureTensors`): Riemann, Ricci, Ricci scalar,
   Einstein, and Kretschmann tensors from any `Metric + Connection` background
   by central finite differences of the Christoffel symbols, with typed errors
@@ -105,7 +106,17 @@ The following exists today, is tested, and ships in a green CI:
   - A `curvature_invariants` experiment that reports invariants against these
     oracles and sweeps the finite-difference step to expose the `O(h^2)`
     truncation-vs-roundoff trade-off.
+- **Coordinate-independence diagnostics**: scalar invariants (`R`, `K`) agree
+  across two charts of the same geometry — Cartesian vs spherical Minkowski, and
+  areal vs isotropic Schwarzschild (where `K = 48 M^2 / r^6` uses the *areal*
+  radius `r = rho (1 + M/2rho)^2`). Spherical Minkowski is a strong flatness
+  test: non-zero Christoffel symbols yielding numerically zero curvature.
+  Validated by tests and a `coordinate_independence` experiment.
 - Geodesic integration (`GeodesicSystem`) compatible with `scirust-sim`.
+
+An engineering map of the whole relativistic-computation subgraph — capabilities,
+validated mathematics, technical debt, duplication, and extension points — is
+maintained in [`PLATFORM_ARCHITECTURE.md`](PLATFORM_ARCHITECTURE.md).
 
 **Layer 4 (memory), experimental and phenomenological only:** the
 `scirust-nonlocal-relativity` crate integrates fractional-memory *test-particle*
@@ -121,16 +132,24 @@ The platform grows by small, individually-validated pull requests. Each lands
 only with tests or experiments against an oracle, green CI, and honest labels.
 The near-term ordering within Layer 1:
 
-1. **Curvature core + de Sitter / anti-de Sitter** — *this increment.* Riemann
+1. **Curvature core + de Sitter / anti-de Sitter** — *delivered.* Riemann
    through Kretschmann, validated against exact maximally-symmetric and
    Schwarzschild oracles.
-2. Coordinate-independence / invariant diagnostics: confirm scalar invariants
-   agree across charts of the same geometry to tolerance.
-3. Tetrads and parallel transport as a reusable engine, with holonomy and
-   geodesic-deviation (Jacobi) checks against closed forms in maximally
-   symmetric spacetimes.
-4. Bitensors and Synge's world function on backgrounds with known expansions.
-5. FLRW cosmological background with its exact curvature oracle.
+2. **Coordinate-independence / invariant diagnostics** — *delivered.* Scalar
+   invariants agree across charts of the same geometry (Cartesian/spherical
+   Minkowski, areal/isotropic Schwarzschild), with `MinkowskiSpherical` and
+   `IsotropicSchwarzschild` backgrounds and a `coordinate_independence`
+   experiment.
+3. Consolidate the duplicated non-uniform Caputo memory helpers in the worldline
+   crate (a bit-identity-preserving refactor that pays down the top technical-debt
+   item recorded in the architecture report before it is copied a third time).
+4. Tetrads and parallel transport as a reusable geometry-core engine, with
+   holonomy and geodesic-deviation (Jacobi) checks against closed forms in
+   maximally symmetric spacetimes.
+5. Bitensors and Synge's world function on backgrounds with known expansions.
+6. FLRW cosmological background with its exact curvature oracle.
+7. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
+   close the empty-benchmarks gap.
 
 Layers 2–6 begin only after Layer 1 is broad and solid. Each will open with a
 design note fixing its oracles and its category labels before any code lands.
