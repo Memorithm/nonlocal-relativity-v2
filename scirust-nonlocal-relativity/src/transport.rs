@@ -50,7 +50,7 @@ impl<const D: usize> HistoryEntry<D> {
     /// coordinates or a parameter value.
     ///
     /// Coordinates are set to the origin and the parameter to zero. These
-    /// placeholders are never read by [`crate::IdentityHistoryTransport`] or
+    /// default values are never read by [`crate::IdentityHistoryTransport`] or
     /// by the coordinate-memory pipeline; a geometric transport must not be
     /// combined with entries constructed this way, since it would silently
     /// transport from the wrong point.
