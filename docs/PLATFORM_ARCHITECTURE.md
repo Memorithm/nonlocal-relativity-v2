@@ -115,10 +115,16 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   with typed errors and a guarantee of no non-finite output.
 - **Backgrounds:** `Minkowski`, `MinkowskiSpherical`, `Schwarzschild`,
   `IsotropicSchwarzschild`, `ReissnerNordstrom`, `Kerr`, `DeSitter`,
-  `AntiDeSitter`. Analytic connections everywhere except `Kerr` and
-  `IsotropicSchwarzschild`, which use `numerical_christoffel` (a disclosed
-  finite-difference connection). Static spherically symmetric `f(r)` metrics
-  share the `static_spherical` lapse helper.
+  `AntiDeSitter`, and `Flrw<S: ScaleFactor>` (spatially flat cosmology, generic
+  over the scale factor — `ExponentialScaleFactor` = de Sitter,
+  `PowerLawScaleFactor` = radiation/matter eras). Analytic connections
+  everywhere except `Kerr` and `IsotropicSchwarzschild`, which use
+  `numerical_christoffel` (a disclosed finite-difference connection). Static
+  spherically symmetric `f(r)` metrics share the `static_spherical` lapse helper.
+- **Parallel transport:** `transport_along_segment` / `transport_along_polyline`
+  / `holonomy_defect`, integrating the transport ODE with the `scirust-sim` RK4
+  engine; validated by flat exactness, metric compatibility, and the
+  holonomy/curvature identity against the Riemann tensor.
 - **Dynamics:** `GeodesicSystem<C, D>` implements `scirust_sim::System` (state
   `[x, u]`, RHS the geodesic equation `−Γ^ρ_{μν} u^μ u^ν`).
 - **Errors:** `RelativityError` (non-finite coordinate/metric/curvature,
@@ -282,12 +288,12 @@ work):
 Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
 
 - **Layer 1 (Geometry Core) — partial.** Present: metrics, connections,
-  curvature, geodesics, eight backgrounds, coordinate-independence diagnostics,
-  and a reusable parallel-transport engine with first-class holonomy (validated
-  by metric compatibility and the holonomy/curvature identity). Missing: tetrads
-  / orthonormal frames, Jacobi fields / geodesic deviation, exponential &
-  logarithm maps, covector/tensor transport, bitensors / Synge world function,
-  and an FLRW background.
+  curvature, geodesics, nine backgrounds (including spatially flat FLRW),
+  coordinate-independence diagnostics, and a reusable parallel-transport engine
+  with first-class holonomy (validated by metric compatibility and the
+  holonomy/curvature identity). Missing: tetrads / orthonormal frames, Jacobi
+  fields / geodesic deviation, exponential & logarithm maps, covector/tensor
+  transport, and bitensors / Synge world function.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -317,8 +323,11 @@ Additive, each validated against an oracle, each one PR:
    validated against the curvature tensor — *done*. Tetrads and Jacobi-field
    (geodesic-deviation) checks against maximally symmetric closed forms are the
    natural follow-on, layered on this same segment integrator.
-4. **FLRW background** with its exact curvature oracle.
-5. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
+4. **FLRW background** with its exact curvature oracle — *done* (generic over a
+   scale factor; de Sitter and radiation/matter eras, coordinate-independence
+   cross-check against the static de Sitter chart).
+5. Tetrads and Jacobi (geodesic-deviation) fields on the transport engine.
+6. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
    to close the empty-benchmarks gap.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note

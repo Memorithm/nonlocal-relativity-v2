@@ -83,9 +83,10 @@ The following exists today, is tested, and ships in a green CI:
   dimension, with deterministic metric inversion (`invert_metric`) and typed
   errors (`RelativityError`).
 - Backgrounds with analytic connections: Minkowski, spherical-chart Minkowski,
-  Schwarzschild, Reissner–Nordström, de Sitter, and anti-de Sitter; Kerr and
-  isotropic-coordinate Schwarzschild with a finite-difference connection whose
-  truncation cost is measured and disclosed.
+  Schwarzschild, Reissner–Nordström, de Sitter, anti-de Sitter, and spatially
+  flat FLRW (generic over a scale factor); Kerr and isotropic-coordinate
+  Schwarzschild with a finite-difference connection whose truncation cost is
+  measured and disclosed.
 - A shared lapse-metric helper (`static_spherical`) for static, spherically
   symmetric `f(r)` spacetimes, reused by the de Sitter / anti-de Sitter and
   spherical-Minkowski backgrounds.
@@ -155,11 +156,15 @@ The near-term ordering within Layer 1:
    holonomy on flat closed loops, and the holonomy/curvature identity
    `Delta V = -R V A B` checked against the numerical Riemann tensor
    (`parallel_transport` tests + experiment).
-5. Tetrads (orthonormal frames) and geodesic-deviation (Jacobi) fields on the
+5. **FLRW cosmological background** — *delivered.* Spatially flat FLRW generic
+   over a `ScaleFactor` (exponential = de Sitter; power-law = radiation/matter
+   eras), validated against the exact Friedmann curvature formulas and against
+   the static de Sitter chart (coordinate independence).
+6. Tetrads (orthonormal frames) and geodesic-deviation (Jacobi) fields on the
    transport engine, checked against closed forms in maximally symmetric
-   spacetimes.
-6. Bitensors and Synge's world function on backgrounds with known expansions.
-7. FLRW cosmological background with its exact curvature oracle.
+   spacetimes (the Jacobi field validated by its covariant second derivative
+   against the Riemann tensor, as the holonomy check already is).
+7. Bitensors and Synge's world function on backgrounds with known expansions.
 7. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
    close the empty-benchmarks gap.
 

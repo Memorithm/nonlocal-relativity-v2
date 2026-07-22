@@ -7,7 +7,7 @@
 //! - deterministic metric inversion;
 //! - numerical Levi-Civita Christoffel symbols;
 //! - four-dimensional Minkowski, Schwarzschild, Reissner-Nordström, Kerr,
-//!   de Sitter, and anti-de Sitter spacetimes;
+//!   de Sitter, anti-de Sitter, and spatially flat FLRW spacetimes;
 //! - Riemann, Ricci, Einstein, and Kretschmann curvature tensors from any
 //!   metric-and-connection background, validated against exact analytic
 //!   oracles (see [`CurvatureTensors`]);
@@ -43,6 +43,7 @@ mod connection;
 mod curvature;
 mod de_sitter;
 mod error;
+mod flrw;
 mod geodesic;
 mod isotropic_schwarzschild;
 mod kerr;
@@ -58,6 +59,7 @@ pub use connection::{Connection, numerical_christoffel};
 pub use curvature::CurvatureTensors;
 pub use de_sitter::{AntiDeSitter, DeSitter};
 pub use error::RelativityError;
+pub use flrw::{ExponentialScaleFactor, Flrw, PowerLawScaleFactor, ScaleFactor};
 pub use geodesic::GeodesicSystem;
 pub use isotropic_schwarzschild::IsotropicSchwarzschild;
 pub use kerr::Kerr;
