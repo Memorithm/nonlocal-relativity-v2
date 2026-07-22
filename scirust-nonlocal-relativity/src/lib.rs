@@ -44,6 +44,7 @@ mod adaptive_control;
 mod adaptive_stepper;
 mod charts;
 mod curved_transport;
+mod geometric_error;
 mod modulation;
 mod nonuniform_memory;
 mod proper_time;
@@ -68,6 +69,7 @@ pub use curved_transport::{
     exact_schwarzschild_circular_orbit_transport, schwarzschild_circular_orbit_angular_velocity,
     schwarzschild_circular_orbit_four_velocity,
 };
+pub use geometric_error::{TimelikeStateError, timelike_state_error};
 pub use modulation::{
     HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
     ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
