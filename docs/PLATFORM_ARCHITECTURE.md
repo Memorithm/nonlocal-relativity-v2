@@ -128,6 +128,10 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
 - **Geodesic deviation:** `integrate_geodesic_deviation` solves the covariant
   Jacobi system `(x, u, xi, w)` with the Riemann source, validated against the
   coordinate separation of two nearby geodesics (convention-free ground truth).
+- **Exponential / logarithm maps:** `geodesic_exponential` (geodesic endpoint at
+  unit affine parameter) and `geodesic_logarithm` (Newton-shooting inverse using
+  the exponential's finite-difference Jacobian and the crate's matrix inverse),
+  validated by flat exactness and the curved round-trip identity.
 - **Dynamics:** `GeodesicSystem<C, D>` implements `scirust_sim::System` (state
   `[x, u]`, RHS the geodesic equation `−Γ^ρ_{μν} u^μ u^ν`).
 - **Errors:** `RelativityError` (non-finite coordinate/metric/curvature,
@@ -293,10 +297,11 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
 - **Layer 1 (Geometry Core) — partial.** Present: metrics, connections,
   curvature, geodesics, nine backgrounds (including spatially flat FLRW),
   coordinate-independence diagnostics, a reusable parallel-transport engine with
-  first-class holonomy, and geodesic-deviation (Jacobi) fields. Missing: tetrads
-  / orthonormal frames in the geometry core (one exists, observer-specialised,
-  in the worldline crate), exponential & logarithm maps, covector/tensor
-  transport, and bitensors / Synge world function.
+  first-class holonomy, geodesic-deviation (Jacobi) fields, and exponential /
+  logarithm maps. Missing: tetrads / orthonormal frames in the geometry core
+  (one exists, observer-specialised, in the worldline crate — to be generalised,
+  not duplicated), covector/tensor transport, and bitensors / Synge world
+  function.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -329,9 +334,9 @@ Additive, each validated against an oracle, each one PR:
 4. **FLRW background** with its exact curvature oracle — *done* (generic over a
    scale factor; de Sitter and radiation/matter eras, coordinate-independence
    cross-check against the static de Sitter chart).
-5. Geodesic-deviation (Jacobi) fields — *done* (validated against the geodesic
-   flow). Tetrads in the geometry core (generalising the worldline observer
-   tetrad) remain.
+5. Geodesic-deviation (Jacobi) fields and exponential/logarithm maps — *done*.
+   Tetrads in the geometry core (generalising the worldline observer tetrad) and
+   covector/tensor transport remain.
 6. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
    to close the empty-benchmarks gap.
 
