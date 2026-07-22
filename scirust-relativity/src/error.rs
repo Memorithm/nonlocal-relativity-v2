@@ -29,6 +29,13 @@ pub enum RelativityError {
         /// `"ricci"`, `"ricci_scalar"`, `"einstein"`, `"kretschmann"`).
         quantity: &'static str,
     },
+
+    /// The number of integration substeps requested for parallel transport is
+    /// zero (at least one substep is required).
+    InvalidTransportResolution,
+
+    /// A parallel-transported vector component evaluated to a non-finite value.
+    NonFiniteTransportedVector,
 }
 
 impl fmt::Display for RelativityError {
@@ -63,6 +70,17 @@ impl fmt::Display for RelativityError {
             Self::NonFiniteCurvatureComponent { quantity } =>
             {
                 write!(formatter, "curvature quantity '{quantity}' is not finite")
+            },
+            Self::InvalidTransportResolution =>
+            {
+                write!(
+                    formatter,
+                    "parallel-transport resolution must be at least one substep"
+                )
+            },
+            Self::NonFiniteTransportedVector =>
+            {
+                write!(formatter, "parallel-transported vector is not finite")
             },
         }
     }

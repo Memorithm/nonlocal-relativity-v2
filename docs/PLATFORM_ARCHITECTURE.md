@@ -282,12 +282,12 @@ work):
 Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
 
 - **Layer 1 (Geometry Core) — partial.** Present: metrics, connections,
-  curvature, geodesics, eight backgrounds, coordinate-independence diagnostics.
-  Missing: a reusable tetrad / parallel-transport *engine* in the geometry core
-  (transport currently lives, in specialized forms, in the worldline crate),
-  Jacobi fields / geodesic deviation, exponential & logarithm maps, holonomy as
-  a first-class operation, bitensors / Synge world function, and an FLRW
-  background.
+  curvature, geodesics, eight backgrounds, coordinate-independence diagnostics,
+  and a reusable parallel-transport engine with first-class holonomy (validated
+  by metric compatibility and the holonomy/curvature identity). Missing: tetrads
+  / orthonormal frames, Jacobi fields / geodesic deviation, exponential &
+  logarithm maps, covector/tensor transport, bitensors / Synge world function,
+  and an FLRW background.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -313,8 +313,10 @@ Additive, each validated against an oracle, each one PR:
    across charts; adds `MinkowskiSpherical` and `IsotropicSchwarzschild`.
 2. **Consolidate the duplicated non-uniform Caputo memory helpers** — *done*
    (`nonuniform_kernel` module; bit-identity-preserving).
-3. **Reusable tetrad / parallel-transport engine** in the geometry core, with
-   holonomy and Jacobi-field checks against maximally symmetric closed forms.
+3. **Reusable parallel-transport engine** in the geometry core, with holonomy
+   validated against the curvature tensor — *done*. Tetrads and Jacobi-field
+   (geodesic-deviation) checks against maximally symmetric closed forms are the
+   natural follow-on, layered on this same segment integrator.
 4. **FLRW background** with its exact curvature oracle.
 5. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
    to close the empty-benchmarks gap.

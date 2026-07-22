@@ -112,6 +112,11 @@ The following exists today, is tested, and ships in a green CI:
   radius `r = rho (1 + M/2rho)^2`). Spherical Minkowski is a strong flatness
   test: non-zero Christoffel symbols yielding numerically zero curvature.
   Validated by tests and a `coordinate_independence` experiment.
+- **Parallel-transport engine**: transport of a contravariant vector along a
+  coordinate path (segment / polyline / closed-loop holonomy), reusing the
+  `scirust-sim` RK4 integrator. Validated by flat-space exactness, metric
+  compatibility (norm preservation), zero holonomy on flat closed loops, and
+  the holonomy/curvature identity checked against the numerical Riemann tensor.
 - Geodesic integration (`GeodesicSystem`) compatible with `scirust-sim`.
 
 An engineering map of the whole relativistic-computation subgraph — capabilities,
@@ -144,11 +149,17 @@ The near-term ordering within Layer 1:
    Both callers (the fixed-step `MemoryLaw` impls and the embedded adaptive
    controller) now delegate to one shared `nonuniform_kernel` module; the logic
    was moved verbatim, so the crate's bit-identity golden tests still pass.
-4. Tetrads and parallel transport as a reusable geometry-core engine, with
-   holonomy and geodesic-deviation (Jacobi) checks against closed forms in
-   maximally symmetric spacetimes.
-5. Bitensors and Synge's world function on backgrounds with known expansions.
-6. FLRW cosmological background with its exact curvature oracle.
+4. **Reusable parallel-transport engine** — *delivered.* Transport of a vector
+   along a coordinate path (reusing the `scirust-sim` RK4 integrator), with
+   holonomy, validated by flat-space exactness, metric compatibility, zero
+   holonomy on flat closed loops, and the holonomy/curvature identity
+   `Delta V = -R V A B` checked against the numerical Riemann tensor
+   (`parallel_transport` tests + experiment).
+5. Tetrads (orthonormal frames) and geodesic-deviation (Jacobi) fields on the
+   transport engine, checked against closed forms in maximally symmetric
+   spacetimes.
+6. Bitensors and Synge's world function on backgrounds with known expansions.
+7. FLRW cosmological background with its exact curvature oracle.
 7. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
    close the empty-benchmarks gap.
 
