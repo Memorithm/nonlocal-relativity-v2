@@ -118,6 +118,10 @@ The following exists today, is tested, and ships in a green CI:
   `scirust-sim` RK4 integrator. Validated by flat-space exactness, metric
   compatibility (norm preservation), zero holonomy on flat closed loops, and
   the holonomy/curvature identity checked against the numerical Riemann tensor.
+- **Geodesic-deviation (Jacobi) fields**: the covariant Jacobi system
+  integrated with the Riemann source, validated against the actual separation
+  of nearby geodesics (and exact flat linear growth), with a focusing
+  experiment across de Sitter / anti-de Sitter / Schwarzschild.
 - Geodesic integration (`GeodesicSystem`) compatible with `scirust-sim`.
 
 An engineering map of the whole relativistic-computation subgraph — capabilities,
@@ -160,11 +164,14 @@ The near-term ordering within Layer 1:
    over a `ScaleFactor` (exponential = de Sitter; power-law = radiation/matter
    eras), validated against the exact Friedmann curvature formulas and against
    the static de Sitter chart (coordinate independence).
-6. Tetrads (orthonormal frames) and geodesic-deviation (Jacobi) fields on the
-   transport engine, checked against closed forms in maximally symmetric
-   spacetimes (the Jacobi field validated by its covariant second derivative
-   against the Riemann tensor, as the holonomy check already is).
-7. Bitensors and Synge's world function on backgrounds with known expansions.
+6. **Geodesic-deviation (Jacobi) fields** — *delivered.* The covariant Jacobi
+   system `(x, u, xi, w)` integrated with the `scirust-sim` RK4 engine and the
+   Riemann source, validated against the convention-free ground truth (the
+   coordinate separation of two nearby geodesics) and exact flat linear growth.
+7. Tetrads (orthonormal frames) in the geometry core — generalising the
+   worldline crate's observer tetrad rather than duplicating it — with
+   orthonormal parallel transport on the transport engine.
+8. Bitensors and Synge's world function on backgrounds with known expansions.
 7. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
    close the empty-benchmarks gap.
 
