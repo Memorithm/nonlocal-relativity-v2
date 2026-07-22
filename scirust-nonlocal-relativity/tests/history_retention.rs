@@ -70,14 +70,13 @@ fn generous_config(tolerance: f64) -> AdaptiveNonlocalConfig {
     // A generous initial step relative to the tolerance forces early
     // rejections and shrinkage, so these tests also exercise the "rejected
     // trials do not leak into persistent history" path.
-    AdaptiveNonlocalConfig::new(0.55, 0.02, 0.15, 0.00005, 0.2, tolerance, 1.0e-8, 0.8, 50_000, 60)
-        .unwrap()
+    AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.15, 0.00005, 0.2, tolerance, 1.0e-8, 0.8, 50_000, 60,
+    )
+    .unwrap()
 }
 
-fn run_recording(
-    retention: HistoryRetention,
-    tolerance: f64,
-) -> (usize, Vec<Vec<f64>>, Vec<f64>) {
+fn run_recording(retention: HistoryRetention, tolerance: f64) -> (usize, Vec<Vec<f64>>, Vec<f64>) {
     let background = Schwarzschild::try_new(1.0).unwrap();
     let mut initial = circular_schwarzschild_state(1.0, 10.0);
     initial.velocity[1] = -0.01;
@@ -134,7 +133,8 @@ fn retained_counts_match_strategy_and_reject_nothing_from_failed_trials() {
     // EndpointOnly retains exactly one sample per accepted step (plus the
     // initial); RefinedAcceptedHistory retains two. The exact counts prove no
     // rejected trial leaked a sample into persistent history.
-    let (endpoint_steps, endpoint_snaps, _e) = run_recording(HistoryRetention::EndpointOnly, 1.0e-8);
+    let (endpoint_steps, endpoint_snaps, _e) =
+        run_recording(HistoryRetention::EndpointOnly, 1.0e-8);
     let (refined_steps, refined_snaps, _r) =
         run_recording(HistoryRetention::RefinedAcceptedHistory, 1.0e-8);
 
@@ -279,7 +279,10 @@ fn endpoint_error_decreases_under_tolerance_refinement_for_both_strategies() {
             retention,
         )
         .unwrap();
-        l2(&trajectory.final_state().unwrap().coordinates, &reference_final.coordinates)
+        l2(
+            &trajectory.final_state().unwrap().coordinates,
+            &reference_final.coordinates,
+        )
     };
 
     for retention in [

@@ -476,11 +476,11 @@ where
                 StepControl::Accept { next_step } =>
                 {
                     break (trial.refined_state, trial.refined_midpoint, step, next_step);
-                }
+                },
                 StepControl::Retry { next_step } =>
                 {
                     step = next_step;
-                }
+                },
             }
         };
 
