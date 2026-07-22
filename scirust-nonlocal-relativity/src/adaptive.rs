@@ -47,6 +47,7 @@
 //! Heun-Euler controller *is* adaptive Heun-PECE, so a step-doubling variant
 //! would be a strictly inferior duplicate rather than a new capability.
 
+use crate::adaptive_control::{StepControl, clamp_step_to_target, control_step};
 use crate::{
     AdaptiveTolerance, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,
     HistoryModulator, HistoryTransport, IdentityHistoryModulator, IdentityHistoryTransport, Metric,
@@ -57,13 +58,6 @@ use crate::{
     validate_vector, validated_christoffel, validated_metric, validated_metric_norm,
 };
 use scirust_fractional::{FractionalError, FractionalOrder, caputo_l1_nonuniform};
-
-const STEP_SAFETY_FACTOR: f64 = 0.9;
-const STEP_GROWTH_CAP: f64 = 4.0;
-const STEP_SHRINK_FLOOR: f64 = 0.1;
-/// Step-control exponent `1 / (p_low + 1)` for the embedded Heun(2)-Euler(1)
-/// pair, using the lower method's order `p_low = 1`.
-const EMBEDDED_ERROR_EXPONENT: f64 = 0.5;
 
 /// Configuration for the adaptive-step fractional-memory worldline
 /// integrator.
@@ -773,12 +767,16 @@ where
             });
         }
 
-        let remaining = config.target_affine_parameter() - current_parameter;
-        let mut step = proposed_step.min(remaining);
+        let mut step = clamp_step_to_target(
+            proposed_step,
+            current_parameter,
+            config.target_affine_parameter(),
+        );
         let step_index = accepted_count + 1;
         // Explicit per-accepted-step rejection counter, reset (by being
-        // re-declared) for every new accepted step. Both adaptive controllers
-        // enforce `max_rejections_per_step` identically.
+        // re-declared) for every new accepted step. The shared `control_step`
+        // enforces `max_rejections_per_step` and `min_step` identically for
+        // both adaptive controllers.
         let mut rejection_count = 0_usize;
 
         let (accepted_state, used_step, next_proposed_step) = loop
@@ -806,47 +804,25 @@ where
                 config.tolerance(),
             )?;
 
-            if normalized_error <= 1.0
+            match control_step(
+                normalized_error,
+                step,
+                &mut rejection_count,
+                accepted_count,
+                config.min_step(),
+                config.max_step(),
+                config.max_rejections_per_step(),
+            )?
             {
-                let growth = if normalized_error > 0.0
+                StepControl::Accept { next_step } =>
                 {
-                    STEP_SAFETY_FACTOR * normalized_error.powf(-EMBEDDED_ERROR_EXPONENT)
-                }
-                else
+                    break (result.corrected_state, step, next_step);
+                },
+                StepControl::Retry { next_step } =>
                 {
-                    STEP_GROWTH_CAP
-                };
-                let next_step = (step * growth.min(STEP_GROWTH_CAP))
-                    .clamp(config.min_step(), config.max_step());
-                break (result.corrected_state, step, next_step);
+                    step = next_step;
+                },
             }
-
-            rejection_count += 1;
-            if rejection_count >= config.max_rejections_per_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
-                    accepted_step: accepted_count,
-                    rejections: rejection_count,
-                    attempted_step: step,
-                    error_estimate: normalized_error,
-                });
-            }
-
-            let shrink = STEP_SAFETY_FACTOR * normalized_error.powf(-EMBEDDED_ERROR_EXPONENT);
-            let shrunk_step = step * shrink.max(STEP_SHRINK_FLOOR);
-
-            if shrunk_step < config.min_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
-                    accepted_step: accepted_count,
-                    attempted_step: step,
-                    proposed_step: shrunk_step,
-                    min_step: config.min_step(),
-                    error_estimate: normalized_error,
-                });
-            }
-
-            step = shrunk_step;
         };
 
         current_parameter += used_step;

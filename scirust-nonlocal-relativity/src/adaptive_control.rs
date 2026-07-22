@@ -213,6 +213,129 @@ pub fn scaled_local_error_norm<const D: usize>(
     Ok(norm)
 }
 
+/// Safety factor applied to every proposed step size, shared by both adaptive
+/// controllers.
+pub(crate) const STEP_SAFETY_FACTOR: f64 = 0.9;
+/// Maximum per-step growth factor for an accepted step.
+pub(crate) const STEP_GROWTH_CAP: f64 = 4.0;
+/// Minimum per-step shrink factor for a rejected step (bounds a single
+/// rejection's shrinkage so a huge error estimate cannot collapse the step in
+/// one move).
+pub(crate) const STEP_SHRINK_FLOOR: f64 = 0.1;
+/// Step-control exponent `1 / (p_low + 1)` for a first-order lower method
+/// (`p_low = 1`). Both controllers pair a first-order estimate with a
+/// second-order one (embedded Euler/Heun) or use a first-order method with
+/// step-doubling, so both use this exponent.
+pub(crate) const FIRST_ORDER_STEP_EXPONENT: f64 = 0.5;
+
+/// Grow an accepted step toward `max_step`, scaled by how far below tolerance
+/// the scaled error `normalized_error` was, then clamped to `[min_step,
+/// max_step]`. A zero error (identical estimates) grows at the cap.
+#[must_use]
+pub(crate) fn grow_accepted_step(
+    step: f64,
+    normalized_error: f64,
+    min_step: f64,
+    max_step: f64,
+) -> f64 {
+    let growth = if normalized_error > 0.0
+    {
+        STEP_SAFETY_FACTOR * normalized_error.powf(-FIRST_ORDER_STEP_EXPONENT)
+    }
+    else
+    {
+        STEP_GROWTH_CAP
+    };
+    (step * growth.min(STEP_GROWTH_CAP)).clamp(min_step, max_step)
+}
+
+/// Shrink a rejected step by the same control law, bounded below by
+/// `STEP_SHRINK_FLOOR` per rejection. The result is *not* clamped to
+/// `min_step`; the caller decides whether crossing `min_step` is an error.
+#[must_use]
+pub(crate) fn shrink_rejected_step(step: f64, normalized_error: f64) -> f64 {
+    let shrink = STEP_SAFETY_FACTOR * normalized_error.powf(-FIRST_ORDER_STEP_EXPONENT);
+    step * shrink.max(STEP_SHRINK_FLOOR)
+}
+
+/// Clamp a proposed step so an accepted step cannot overshoot the target
+/// affine parameter.
+#[must_use]
+pub(crate) fn clamp_step_to_target(proposed_step: f64, current_parameter: f64, target: f64) -> f64 {
+    let remaining = target - current_parameter;
+    proposed_step.min(remaining)
+}
+
+/// Outcome of the shared accept/reject step-size decision for one trial.
+pub(crate) enum StepControl {
+    /// The trial met tolerance; propose `next_step` for the following step.
+    Accept {
+        /// Proposed size for the next accepted step.
+        next_step: f64,
+    },
+    /// The trial was rejected but the rejection budget and minimum step both
+    /// still allow another attempt at `next_step`.
+    Retry {
+        /// Smaller size to retry the current step at.
+        next_step: f64,
+    },
+}
+
+/// The single shared step-size controller used by *both* adaptive worldline
+/// integrators.
+///
+/// Given a trial's scaled error, it decides acceptance, enforces
+/// `max_rejections_per_step`, and enforces `min_step`, returning the two
+/// distinct typed errors
+/// ([`NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`] and
+/// [`NonlocalRelativityError::AdaptiveMinimumStepExhausted`]) consistently. The
+/// caller owns the `rejection_count`, which this function increments on each
+/// rejection; the caller resets it (by declaring a fresh counter) for every new
+/// accepted step.
+pub(crate) fn control_step(
+    normalized_error: f64,
+    step: f64,
+    rejection_count: &mut usize,
+    accepted_step: usize,
+    min_step: f64,
+    max_step: f64,
+    max_rejections_per_step: usize,
+) -> NonlocalResult<StepControl> {
+    if normalized_error <= 1.0
+    {
+        return Ok(StepControl::Accept {
+            next_step: grow_accepted_step(step, normalized_error, min_step, max_step),
+        });
+    }
+
+    *rejection_count += 1;
+    if *rejection_count >= max_rejections_per_step
+    {
+        return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
+            accepted_step,
+            rejections: *rejection_count,
+            attempted_step: step,
+            error_estimate: normalized_error,
+        });
+    }
+
+    let shrunk_step = shrink_rejected_step(step, normalized_error);
+    if shrunk_step < min_step
+    {
+        return Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
+            accepted_step,
+            attempted_step: step,
+            proposed_step: shrunk_step,
+            min_step,
+            error_estimate: normalized_error,
+        });
+    }
+
+    Ok(StepControl::Retry {
+        next_step: shrunk_step,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AdaptiveTolerance, scaled_local_error_norm};

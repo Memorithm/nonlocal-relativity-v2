@@ -84,6 +84,7 @@
 //! [`crate::AdaptiveNonlocalConfig::min_step`] first — two distinct typed
 //! errors rather than the single overloaded one earlier revisions used.
 
+use crate::adaptive_control::{StepControl, clamp_step_to_target, control_step};
 use crate::{
     AdaptiveNonlocalConfig, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,
     HistoryTransport, IdentityHistoryTransport, MemoryLaw, Metric, NonlocalConfig,
@@ -92,13 +93,6 @@ use crate::{
     WorldlineStepper, evaluate_step_with_policy, scaled_local_error_norm, validate_initial_state,
     validated_metric, validated_metric_norm,
 };
-
-const STEP_SAFETY_FACTOR: f64 = 0.9;
-const STEP_GROWTH_CAP: f64 = 4.0;
-const STEP_SHRINK_FLOOR: f64 = 0.1;
-/// Step-control exponent `1 / (p_low + 1)` for classical step-doubling with
-/// semi-implicit Euler's order `p_low = 1`. See the module documentation.
-const STEP_DOUBLING_ERROR_EXPONENT: f64 = 0.5;
 
 /// Typed architecture policy for the step-doubling adaptive integrator:
 /// which history backend, [`crate::MemoryLaw`], and
@@ -354,8 +348,11 @@ where
             });
         }
 
-        let remaining = config.target_affine_parameter() - current_parameter;
-        let mut step = proposed_step.min(remaining);
+        let mut step = clamp_step_to_target(
+            proposed_step,
+            current_parameter,
+            config.target_affine_parameter(),
+        );
         let step_index = accepted_count + 1;
         let mut rejection_count = 0_usize;
 
@@ -384,47 +381,22 @@ where
                 config.tolerance(),
             )?;
 
-            if normalized_error <= 1.0
+            match control_step(
+                normalized_error,
+                step,
+                &mut rejection_count,
+                accepted_count,
+                config.min_step(),
+                config.max_step(),
+                config.max_rejections_per_step(),
+            )?
             {
-                let growth = if normalized_error > 0.0
+                StepControl::Accept { next_step } => break (trial.refined_state, step, next_step),
+                StepControl::Retry { next_step } =>
                 {
-                    STEP_SAFETY_FACTOR * normalized_error.powf(-STEP_DOUBLING_ERROR_EXPONENT)
-                }
-                else
-                {
-                    STEP_GROWTH_CAP
-                };
-                let next_step = (step * growth.min(STEP_GROWTH_CAP))
-                    .clamp(config.min_step(), config.max_step());
-                break (trial.refined_state, step, next_step);
+                    step = next_step;
+                },
             }
-
-            rejection_count += 1;
-            if rejection_count >= config.max_rejections_per_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
-                    accepted_step: accepted_count,
-                    rejections: rejection_count,
-                    attempted_step: step,
-                    error_estimate: normalized_error,
-                });
-            }
-
-            let shrink = STEP_SAFETY_FACTOR * normalized_error.powf(-STEP_DOUBLING_ERROR_EXPONENT);
-            let shrunk_step = step * shrink.max(STEP_SHRINK_FLOOR);
-
-            if shrunk_step < config.min_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
-                    accepted_step: accepted_count,
-                    attempted_step: step,
-                    proposed_step: shrunk_step,
-                    min_step: config.min_step(),
-                    error_estimate: normalized_error,
-                });
-            }
-
-            step = shrunk_step;
         };
 
         current_parameter += used_step;

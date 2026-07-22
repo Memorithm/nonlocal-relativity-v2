@@ -665,3 +665,60 @@ fn stepper_rejection_counter_resets_after_each_accepted_step() {
         1.0e-9,
     );
 }
+
+/// Golden bit-for-bit regression anchor for the deterministic output of the
+/// step-doubling controller (`simulate_nonlocal_worldline_adaptive_with_stepper`)
+/// under the scaled error norm and the shared control law. Guards the Phase 4
+/// controller-infrastructure unification and the shared step-size/rejection
+/// mechanism against unintended future drift.
+#[test]
+fn adaptive_stepper_scaled_norm_golden_values_bit_for_bit() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.8, 5_000, 30)
+            .unwrap();
+
+    let trajectory =
+        simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, config).unwrap();
+
+    assert_eq!(trajectory.len(), 125);
+
+    let final_state = trajectory.final_state().unwrap();
+    let expected_coordinates_bits: [u64; 4] = [
+        0x3fee99d408a7c60f,
+        0x4023fbe788fad870,
+        0x3ff921fb54442d18,
+        0x3f9efcc9f5cfd755,
+    ];
+    let expected_velocity_bits: [u64; 4] = [
+        0x3ff3209f6f9964df,
+        0xbf84797e0f7ecb0b,
+        0x3bf46a8f7fc56e49,
+        0x3fa361e1875462de,
+    ];
+    for component in 0..4
+    {
+        assert_eq!(
+            final_state.coordinates[component].to_bits(),
+            expected_coordinates_bits[component],
+            "coordinate {component}"
+        );
+        assert_eq!(
+            final_state.velocity[component].to_bits(),
+            expected_velocity_bits[component],
+            "velocity {component}"
+        );
+    }
+
+    let final_diagnostics = trajectory.final_diagnostics().unwrap();
+    assert_eq!(
+        final_diagnostics.affine_parameter.to_bits(),
+        0x3fe999999999999a
+    );
+    assert_eq!(
+        final_diagnostics.memory_l2_norm.to_bits(),
+        0x3f34512da15b9632
+    );
+}
