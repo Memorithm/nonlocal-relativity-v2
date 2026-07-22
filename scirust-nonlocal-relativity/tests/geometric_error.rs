@@ -6,8 +6,8 @@
 //! exactly the Euclidean length of the spatial part of `delta`.
 
 use scirust_nonlocal_relativity::{
-    NonlocalRelativityError, TimelikeStateError, schwarzschild_circular_orbit_four_velocity,
-    timelike_state_error,
+    NonlocalRelativityError, TimelikeStateError, build_orthonormal_tetrad, metric_contraction,
+    schwarzschild_circular_orbit_four_velocity, tetrad_state_error, timelike_state_error,
 };
 use scirust_relativity::{Metric, Minkowski, Schwarzschild};
 use std::f64::consts::FRAC_PI_2;
@@ -150,4 +150,111 @@ fn rejects_invalid_floor() {
             Err(NonlocalRelativityError::InvalidMetricNormFloor(_))
         ));
     }
+}
+
+// ---- tetrad projection ----
+
+fn assert_orthonormal(metric: &[[f64; 4]; 4], legs: &[[f64; 4]; 4]) {
+    // g(e_a, e_b) must equal eta_ab = diag(-1, 1, 1, 1) to machine precision.
+    for a in 0..4
+    {
+        for b in 0..4
+        {
+            let inner = metric_contraction(metric, &legs[a], &legs[b]);
+            let expected = if a == b
+            {
+                if a == 0 { -1.0 } else { 1.0 }
+            }
+            else
+            {
+                0.0
+            };
+            assert!(
+                (inner - expected).abs() < 1.0e-12,
+                "g(e_{a}, e_{b}) = {inner}, expected {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flat_static_observer_tetrad_is_the_standard_basis() {
+    let metric = minkowski_metric();
+    let observer = [1.0, 0.0, 0.0, 0.0];
+    let tetrad = build_orthonormal_tetrad(&metric, &observer, FLOOR).unwrap();
+    assert_orthonormal(&metric, tetrad.legs());
+
+    let projected = tetrad_state_error(&metric, &observer, &[2.0, 3.0, 4.0, 0.0], FLOOR).unwrap();
+    // Standard-basis frame: components equal the coordinate components.
+    assert_eq!(projected.components[0].to_bits(), 2.0_f64.to_bits());
+    assert_eq!(projected.components[1].to_bits(), 3.0_f64.to_bits());
+    assert_eq!(projected.components[2].to_bits(), 4.0_f64.to_bits());
+    assert_eq!(projected.components[3].to_bits(), 0.0_f64.to_bits());
+    assert_eq!(projected.temporal.to_bits(), 2.0_f64.to_bits());
+    assert_eq!(projected.spatial.to_bits(), 5.0_f64.to_bits());
+    assert_eq!(
+        projected.reconstruction_residual.to_bits(),
+        0.0_f64.to_bits()
+    );
+}
+
+#[test]
+fn tetrad_reconstructs_delta_and_matches_scalar_split_flat_boosted() {
+    let metric = minkowski_metric();
+    let v = 0.6_f64;
+    let gamma = 1.0 / (1.0 - v * v).sqrt();
+    let observer = [gamma, gamma * v, 0.0, 0.0];
+    let delta = [0.3, -0.2, 0.7, 0.1];
+
+    let tetrad = build_orthonormal_tetrad(&metric, &observer, FLOOR).unwrap();
+    assert_orthonormal(&metric, tetrad.legs());
+
+    let projected = tetrad_state_error(&metric, &observer, &delta, FLOOR).unwrap();
+    assert!(
+        projected.reconstruction_residual < 1.0e-13,
+        "reconstruction residual too large: {}",
+        projected.reconstruction_residual
+    );
+
+    // The tetrad temporal/spatial magnitudes match the scalar split.
+    let scalar = timelike_state_error(&metric, &observer, &delta, FLOOR).unwrap();
+    assert!((projected.temporal - scalar.temporal).abs() < 1.0e-12);
+    assert!((projected.spatial - scalar.spatial).abs() < 1.0e-12);
+}
+
+#[test]
+fn schwarzschild_orbit_tetrad_is_orthonormal_and_reconstructs() {
+    let mass = 1.0;
+    let radius = 10.0;
+    let background = Schwarzschild::try_new(mass).unwrap();
+    let observer = schwarzschild_circular_orbit_four_velocity(&background, radius).unwrap();
+    let metric = background.components(&[0.0, radius, FRAC_PI_2, 0.0]);
+    let delta = [1.0e-3, -2.0e-3, 5.0e-4, 3.0e-3];
+
+    let tetrad = build_orthonormal_tetrad(&metric, &observer, FLOOR).unwrap();
+    assert_orthonormal(&metric, tetrad.legs());
+
+    let projected = tetrad_state_error(&metric, &observer, &delta, FLOOR).unwrap();
+    assert!(
+        projected.reconstruction_residual < 1.0e-12,
+        "reconstruction residual too large: {}",
+        projected.reconstruction_residual
+    );
+    let scalar = timelike_state_error(&metric, &observer, &delta, FLOOR).unwrap();
+    assert!((projected.temporal - scalar.temporal).abs() < 1.0e-12);
+    assert!((projected.spatial - scalar.spatial).abs() < 1.0e-12);
+}
+
+#[test]
+fn tetrad_rejects_non_timelike_and_invalid_floor() {
+    let metric = minkowski_metric();
+    let spacelike = [0.0, 1.0, 0.0, 0.0];
+    assert!(matches!(
+        build_orthonormal_tetrad(&metric, &spacelike, FLOOR),
+        Err(NonlocalRelativityError::NonTimelikeMetricNorm { .. })
+    ));
+    assert!(matches!(
+        tetrad_state_error(&metric, &[1.0, 0.0, 0.0, 0.0], &[1.0, 0.0, 0.0, 0.0], 0.0),
+        Err(NonlocalRelativityError::InvalidMetricNormFloor(_))
+    ));
 }

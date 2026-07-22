@@ -69,7 +69,10 @@ pub use curved_transport::{
     exact_schwarzschild_circular_orbit_transport, schwarzschild_circular_orbit_angular_velocity,
     schwarzschild_circular_orbit_four_velocity,
 };
-pub use geometric_error::{TimelikeStateError, timelike_state_error};
+pub use geometric_error::{
+    OrthonormalTetrad, TetradStateError, TimelikeStateError, build_orthonormal_tetrad,
+    tetrad_state_error, timelike_state_error,
+};
 pub use modulation::{
     HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
     ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
@@ -1397,6 +1400,18 @@ pub enum NonlocalRelativityError {
         /// tolerance).
         error_estimate: f64,
     },
+
+    /// A local orthonormal frame (tetrad) could not be built at a point: after
+    /// the timelike leg, fewer than `D - 1` independent spacelike legs survived
+    /// metric Gram-Schmidt, so the observer frame is degenerate there.
+    DegenerateObserverFrame {
+        /// Number of orthonormal legs successfully constructed (including the
+        /// timelike leg) before the construction ran out of independent
+        /// directions.
+        legs_found: usize,
+        /// Total number of legs required (the spacetime dimension `D`).
+        dimension: usize,
+    },
 }
 
 impl fmt::Display for NonlocalRelativityError {
@@ -1668,6 +1683,14 @@ impl fmt::Display for NonlocalRelativityError {
                 "adaptive integrator could not meet tolerance after accepted step \
                  {accepted_step} without shrinking step {attempted_step} to {proposed_step}, \
                  below the minimum {min_step} (scaled error estimate {error_estimate})"
+            ),
+            Self::DegenerateObserverFrame {
+                legs_found,
+                dimension,
+            } => write!(
+                formatter,
+                "could not build a local orthonormal frame: found {legs_found} of {dimension} \
+                 independent orthonormal legs"
             ),
         }
     }

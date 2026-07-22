@@ -30,11 +30,18 @@
 //! states, and it is deliberately a post-hoc diagnostic, **not** wired into the
 //! adaptive step controllers.
 //!
-//! A general local-orthonormal-frame (tetrad) projection, which would express
-//! `delta` in an observer's own orthonormal basis component by component, is a
-//! larger construction and is left as future work; the scalar temporal/spatial
-//! split delivered here is the part that is exactly verifiable now (see the
-//! flat-spacetime tests in `tests/geometric_error.rs`).
+//! The scalar temporal/spatial split of [`timelike_state_error`] is
+//! complemented by a full local-orthonormal-frame (tetrad) projection,
+//! [`tetrad_state_error`], which expresses `delta` in an observer's own
+//! orthonormal basis component by component. The tetrad
+//! ([`build_orthonormal_tetrad`]) is built by metric Gram-Schmidt: the
+//! timelike leg is the normalized four-velocity, and the spacelike legs are
+//! orthonormalized coordinate-basis directions. Both are exactly verifiable
+//! (the frame is orthonormal, `g(e_a, e_b) = eta_ab`, and the projected
+//! components reconstruct `delta` exactly), and the tetrad's temporal/spatial
+//! magnitudes agree with the scalar split — see the flat-spacetime tests in
+//! `tests/geometric_error.rs`. The individual spatial components depend on the
+//! (non-unique) spatial-frame choice; the magnitudes do not.
 
 use crate::{
     NonlocalRelativityError, NonlocalResult, lower_index, metric_contraction, validate_scalar,
@@ -77,26 +84,7 @@ pub fn timelike_state_error<const D: usize>(
     delta: &[f64; D],
     timelike_floor: f64,
 ) -> NonlocalResult<TimelikeStateError> {
-    if !timelike_floor.is_finite() || timelike_floor <= 0.0
-    {
-        return Err(NonlocalRelativityError::InvalidMetricNormFloor(
-            timelike_floor,
-        ));
-    }
-
-    let metric_norm = metric_contraction(metric, four_velocity, four_velocity);
-    if !metric_norm.is_finite()
-    {
-        return Err(NonlocalRelativityError::NonFiniteMetricNorm {
-            step: 0,
-            value: metric_norm,
-        });
-    }
-    if metric_norm > -timelike_floor
-    {
-        // Not sufficiently timelike under the (-,+,+,+) convention.
-        return Err(NonlocalRelativityError::NonTimelikeMetricNorm { metric_norm });
-    }
+    let metric_norm = validated_timelike_norm(metric, four_velocity, timelike_floor)?;
 
     let lowered = lower_index(metric, four_velocity);
     let inner_delta_u = lowered
@@ -147,5 +135,217 @@ pub fn timelike_state_error<const D: usize>(
         temporal,
         spatial,
         orthogonality_residual,
+    })
+}
+
+/// Validate `timelike_floor` and the observer, returning `g(u,u)` when the
+/// observer is timelike (`g(u,u) < -timelike_floor` under a `(-,+,+,+)`
+/// convention). Shared by [`timelike_state_error`] and
+/// [`build_orthonormal_tetrad`].
+fn validated_timelike_norm<const D: usize>(
+    metric: &[[f64; D]; D],
+    four_velocity: &[f64; D],
+    timelike_floor: f64,
+) -> NonlocalResult<f64> {
+    if !timelike_floor.is_finite() || timelike_floor <= 0.0
+    {
+        return Err(NonlocalRelativityError::InvalidMetricNormFloor(
+            timelike_floor,
+        ));
+    }
+
+    let metric_norm = metric_contraction(metric, four_velocity, four_velocity);
+    if !metric_norm.is_finite()
+    {
+        return Err(NonlocalRelativityError::NonFiniteMetricNorm {
+            step: 0,
+            value: metric_norm,
+        });
+    }
+    if metric_norm > -timelike_floor
+    {
+        // Not sufficiently timelike under the (-,+,+,+) convention.
+        return Err(NonlocalRelativityError::NonTimelikeMetricNorm { metric_norm });
+    }
+
+    Ok(metric_norm)
+}
+
+/// A local orthonormal frame (tetrad) at a chart point.
+///
+/// The `D` legs `e_a` satisfy `g(e_a, e_b) = eta_ab` with
+/// `eta = diag(-1, +1, ..., +1)` up to rounding: leg `0` is the timelike leg
+/// aligned with the observer four-velocity, and legs `1..D` are spacelike. The
+/// spatial legs are one (non-unique) orthonormal choice; their span, and the
+/// timelike leg, are fixed by the observer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OrthonormalTetrad<const D: usize> {
+    legs: [[f64; D]; D],
+}
+
+impl<const D: usize> OrthonormalTetrad<D> {
+    /// Borrow the tetrad legs `e_a` (contravariant components in the chart),
+    /// leg `0` first.
+    #[must_use]
+    pub const fn legs(&self) -> &[[f64; D]; D] {
+        &self.legs
+    }
+
+    /// The Minkowski signature entry `eta_aa = g(e_a, e_a)` of leg `index`:
+    /// `-1.0` for the timelike leg `0`, `+1.0` for the spacelike legs.
+    #[must_use]
+    pub fn signature(index: usize) -> f64 {
+        if index == 0 { -1.0 } else { 1.0 }
+    }
+}
+
+/// Build a local orthonormal frame (tetrad) at a chart point for a timelike
+/// observer, by metric Gram-Schmidt.
+///
+/// The timelike leg is the normalized four-velocity; the spacelike legs are
+/// the chart's coordinate-basis directions orthonormalized against the frame
+/// so far (skipping any that collapse to within `timelike_floor` of a
+/// degenerate residual). `timelike_floor` must be finite and strictly
+/// positive; a non-timelike observer is rejected exactly as in
+/// [`timelike_state_error`], and a point where fewer than `D` independent
+/// legs survive is a typed
+/// [`NonlocalRelativityError::DegenerateObserverFrame`] (it never silently
+/// returns an incomplete frame). This is a diagnostic construction and shares
+/// [`timelike_state_error`]'s chart-dependence caveats.
+pub fn build_orthonormal_tetrad<const D: usize>(
+    metric: &[[f64; D]; D],
+    four_velocity: &[f64; D],
+    timelike_floor: f64,
+) -> NonlocalResult<OrthonormalTetrad<D>> {
+    let metric_norm = validated_timelike_norm(metric, four_velocity, timelike_floor)?;
+
+    let mut legs = [[0.0_f64; D]; D];
+
+    // Timelike leg: e_0 = u / sqrt(-g(u,u)), so g(e_0, e_0) = -1.
+    let timelike_scale = (-metric_norm).sqrt();
+    for component in 0..D
+    {
+        legs[0][component] = four_velocity[component] / timelike_scale;
+        validate_scalar("tetrad_timelike_leg", legs[0][component], component)?;
+    }
+
+    // Spacelike legs by metric Gram-Schmidt over the coordinate basis.
+    let mut built = 1_usize;
+    let mut candidate = 0_usize;
+    while built < D && candidate < D
+    {
+        let mut vector = [0.0_f64; D];
+        vector[candidate] = 1.0;
+
+        for leg_vector in legs.iter().take(built)
+        {
+            let inner = metric_contraction(metric, &vector, leg_vector);
+            let leg_norm = metric_contraction(metric, leg_vector, leg_vector);
+            let coefficient = inner / leg_norm;
+            for component in 0..D
+            {
+                vector[component] -= coefficient * leg_vector[component];
+            }
+        }
+
+        let residual_norm = metric_contraction(metric, &vector, &vector);
+        if residual_norm.is_finite() && residual_norm > timelike_floor
+        {
+            let scale = residual_norm.sqrt();
+            for component in 0..D
+            {
+                legs[built][component] = vector[component] / scale;
+                validate_scalar("tetrad_spacelike_leg", legs[built][component], component)?;
+            }
+            built += 1;
+        }
+
+        candidate += 1;
+    }
+
+    if built < D
+    {
+        return Err(NonlocalRelativityError::DegenerateObserverFrame {
+            legs_found: built,
+            dimension: D,
+        });
+    }
+
+    Ok(OrthonormalTetrad { legs })
+}
+
+/// The tetrad-frame decomposition of a coordinate state-error vector.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TetradStateError<const D: usize> {
+    /// The frame components `c^a` of `delta`: `c^a = eta_aa * g(delta, e_a)`,
+    /// so `delta = sum_a c^a e_a`. `components[0]` is the (signed) temporal
+    /// component; the rest are spatial.
+    pub components: [f64; D],
+    /// `|components[0]|`, the temporal magnitude. Matches
+    /// [`TimelikeStateError::temporal`].
+    pub temporal: f64,
+    /// The Euclidean length of the spatial components, a genuine positive
+    /// spatial length. Matches [`TimelikeStateError::spatial`].
+    pub spatial: f64,
+    /// Chart-Euclidean length of `sum_a c^a e_a - delta`: zero in exact
+    /// arithmetic (the tetrad spans the tangent space), exposed as a
+    /// rounding-level self-consistency residual.
+    pub reconstruction_residual: f64,
+}
+
+/// Project a coordinate state-error vector `delta` onto the local orthonormal
+/// frame of a timelike observer (see [`build_orthonormal_tetrad`]).
+///
+/// This is the full-tetrad complement of [`timelike_state_error`]: it returns
+/// `delta`'s component in each frame leg, and its temporal and spatial
+/// magnitudes agree with that scalar split. The individual spatial components
+/// depend on the (non-unique) spatial-frame choice; the magnitudes do not. It
+/// is a diagnostic, chart-dependent in the same sense, and never a covariant
+/// comparison of distant states.
+pub fn tetrad_state_error<const D: usize>(
+    metric: &[[f64; D]; D],
+    four_velocity: &[f64; D],
+    delta: &[f64; D],
+    timelike_floor: f64,
+) -> NonlocalResult<TetradStateError<D>> {
+    let tetrad = build_orthonormal_tetrad(metric, four_velocity, timelike_floor)?;
+
+    let mut components = [0.0_f64; D];
+    for (leg, leg_vector) in tetrad.legs().iter().enumerate()
+    {
+        let projection = metric_contraction(metric, delta, leg_vector);
+        components[leg] = OrthonormalTetrad::<D>::signature(leg) * projection;
+        validate_scalar("tetrad_component", components[leg], leg)?;
+    }
+
+    let temporal = components[0].abs();
+    let mut spatial_squared = 0.0_f64;
+    for &component in components.iter().skip(1)
+    {
+        spatial_squared += component * component;
+    }
+    let spatial = spatial_squared.sqrt();
+    validate_scalar("tetrad_spatial", spatial, 0)?;
+
+    // Reconstruct delta = sum_a c^a e_a and measure the chart-Euclidean residual.
+    let mut reconstruction_squared = 0.0_f64;
+    for (component_index, &delta_component) in delta.iter().enumerate()
+    {
+        let mut reconstructed = 0.0_f64;
+        for (component, leg_vector) in components.iter().zip(tetrad.legs().iter())
+        {
+            reconstructed += component * leg_vector[component_index];
+        }
+        let difference = reconstructed - delta_component;
+        reconstruction_squared += difference * difference;
+    }
+    let reconstruction_residual = reconstruction_squared.sqrt();
+    validate_scalar("tetrad_reconstruction", reconstruction_residual, 0)?;
+
+    Ok(TetradStateError {
+        components,
+        temporal,
+        spatial,
+        reconstruction_residual,
     })
 }
