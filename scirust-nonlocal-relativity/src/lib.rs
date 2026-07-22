@@ -583,7 +583,18 @@ pub struct StepperContext<'a, B, H, L, T, const D: usize> {
     pub transport: &'a T,
     /// Metric norm at the initial sample.
     pub initial_metric_norm: f64,
+    /// True accumulated affine parameter at the current accepted `state`.
+    ///
+    /// A stepper that needs the provisional (post-step) affine parameter must
+    /// compute it as `current_parameter + config.step`, **not** by
+    /// reconstructing it from `step_index`, which is only valid under uniform
+    /// spacing. This lets a stepper participate soundly in an adaptive loop
+    /// where accepted step sizes vary.
+    pub current_parameter: f64,
     /// Current accepted step index.
+    ///
+    /// Retained for diagnostics and error reporting only; it must not be used
+    /// to reconstruct an absolute affine parameter (see `current_parameter`).
     pub step_index: usize,
     /// Validated nonlocal simulation configuration.
     pub config: NonlocalConfig,
@@ -644,7 +655,11 @@ impl<const D: usize> WorldlineStepper<D> for HeunPeceStepper {
         }
 
         let predicted_state = WorldlineState::new(predicted_coordinates, predicted_velocity);
-        let predicted_parameter = (context.step_index + 1) as f64 * context.config.step;
+        // The provisional point is one trial step past the current accepted
+        // parameter. This is exact for both uniform and non-uniform accepted
+        // spacing, unlike the previous `step_index * step` reconstruction,
+        // which assumed every accepted step shared one size.
+        let predicted_parameter = context.current_parameter + context.config.step;
         let mut provisional_history = context.history.clone();
         provisional_history.push_entry(
             context.background,
@@ -662,7 +677,7 @@ impl<const D: usize> WorldlineStepper<D> for HeunPeceStepper {
             memory_law: context.memory_law,
             transport: context.transport,
             initial_metric_norm: context.initial_metric_norm,
-            affine_parameter: (context.step_index + 1) as f64 * context.config.step,
+            affine_parameter: predicted_parameter,
             step_index: context.step_index + 1,
             config: context.config,
         })?;
@@ -2018,6 +2033,7 @@ where
             memory_law: &memory_law,
             transport: &history_transport,
             initial_metric_norm,
+            current_parameter: affine_parameter,
             step_index,
             config,
         })?;

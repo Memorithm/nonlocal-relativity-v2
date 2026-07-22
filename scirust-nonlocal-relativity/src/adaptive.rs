@@ -42,8 +42,10 @@
 //! left open here, for [`crate::SemiImplicitEulerStepper`] specifically, via
 //! a different step-size-control mechanism (classical step-doubling rather
 //! than this module's embedded pair); see that module's documentation for
-//! the mechanism and for precisely why [`crate::HeunPeceStepper`] still
-//! cannot be composed either way.
+//! the mechanism and for why [`crate::HeunPeceStepper`] is not offered
+//! through that step-doubling entry point — this module's embedded
+//! Heun-Euler controller *is* adaptive Heun-PECE, so a step-doubling variant
+//! would be a strictly inferior duplicate rather than a new capability.
 
 use crate::{
     AdaptiveTolerance, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,

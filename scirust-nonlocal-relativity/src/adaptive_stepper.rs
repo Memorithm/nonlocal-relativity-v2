@@ -27,31 +27,40 @@
 //!    estimates the local error; the two-half-steps result (more accurate)
 //!    is kept when it is accepted.
 //!
-//! [`crate::SemiImplicitEulerStepper`]'s `advance` is safe to reuse
-//! unmodified here because its body only reads `context.state`,
-//! `context.accepted_acceleration`, and `context.config.step` (the current
-//! trial step size): it never reconstructs an absolute affine parameter from
-//! `context.step_index`, unlike [`crate::HeunPeceStepper`].
+//! Both [`crate::SemiImplicitEulerStepper`] and [`crate::HeunPeceStepper`] now
+//! derive any provisional affine parameter from
+//! [`crate::StepperContext::current_parameter`] (the true accumulated
+//! parameter at the accepted state), so both are sound under the non-uniform
+//! accepted spacing adaptive stepping produces. Semi-implicit Euler never
+//! forms a provisional point at all; Heun-PECE forms one at
+//! `current_parameter + config.step`, which is exact for uniform *and*
+//! non-uniform spacing (this replaced an earlier `step_index * config.step`
+//! reconstruction that was correct only when every accepted step shared one
+//! size — see [`crate::StepperContext::current_parameter`]).
 //!
-//! **[`crate::HeunPeceStepper`] is deliberately excluded and cannot be added
-//! here without changing its existing body.** Its predictor pushes a
-//! provisional history entry whose parameter it computes as
-//! `(context.step_index + 1) as f64 * context.config.step`: an absolute
-//! affine parameter reconstructed by multiplying an integer step count by
-//! *one* step size. That is exact for the fixed-step architecture, where
-//! every accepted step shares that size, but wrong the moment accepted step
-//! sizes vary, which adaptive stepping does by construction — there is no
-//! single `step` value for which `step_index * step` equals the true
-//! accumulated parameter along a non-uniform trajectory. Correcting this
-//! would require [`crate::StepperContext`] to carry the true accumulated
-//! parameter directly instead of deriving it from `step_index`, which means
-//! changing that existing, already-tested struct and
-//! [`crate::HeunPeceStepper`]'s `advance` body itself — out of scope for an
-//! additive change. Classical step-doubling with a first-order method (used
-//! here) needs no predictor push in the first place, so it sidesteps the
-//! problem rather than solving it for Heun-PECE: it is a different, standard
-//! way to error-control a method with no natural embedded higher-order
-//! partner, not a higher-accuracy replacement for the embedded pair.
+//! **[`crate::HeunPeceStepper`] is nonetheless deliberately not offered
+//! through *this* step-doubling entry point, for a numerical-analysis reason,
+//! not the old parameter-formula one.** This controller's error estimate is
+//! classical step-doubling specialized to a *first-order* method: it compares
+//! one full step against two half steps and uses their raw difference as the
+//! local-error estimate, which is the Richardson estimate only because the
+//! divisor `2^p - 1` equals `1` for `p = 1`. Heun-PECE is second order
+//! (`p = 2`), so its step-doubling estimate would need the difference divided
+//! by `2^2 - 1 = 3` and the step-scaling exponent changed from `1/(p+1) = 0.5`
+//! to `1/3`; using this first-order controller unchanged would systematically
+//! misestimate a Heun step's error. More importantly, step-doubling is the
+//! *wrong tool* for Heun: a second-order method already has a natural embedded
+//! first-order partner (its Euler predictor), and the embedded Heun-Euler pair
+//! costs one extra acceleration evaluation per step versus step-doubling's
+//! three method evaluations. That embedded pair is exactly what
+//! [`crate::simulate_nonlocal_worldline_adaptive`] already implements — it
+//! computes the same Heun corrector [`crate::HeunPeceStepper::advance`]
+//! computes, and additionally exposes the Euler predictor the error estimate
+//! needs. So **adaptive Heun-PECE already exists** (the embedded controller);
+//! adding Heun-PECE to this step-doubling controller would be a strictly
+//! inferior duplicate, not a new capability, and is deliberately omitted per
+//! the project's rule against implementing something merely to close a
+//! checklist item.
 //!
 //! The step-size controller's growth/shrink exponent is `1 / (p_low + 1) =
 //! 0.5`, exactly as in
@@ -64,16 +73,16 @@
 //! directly, exactly as the embedded pair uses its raw predictor/corrector
 //! difference directly.
 //!
-//! One further, independent difference from
-//! [`crate::simulate_nonlocal_worldline_adaptive_with_policy`]:
-//! [`crate::AdaptiveNonlocalConfig::max_rejections_per_step`] is validated
-//! there but never consulted by that loop, which instead stops shrinking
-//! only once the trial step falls below
-//! [`crate::AdaptiveNonlocalConfig::min_step`]. This loop counts rejections
-//! explicitly and returns
-//! [`crate::NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`] as
-//! soon as either bound is hit, matching that field's documented meaning
-//! ("the maximum number of consecutive rejections permitted") precisely.
+//! Both adaptive controllers now enforce
+//! [`crate::AdaptiveNonlocalConfig::max_rejections_per_step`] with identical
+//! semantics: each keeps an explicit per-accepted-step rejection counter
+//! (reset on every acceptance), returns
+//! [`crate::NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`] when
+//! the retry count is reached, and
+//! [`crate::NonlocalRelativityError::AdaptiveMinimumStepExhausted`] when the
+//! proposed shrink would cross
+//! [`crate::AdaptiveNonlocalConfig::min_step`] first — two distinct typed
+//! errors rather than the single overloaded one earlier revisions used.
 
 use crate::{
     AdaptiveNonlocalConfig, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,
@@ -184,6 +193,7 @@ where
         memory_law,
         transport,
         initial_metric_norm,
+        current_parameter,
         step_index,
         config: full_step_config,
     })?;
@@ -205,6 +215,7 @@ where
         memory_law,
         transport,
         initial_metric_norm,
+        current_parameter,
         step_index,
         config: half_step_config,
     })?;
@@ -241,6 +252,7 @@ where
         memory_law,
         transport,
         initial_metric_norm,
+        current_parameter: midpoint_parameter,
         step_index,
         config: half_step_config,
     })?;
