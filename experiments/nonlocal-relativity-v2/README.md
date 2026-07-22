@@ -20,6 +20,8 @@ for the scientific boundary.
 export NLR_EXPERIMENT_COMMIT="$(git rev-parse HEAD)"
 
 cargo run --release -p nonlocal-relativity-experiments --bin history_retention
+cargo run --release -p nonlocal-relativity-experiments --bin adaptive_convergence
+cargo run --release -p nonlocal-relativity-experiments --bin complexity_scaling
 ```
 
 Output goes to stdout as `#`-commented metadata plus CSV. Redirect it to a file
@@ -71,3 +73,38 @@ refinement (coord error ~`2.9e-6 → 3.4e-7` as tolerance tightens `1e-6 →
 strategies (strict parameter ordering, no duplicate parameters, true-midpoint
 recording, exact retained-sample counts with no leakage from rejected trials)
 are pinned by `scirust-nonlocal-relativity/tests/history_retention.rs`.
+
+### `adaptive_convergence` — Phase 9 adaptive-tolerance convergence
+
+For both adaptive controllers (embedded Heun-Euler and step-doubling), reports
+the accepted-step count and endpoint coordinate error against a fine fixed-step
+reference of the matching method, at tolerances `1e-5 … 1e-9`, with the
+error-reduction ratio between consecutive rows. The endpoint error decreases
+monotonically as the tolerance tightens (embedded Heun-Euler reaches ~`3.5e-10`,
+step-doubling ~`3.4e-7` at `1e-9`). This is numerical self-consistency toward a
+fine-grid reference, **not** a validation of the model.
+
+### `complexity_scaling` — Phase 10 empirical complexity (op-count proxy)
+
+Measures the deterministic operation-count proxy (sum of retained sample counts
+over all accepted evaluations — the total Caputo history-sample touches) for the
+complete raw coordinate memory, the bounded short memory (`W = 16`), and the
+discrete connection transport, at doubling fixed step counts `N ∈ {50, 100, 200,
+400}`. The measured growth ratio `proxy(2N)/proxy(N)` matches the
+implementation-derived complexity: `→ 4` (`O(N^2)`) for complete and discrete
+transport, `→ 2` (`O(N*W)`) for bounded short memory. Discrete transport shares
+complete memory's `O(N^2)` touch count but pays an extra `O(D^3)` Christoffel
+contraction per touch. Scaling only — no wall-clock claim.
+
+### Other scenarios (shipped as crate examples)
+
+Several experiment scenarios listed in the v2 plan already ship as deterministic,
+CSV-producing examples of `scirust-nonlocal-relativity` and are not duplicated
+here: coordinate-chart comparison (`coordinate_covariance`), exact flat-spacetime
+transport convergence (`exact_transport_convergence`), exact Schwarzschild
+circular-orbit transport convergence (`schwarzschild_orbit_transport`),
+proper-time vs affine memory (`proper_time_memory_comparison`), field/curvature
+modulation with the `beta = 0` bit-identical baseline
+(`curvature_modulated_memory`, `reissner_nordstrom_field_modulation`), and Kerr
+finite-difference frame dragging (`kerr_worldline`). Run any with
+`cargo run --release -p scirust-nonlocal-relativity --example <name>`.
