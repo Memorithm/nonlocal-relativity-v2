@@ -117,10 +117,13 @@ jobs:
 
       - name: Forbidden-marker scan
         run: |
+          # Scope: the three hardened crates plus only the nonlocal-relativity
+          # v2 artifacts. Unrelated pre-existing docs elsewhere in the repo
+          # (for example other papers under paper/) are deliberately not
+          # scanned, since they legitimately contain these words in prose.
           scan="scirust-fractional scirust-relativity scirust-nonlocal-relativity"
-          for d in paper experiments; do
-            [ -d "$d" ] && scan="$scan $d"
-          done
+          [ -d experiments/nonlocal-relativity-v2 ] && scan="$scan experiments/nonlocal-relativity-v2"
+          [ -f paper/nonlocal-relativity-v2.md ] && scan="$scan paper/nonlocal-relativity-v2.md"
           echo "Scanning: $scan"
           if grep -RInE 'TODO|FIXME|placeholder|stub|unimplemented!|todo!' $scan; then
             echo "::error::forbidden marker found in hardened sources"
