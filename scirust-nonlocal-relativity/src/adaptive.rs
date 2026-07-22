@@ -42,35 +42,33 @@
 //! left open here, for [`crate::SemiImplicitEulerStepper`] specifically, via
 //! a different step-size-control mechanism (classical step-doubling rather
 //! than this module's embedded pair); see that module's documentation for
-//! the mechanism and for precisely why [`crate::HeunPeceStepper`] still
-//! cannot be composed either way.
+//! the mechanism and for why [`crate::HeunPeceStepper`] is not offered
+//! through that step-doubling entry point — this module's embedded
+//! Heun-Euler controller *is* adaptive Heun-PECE, so a step-doubling variant
+//! would be a strictly inferior duplicate rather than a new capability.
 
+use crate::adaptive_control::{StepControl, clamp_step_to_target, control_step};
 use crate::{
-    CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry, HistoryModulator,
-    HistoryTransport, IdentityHistoryModulator, IdentityHistoryTransport, Metric,
+    AdaptiveTolerance, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,
+    HistoryModulator, HistoryTransport, IdentityHistoryModulator, IdentityHistoryTransport, Metric,
     NonlocalRelativityError, NonlocalResult, NonlocalTrajectory, StepDiagnostics, WorldlineState,
-    checked_l2_distance, coordinate_l2_norm, gr_acceleration, lower_index, projected_memory_force,
-    validate_diagnostics, validate_generated_coordinate, validate_generated_velocity,
-    validate_history_velocity, validate_initial_state, validate_vector, validated_christoffel,
-    validated_metric, validated_metric_norm,
+    coordinate_l2_norm, gr_acceleration, lower_index, projected_memory_force,
+    scaled_local_error_norm, validate_diagnostics, validate_generated_coordinate,
+    validate_generated_velocity, validate_history_velocity, validate_initial_state,
+    validate_vector, validated_christoffel, validated_metric, validated_metric_norm,
 };
 use scirust_fractional::{FractionalError, FractionalOrder, caputo_l1_nonuniform};
-
-const STEP_SAFETY_FACTOR: f64 = 0.9;
-const STEP_GROWTH_CAP: f64 = 4.0;
-const STEP_SHRINK_FLOOR: f64 = 0.1;
-/// Step-control exponent `1 / (p_low + 1)` for the embedded Heun(2)-Euler(1)
-/// pair, using the lower method's order `p_low = 1`.
-const EMBEDDED_ERROR_EXPONENT: f64 = 0.5;
 
 /// Configuration for the adaptive-step fractional-memory worldline
 /// integrator.
 ///
 /// Unlike [`crate::NonlocalConfig`], there is no fixed step or step count:
 /// the integrator chooses its own affine-parameter step at each accepted
-/// sample, bounded by `min_step` and `max_step`, targeting `error_tolerance`
-/// combined coordinate-and-velocity local error via the embedded Heun-Euler
-/// pair described in this module's documentation.
+/// sample, bounded by `min_step` and `max_step`, targeting the componentwise
+/// scaled root-mean-square local error defined by [`AdaptiveTolerance`] and
+/// [`crate::scaled_local_error_norm`], via the embedded Heun-Euler pair
+/// described in this module's documentation. Both adaptive controllers in
+/// this crate share that one scaled-norm implementation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AdaptiveNonlocalConfig {
     fractional_order: FractionalOrder,
@@ -78,7 +76,7 @@ pub struct AdaptiveNonlocalConfig {
     initial_step: f64,
     min_step: f64,
     max_step: f64,
-    error_tolerance: f64,
+    tolerance: AdaptiveTolerance,
     metric_norm_floor: f64,
     target_affine_parameter: f64,
     max_accepted_steps: usize,
@@ -86,7 +84,19 @@ pub struct AdaptiveNonlocalConfig {
 }
 
 impl AdaptiveNonlocalConfig {
-    /// Validate and construct an adaptive worldline configuration.
+    /// Validate and construct an adaptive worldline configuration with a
+    /// single scalar error tolerance.
+    ///
+    /// This is the compatibility constructor: the scalar `error_tolerance`
+    /// seeds a uniform [`AdaptiveTolerance`] (the same magnitude for the
+    /// relative, coordinate-absolute, and velocity-absolute fields) via
+    /// [`AdaptiveTolerance::uniform`]. The step-acceptance decision then uses
+    /// the componentwise scaled root-mean-square norm
+    /// ([`crate::scaled_local_error_norm`]) rather than the previous unscaled
+    /// sum of coordinate and velocity L2 differences, so a run built this way
+    /// is *not* bit-for-bit identical to the pre-scaling controller. Use
+    /// [`AdaptiveNonlocalConfig::with_tolerance`] to set the three tolerance
+    /// fields independently.
     ///
     /// The fractional order must satisfy the `scirust-fractional` interval
     /// `0 < alpha < 1`. The coupling is finite and non-negative. `min_step`,
@@ -103,6 +113,50 @@ impl AdaptiveNonlocalConfig {
         min_step: f64,
         max_step: f64,
         error_tolerance: f64,
+        metric_norm_floor: f64,
+        target_affine_parameter: f64,
+        max_accepted_steps: usize,
+        max_rejections_per_step: usize,
+    ) -> NonlocalResult<Self> {
+        if !error_tolerance.is_finite() || error_tolerance <= 0.0
+        {
+            return Err(NonlocalRelativityError::InvalidAdaptiveConfiguration {
+                field: "error_tolerance",
+                value: error_tolerance,
+            });
+        }
+
+        let tolerance = AdaptiveTolerance::uniform(error_tolerance)?;
+
+        Self::with_tolerance(
+            alpha,
+            coupling,
+            initial_step,
+            min_step,
+            max_step,
+            tolerance,
+            metric_norm_floor,
+            target_affine_parameter,
+            max_accepted_steps,
+            max_rejections_per_step,
+        )
+    }
+
+    /// Validate and construct an adaptive worldline configuration with an
+    /// explicit componentwise [`AdaptiveTolerance`].
+    ///
+    /// Identical to [`AdaptiveNonlocalConfig::new`] except that the caller
+    /// supplies the already-validated relative, coordinate-absolute, and
+    /// velocity-absolute tolerances directly, so coordinate and velocity
+    /// components can be held to different absolute scales.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_tolerance(
+        alpha: f64,
+        coupling: f64,
+        initial_step: f64,
+        min_step: f64,
+        max_step: f64,
+        tolerance: AdaptiveTolerance,
         metric_norm_floor: f64,
         target_affine_parameter: f64,
         max_accepted_steps: usize,
@@ -137,14 +191,6 @@ impl AdaptiveNonlocalConfig {
             return Err(NonlocalRelativityError::InvalidAdaptiveConfiguration {
                 field: "initial_step",
                 value: initial_step,
-            });
-        }
-
-        if !error_tolerance.is_finite() || error_tolerance <= 0.0
-        {
-            return Err(NonlocalRelativityError::InvalidAdaptiveConfiguration {
-                field: "error_tolerance",
-                value: error_tolerance,
             });
         }
 
@@ -184,7 +230,7 @@ impl AdaptiveNonlocalConfig {
             initial_step,
             min_step,
             max_step,
-            error_tolerance,
+            tolerance,
             metric_norm_floor,
             target_affine_parameter,
             max_accepted_steps,
@@ -222,10 +268,11 @@ impl AdaptiveNonlocalConfig {
         self.max_step
     }
 
-    /// Return the target combined local error per accepted step.
+    /// Return the componentwise scaled-error tolerance applied per accepted
+    /// step.
     #[must_use]
-    pub const fn error_tolerance(self) -> f64 {
-        self.error_tolerance
+    pub const fn tolerance(self) -> AdaptiveTolerance {
+        self.tolerance
     }
 
     /// Return the positive lower bound for `|g_(mu nu) u^mu u^nu|`.
@@ -720,9 +767,17 @@ where
             });
         }
 
-        let remaining = config.target_affine_parameter() - current_parameter;
-        let mut step = proposed_step.min(remaining);
+        let mut step = clamp_step_to_target(
+            proposed_step,
+            current_parameter,
+            config.target_affine_parameter(),
+        );
         let step_index = accepted_count + 1;
+        // Explicit per-accepted-step rejection counter, reset (by being
+        // re-declared) for every new accepted step. The shared `control_step`
+        // enforces `max_rejections_per_step` and `min_step` identically for
+        // both adaptive controllers.
+        let mut rejection_count = 0_usize;
 
         let (accepted_state, used_step, next_proposed_step) = loop
         {
@@ -740,47 +795,34 @@ where
                 step_index,
             )?;
 
-            let coordinate_error = checked_l2_distance(
-                &result.corrected_state.coordinates,
-                &result.predicted_state.coordinates,
-                "adaptive_coordinate_error",
+            // Componentwise scaled RMS local error (shared by both adaptive
+            // controllers); the lower-order Euler predictor and higher-order
+            // Heun corrector are the embedded pair.
+            let normalized_error = scaled_local_error_norm(
+                &result.predicted_state,
+                &result.corrected_state,
+                config.tolerance(),
             )?;
-            let velocity_error = checked_l2_distance(
-                &result.corrected_state.velocity,
-                &result.predicted_state.velocity,
-                "adaptive_velocity_error",
-            )?;
-            let error_estimate = coordinate_error + velocity_error;
-            let normalized_error = error_estimate / config.error_tolerance();
 
-            if normalized_error <= 1.0
+            match control_step(
+                normalized_error,
+                step,
+                &mut rejection_count,
+                accepted_count,
+                config.min_step(),
+                config.max_step(),
+                config.max_rejections_per_step(),
+            )?
             {
-                let growth = if normalized_error > 0.0
+                StepControl::Accept { next_step } =>
                 {
-                    STEP_SAFETY_FACTOR * normalized_error.powf(-EMBEDDED_ERROR_EXPONENT)
-                }
-                else
+                    break (result.corrected_state, step, next_step);
+                },
+                StepControl::Retry { next_step } =>
                 {
-                    STEP_GROWTH_CAP
-                };
-                let next_step = (step * growth.min(STEP_GROWTH_CAP))
-                    .clamp(config.min_step(), config.max_step());
-                break (result.corrected_state, step, next_step);
+                    step = next_step;
+                },
             }
-
-            let shrink = STEP_SAFETY_FACTOR * normalized_error.powf(-EMBEDDED_ERROR_EXPONENT);
-            let shrunk_step = step * shrink.max(STEP_SHRINK_FLOOR);
-
-            if shrunk_step < config.min_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
-                    accepted_step: accepted_count,
-                    attempted_step: step,
-                    error_estimate,
-                });
-            }
-
-            step = shrunk_step;
         };
 
         current_parameter += used_step;

@@ -40,9 +40,11 @@ use std::fmt;
 use std::str::FromStr;
 
 mod adaptive;
+mod adaptive_control;
 mod adaptive_stepper;
 mod charts;
 mod curved_transport;
+mod geometric_error;
 mod modulation;
 mod nonuniform_memory;
 mod proper_time;
@@ -52,9 +54,11 @@ pub use adaptive::{
     AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, simulate_nonlocal_worldline_adaptive,
     simulate_nonlocal_worldline_adaptive_with_policy,
 };
+pub use adaptive_control::{AdaptiveTolerance, scaled_local_error_norm};
 pub use adaptive_stepper::{
-    AdaptiveStepperPolicy, simulate_nonlocal_worldline_adaptive_with_stepper,
+    AdaptiveStepperPolicy, HistoryRetention, simulate_nonlocal_worldline_adaptive_with_stepper,
     simulate_nonlocal_worldline_adaptive_with_stepper_policy,
+    simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention,
 };
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
@@ -65,6 +69,7 @@ pub use curved_transport::{
     exact_schwarzschild_circular_orbit_transport, schwarzschild_circular_orbit_angular_velocity,
     schwarzschild_circular_orbit_four_velocity,
 };
+pub use geometric_error::{TimelikeStateError, timelike_state_error};
 pub use modulation::{
     HistoryModulator, IdentityHistoryModulator, ModulatedCaputoCoordinateMemory,
     ReissnerNordstromFieldModulator, SchwarzschildKretschmannModulator,
@@ -581,7 +586,18 @@ pub struct StepperContext<'a, B, H, L, T, const D: usize> {
     pub transport: &'a T,
     /// Metric norm at the initial sample.
     pub initial_metric_norm: f64,
+    /// True accumulated affine parameter at the current accepted `state`.
+    ///
+    /// A stepper that needs the provisional (post-step) affine parameter must
+    /// compute it as `current_parameter + config.step`, **not** by
+    /// reconstructing it from `step_index`, which is only valid under uniform
+    /// spacing. This lets a stepper participate soundly in an adaptive loop
+    /// where accepted step sizes vary.
+    pub current_parameter: f64,
     /// Current accepted step index.
+    ///
+    /// Retained for diagnostics and error reporting only; it must not be used
+    /// to reconstruct an absolute affine parameter (see `current_parameter`).
     pub step_index: usize,
     /// Validated nonlocal simulation configuration.
     pub config: NonlocalConfig,
@@ -642,7 +658,11 @@ impl<const D: usize> WorldlineStepper<D> for HeunPeceStepper {
         }
 
         let predicted_state = WorldlineState::new(predicted_coordinates, predicted_velocity);
-        let predicted_parameter = (context.step_index + 1) as f64 * context.config.step;
+        // The provisional point is one trial step past the current accepted
+        // parameter. This is exact for both uniform and non-uniform accepted
+        // spacing, unlike the previous `step_index * step` reconstruction,
+        // which assumed every accepted step shared one size.
+        let predicted_parameter = context.current_parameter + context.config.step;
         let mut provisional_history = context.history.clone();
         provisional_history.push_entry(
             context.background,
@@ -660,7 +680,7 @@ impl<const D: usize> WorldlineStepper<D> for HeunPeceStepper {
             memory_law: context.memory_law,
             transport: context.transport,
             initial_metric_norm: context.initial_metric_norm,
-            affine_parameter: (context.step_index + 1) as f64 * context.config.step,
+            affine_parameter: predicted_parameter,
             step_index: context.step_index + 1,
             config: context.config,
         })?;
@@ -1338,14 +1358,43 @@ pub enum NonlocalRelativityError {
         target_affine_parameter: f64,
     },
 
-    /// The adaptive integrator rejected a single step more times than the
-    /// configured retry budget while shrinking toward the tolerance.
+    /// The adaptive integrator rejected a single accepted step more times than
+    /// the configured `max_rejections_per_step` retry budget while shrinking
+    /// toward the tolerance.
+    ///
+    /// Distinct from [`NonlocalRelativityError::AdaptiveMinimumStepExhausted`]:
+    /// here the retry *count* was reached; there the proposed shrink would have
+    /// crossed `min_step`.
     AdaptiveRejectionBudgetExhausted {
         /// Accepted step index at which the retry budget was exhausted.
         accepted_step: usize,
+        /// Number of rejections that were counted against the budget.
+        rejections: usize,
         /// Most recently attempted step size.
         attempted_step: f64,
-        /// Most recent local error estimate.
+        /// Most recent local error estimate (scaled RMS norm; `1.0` is at
+        /// tolerance).
+        error_estimate: f64,
+    },
+
+    /// The adaptive integrator could not bring a single accepted step within
+    /// tolerance without proposing a step below the configured `min_step`.
+    ///
+    /// Distinct from
+    /// [`NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`]: here the
+    /// step-size floor was reached before the retry count.
+    AdaptiveMinimumStepExhausted {
+        /// Accepted step index at which shrinking hit the floor.
+        accepted_step: usize,
+        /// Step size that was rejected before the proposed shrink fell below
+        /// `min_step`.
+        attempted_step: f64,
+        /// The proposed shrunk step that fell below the floor.
+        proposed_step: f64,
+        /// Configured minimum step size.
+        min_step: f64,
+        /// Most recent local error estimate (scaled RMS norm; `1.0` is at
+        /// tolerance).
         error_estimate: f64,
     },
 }
@@ -1599,13 +1648,26 @@ impl fmt::Display for NonlocalRelativityError {
             ),
             Self::AdaptiveRejectionBudgetExhausted {
                 accepted_step,
+                rejections,
                 attempted_step,
                 error_estimate,
             } => write!(
                 formatter,
                 "adaptive integrator exhausted its rejection budget after accepted step \
-                 {accepted_step}, last attempted step {attempted_step} with error estimate \
-                 {error_estimate}"
+                 {accepted_step} ({rejections} rejections), last attempted step {attempted_step} \
+                 with scaled error estimate {error_estimate}"
+            ),
+            Self::AdaptiveMinimumStepExhausted {
+                accepted_step,
+                attempted_step,
+                proposed_step,
+                min_step,
+                error_estimate,
+            } => write!(
+                formatter,
+                "adaptive integrator could not meet tolerance after accepted step \
+                 {accepted_step} without shrinking step {attempted_step} to {proposed_step}, \
+                 below the minimum {min_step} (scaled error estimate {error_estimate})"
             ),
         }
     }
@@ -1974,6 +2036,7 @@ where
             memory_law: &memory_law,
             transport: &history_transport,
             initial_metric_norm,
+            current_parameter: affine_parameter,
             step_index,
             config,
         })?;
@@ -2631,7 +2694,11 @@ pub(crate) fn validate_diagnostics(
     Ok(())
 }
 
-fn validate_scalar(quantity: &'static str, value: f64, step: usize) -> NonlocalResult<()> {
+pub(crate) fn validate_scalar(
+    quantity: &'static str,
+    value: f64,
+    step: usize,
+) -> NonlocalResult<()> {
     if !value.is_finite()
     {
         return Err(NonlocalRelativityError::NonFiniteDiagnostic {

@@ -1,0 +1,168 @@
+name: Nonlocal Relativity
+
+# Focused, reproducible gate for the three crates of the experimental
+# fractional-memory worldline research layer:
+#   - scirust-fractional
+#   - scirust-relativity
+#   - scirust-nonlocal-relativity
+#
+# It runs the exact commands documented in
+# scirust-nonlocal-relativity/README.md and the v2 status/paper docs, so they
+# stay reproducible locally with identical results. It performs no hardware
+# validation and claims none.
+#
+# Toolchain: this repository pins nightly-2026-07-02 in rust-toolchain.toml and
+# uses unstable rustfmt options in rustfmt.toml, so a stable toolchain cannot
+# reproduce `cargo fmt --check`. The same pinned nightly is used here (fixed,
+# not floating `@nightly`) so a newer nightly cannot silently reformat merged
+# code or change a lint and turn every open PR red. Bump the date deliberately.
+
+on:
+  push:
+    branches: [master, main, develop]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scirust-fractional/**"
+      - "scirust-relativity/**"
+      - "scirust-nonlocal-relativity/**"
+      - "experiments/nonlocal-relativity-v2/**"
+      - "paper/nonlocal-relativity-v2.md"
+      - ".github/workflows/nonlocal-relativity.yml"
+  pull_request:
+    branches: [master, main, develop]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scirust-fractional/**"
+      - "scirust-relativity/**"
+      - "scirust-nonlocal-relativity/**"
+      - "experiments/nonlocal-relativity-v2/**"
+      - "paper/nonlocal-relativity-v2.md"
+      - ".github/workflows/nonlocal-relativity.yml"
+
+concurrency:
+  group: nonlocal-relativity-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only: none of these jobs write back to the repository.
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: fmt / clippy / test / docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned nightly toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: nightly-2026-07-02
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Formatting
+        run: cargo +nightly-2026-07-02 fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: |
+          cargo +nightly-2026-07-02 clippy --locked \
+            -p scirust-fractional \
+            -p scirust-relativity \
+            -p scirust-nonlocal-relativity \
+            --all-targets \
+            --all-features \
+            -- -D warnings
+
+      - name: Tests
+        run: |
+          cargo +nightly-2026-07-02 test --locked \
+            -p scirust-fractional \
+            -p scirust-relativity \
+            -p scirust-nonlocal-relativity
+
+      - name: Documentation tests
+        run: |
+          cargo +nightly-2026-07-02 test --locked \
+            -p scirust-nonlocal-relativity \
+            --doc
+
+      - name: Whitespace / conflict-marker check (git diff --check)
+        run: |
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            git fetch --no-tags --depth=100 origin "$GITHUB_BASE_REF"
+            base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)"
+          elif git rev-parse HEAD~1 >/dev/null 2>&1; then
+            base="HEAD~1"
+          else
+            base=""
+          fi
+          if [ -n "$base" ]; then
+            echo "Checking diff $base..HEAD for whitespace/conflict markers"
+            git diff --check "$base" HEAD
+          else
+            echo "No base revision available; skipping git diff --check"
+          fi
+
+      - name: Forbidden-marker scan
+        run: |
+          # Scope: the three hardened crates plus only the nonlocal-relativity
+          # v2 artifacts. Unrelated pre-existing docs elsewhere in the repo
+          # (for example other papers under paper/) are deliberately not
+          # scanned, since they legitimately contain these words in prose.
+          scan="scirust-fractional scirust-relativity scirust-nonlocal-relativity"
+          [ -d experiments/nonlocal-relativity-v2 ] && scan="$scan experiments/nonlocal-relativity-v2"
+          [ -f paper/nonlocal-relativity-v2.md ] && scan="$scan paper/nonlocal-relativity-v2.md"
+          echo "Scanning: $scan"
+          if grep -RInE 'TODO|FIXME|placeholder|stub|unimplemented!|todo!' $scan; then
+            echo "::error::forbidden marker found in hardened sources"
+            exit 1
+          fi
+          echo "No forbidden markers."
+
+  examples:
+    name: run examples (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pinned nightly toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: nightly-2026-07-02
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      # Enumerate examples from the crate directory rather than maintaining a
+      # hard-coded list that could drift. Every discovered example is built and
+      # run in release mode (their runtimes are all short numerical demos).
+      - name: Build and run every nonlocal-relativity example (release)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          examples=(scirust-nonlocal-relativity/examples/*.rs)
+          if [ ${#examples[@]} -eq 0 ]; then
+            echo "::error::no examples discovered"
+            exit 1
+          fi
+          cargo +nightly-2026-07-02 build --locked --release \
+            -p scirust-nonlocal-relativity --examples
+          for path in "${examples[@]}"; do
+            name="$(basename "$path" .rs)"
+            echo "==== running example: $name ===="
+            cargo +nightly-2026-07-02 run --locked --release \
+              -p scirust-nonlocal-relativity --example "$name" >/dev/null
+          done
+          echo "All ${#examples[@]} examples ran successfully."

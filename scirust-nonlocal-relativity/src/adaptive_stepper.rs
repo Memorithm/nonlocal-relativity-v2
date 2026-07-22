@@ -27,31 +27,40 @@
 //!    estimates the local error; the two-half-steps result (more accurate)
 //!    is kept when it is accepted.
 //!
-//! [`crate::SemiImplicitEulerStepper`]'s `advance` is safe to reuse
-//! unmodified here because its body only reads `context.state`,
-//! `context.accepted_acceleration`, and `context.config.step` (the current
-//! trial step size): it never reconstructs an absolute affine parameter from
-//! `context.step_index`, unlike [`crate::HeunPeceStepper`].
+//! Both [`crate::SemiImplicitEulerStepper`] and [`crate::HeunPeceStepper`] now
+//! derive any provisional affine parameter from
+//! [`crate::StepperContext::current_parameter`] (the true accumulated
+//! parameter at the accepted state), so both are sound under the non-uniform
+//! accepted spacing adaptive stepping produces. Semi-implicit Euler never
+//! forms a provisional point at all; Heun-PECE forms one at
+//! `current_parameter + config.step`, which is exact for uniform *and*
+//! non-uniform spacing (this replaced an earlier `step_index * config.step`
+//! reconstruction that was correct only when every accepted step shared one
+//! size — see [`crate::StepperContext::current_parameter`]).
 //!
-//! **[`crate::HeunPeceStepper`] is deliberately excluded and cannot be added
-//! here without changing its existing body.** Its predictor pushes a
-//! provisional history entry whose parameter it computes as
-//! `(context.step_index + 1) as f64 * context.config.step`: an absolute
-//! affine parameter reconstructed by multiplying an integer step count by
-//! *one* step size. That is exact for the fixed-step architecture, where
-//! every accepted step shares that size, but wrong the moment accepted step
-//! sizes vary, which adaptive stepping does by construction — there is no
-//! single `step` value for which `step_index * step` equals the true
-//! accumulated parameter along a non-uniform trajectory. Correcting this
-//! would require [`crate::StepperContext`] to carry the true accumulated
-//! parameter directly instead of deriving it from `step_index`, which means
-//! changing that existing, already-tested struct and
-//! [`crate::HeunPeceStepper`]'s `advance` body itself — out of scope for an
-//! additive change. Classical step-doubling with a first-order method (used
-//! here) needs no predictor push in the first place, so it sidesteps the
-//! problem rather than solving it for Heun-PECE: it is a different, standard
-//! way to error-control a method with no natural embedded higher-order
-//! partner, not a higher-accuracy replacement for the embedded pair.
+//! **[`crate::HeunPeceStepper`] is nonetheless deliberately not offered
+//! through *this* step-doubling entry point, for a numerical-analysis reason,
+//! not the old parameter-formula one.** This controller's error estimate is
+//! classical step-doubling specialized to a *first-order* method: it compares
+//! one full step against two half steps and uses their raw difference as the
+//! local-error estimate, which is the Richardson estimate only because the
+//! divisor `2^p - 1` equals `1` for `p = 1`. Heun-PECE is second order
+//! (`p = 2`), so its step-doubling estimate would need the difference divided
+//! by `2^2 - 1 = 3` and the step-scaling exponent changed from `1/(p+1) = 0.5`
+//! to `1/3`; using this first-order controller unchanged would systematically
+//! misestimate a Heun step's error. More importantly, step-doubling is the
+//! *wrong tool* for Heun: a second-order method already has a natural embedded
+//! first-order partner (its Euler predictor), and the embedded Heun-Euler pair
+//! costs one extra acceleration evaluation per step versus step-doubling's
+//! three method evaluations. That embedded pair is exactly what
+//! [`crate::simulate_nonlocal_worldline_adaptive`] already implements — it
+//! computes the same Heun corrector [`crate::HeunPeceStepper::advance`]
+//! computes, and additionally exposes the Euler predictor the error estimate
+//! needs. So **adaptive Heun-PECE already exists** (the embedded controller);
+//! adding Heun-PECE to this step-doubling controller would be a strictly
+//! inferior duplicate, not a new capability, and is deliberately omitted per
+//! the project's rule against implementing something merely to close a
+//! checklist item.
 //!
 //! The step-size controller's growth/shrink exponent is `1 / (p_low + 1) =
 //! 0.5`, exactly as in
@@ -64,32 +73,26 @@
 //! directly, exactly as the embedded pair uses its raw predictor/corrector
 //! difference directly.
 //!
-//! One further, independent difference from
-//! [`crate::simulate_nonlocal_worldline_adaptive_with_policy`]:
-//! [`crate::AdaptiveNonlocalConfig::max_rejections_per_step`] is validated
-//! there but never consulted by that loop, which instead stops shrinking
-//! only once the trial step falls below
-//! [`crate::AdaptiveNonlocalConfig::min_step`]. This loop counts rejections
-//! explicitly and returns
-//! [`crate::NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`] as
-//! soon as either bound is hit, matching that field's documented meaning
-//! ("the maximum number of consecutive rejections permitted") precisely.
+//! Both adaptive controllers now enforce
+//! [`crate::AdaptiveNonlocalConfig::max_rejections_per_step`] with identical
+//! semantics: each keeps an explicit per-accepted-step rejection counter
+//! (reset on every acceptance), returns
+//! [`crate::NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`] when
+//! the retry count is reached, and
+//! [`crate::NonlocalRelativityError::AdaptiveMinimumStepExhausted`] when the
+//! proposed shrink would cross
+//! [`crate::AdaptiveNonlocalConfig::min_step`] first — two distinct typed
+//! errors rather than the single overloaded one earlier revisions used.
 
+use crate::adaptive_control::{StepControl, clamp_step_to_target, control_step};
 use crate::{
     AdaptiveNonlocalConfig, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,
     HistoryTransport, IdentityHistoryTransport, MemoryLaw, Metric, NonlocalConfig,
     NonlocalRelativityError, NonlocalResult, NonlocalTrajectory, NonuniformCaputoCoordinateMemory,
     SemiImplicitEulerStepper, StepEvaluationInput, StepperContext, WorldlineState,
-    WorldlineStepper, checked_l2_distance, evaluate_step_with_policy, validate_initial_state,
+    WorldlineStepper, evaluate_step_with_policy, scaled_local_error_norm, validate_initial_state,
     validated_metric, validated_metric_norm,
 };
-
-const STEP_SAFETY_FACTOR: f64 = 0.9;
-const STEP_GROWTH_CAP: f64 = 4.0;
-const STEP_SHRINK_FLOOR: f64 = 0.1;
-/// Step-control exponent `1 / (p_low + 1)` for classical step-doubling with
-/// semi-implicit Euler's order `p_low = 1`. See the module documentation.
-const STEP_DOUBLING_ERROR_EXPONENT: f64 = 0.5;
 
 /// Typed architecture policy for the step-doubling adaptive integrator:
 /// which history backend, [`crate::MemoryLaw`], and
@@ -139,8 +142,43 @@ impl<H, L, T> AdaptiveStepperPolicy<H, L, T> {
     }
 }
 
+/// Persistent-history retention strategy for the step-doubling adaptive
+/// integrator.
+///
+/// Each accepted step of the step-doubling controller computes a midpoint
+/// (`half_state_1`, at `current_parameter + step/2`) and an endpoint
+/// (`half_state_2`, at `current_parameter + step`) along the two-half-step
+/// branch. This enum selects which of them are retained in the persistent
+/// history the hereditary Caputo memory reads.
+///
+/// This is a research control, not a tuning knob: the default is unchanged
+/// behaviour. See `experiments/nonlocal-relativity-v2` and the v2 paper for
+/// the measured comparison of the two strategies against a fine independent
+/// reference, and the resulting decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HistoryRetention {
+    /// Retain only the accepted endpoint of each accepted step (the shipped
+    /// default). The two-half-step midpoint is used to evaluate the trial and
+    /// is then discarded, so the persistent history samples exactly the
+    /// accepted endpoints.
+    #[default]
+    EndpointOnly,
+    /// Retain both the accepted midpoint and the accepted endpoint of each
+    /// accepted step, at their true affine parameters — a denser retained
+    /// history for the hereditary memory evaluation, at a higher `O(N^2)`
+    /// memory cost (roughly `4x`, since the retained sample count roughly
+    /// doubles). Provided for the research comparison; combine only with a
+    /// coordinate-identity transport (a geometric transport across two
+    /// half-segments per step is a separate, unaddressed concern).
+    RefinedAcceptedHistory,
+}
+
 struct StepDoublingResult<const D: usize> {
     full_state: WorldlineState<D>,
+    /// The accepted midpoint of the two-half-step branch (`half_state_1`), at
+    /// affine parameter `current_parameter + step/2`. Retained persistently
+    /// only under [`HistoryRetention::RefinedAcceptedHistory`].
+    refined_midpoint: WorldlineState<D>,
     refined_state: WorldlineState<D>,
 }
 
@@ -184,6 +222,7 @@ where
         memory_law,
         transport,
         initial_metric_norm,
+        current_parameter,
         step_index,
         config: full_step_config,
     })?;
@@ -205,6 +244,7 @@ where
         memory_law,
         transport,
         initial_metric_norm,
+        current_parameter,
         step_index,
         config: half_step_config,
     })?;
@@ -241,12 +281,14 @@ where
         memory_law,
         transport,
         initial_metric_norm,
+        current_parameter: midpoint_parameter,
         step_index,
         config: half_step_config,
     })?;
 
     Ok(StepDoublingResult {
         full_state,
+        refined_midpoint: half_state_1,
         refined_state: half_state_2,
     })
 }
@@ -257,6 +299,11 @@ where
 /// classical step-doubling. See the module documentation for the mechanism,
 /// why [`crate::SemiImplicitEulerStepper`] specifically is reused, and why
 /// [`crate::HeunPeceStepper`] is not offered here.
+///
+/// This is [`simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention`]
+/// with [`HistoryRetention::EndpointOnly`] (the shipped default). Use the
+/// `_retention` entry point to select
+/// [`HistoryRetention::RefinedAcceptedHistory`] for the research comparison.
 ///
 /// As with [`crate::simulate_nonlocal_worldline_adaptive_with_policy`], the
 /// returned [`crate::NonlocalTrajectory`] samples a generally non-uniform
@@ -273,6 +320,47 @@ pub fn simulate_nonlocal_worldline_adaptive_with_stepper_policy<B, H, L, T, cons
     initial_state: WorldlineState<D>,
     config: AdaptiveNonlocalConfig,
     policy: AdaptiveStepperPolicy<H, L, T>,
+) -> NonlocalResult<NonlocalTrajectory<D>>
+where
+    B: Metric<D> + Connection<D>,
+    H: HistoryBackend<D>,
+    L: MemoryLaw<D>,
+    T: HistoryTransport<D>,
+{
+    simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention(
+        background,
+        initial_state,
+        config,
+        policy,
+        HistoryRetention::EndpointOnly,
+    )
+}
+
+/// Simulate the step-doubling adaptive worldline model with an explicit
+/// [`HistoryRetention`] strategy.
+///
+/// Identical to [`simulate_nonlocal_worldline_adaptive_with_stepper_policy`]
+/// (which passes [`HistoryRetention::EndpointOnly`]) except that
+/// [`HistoryRetention::RefinedAcceptedHistory`] additionally persists each
+/// accepted step's midpoint at its true affine parameter
+/// (`current_parameter + step/2`) before the endpoint, giving the hereditary
+/// Caputo memory a denser retained history. The returned trajectory's
+/// `states()` remain one accepted endpoint per step under either strategy;
+/// only the retained history the memory reads (reflected in
+/// `history_diagnostics()`) differs. See the module docs, the experiment
+/// suite, and the v2 paper for the measured comparison.
+pub fn simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention<
+    B,
+    H,
+    L,
+    T,
+    const D: usize,
+>(
+    background: &B,
+    initial_state: WorldlineState<D>,
+    config: AdaptiveNonlocalConfig,
+    policy: AdaptiveStepperPolicy<H, L, T>,
+    retention: HistoryRetention,
 ) -> NonlocalResult<NonlocalTrajectory<D>>
 where
     B: Metric<D> + Connection<D>,
@@ -342,12 +430,15 @@ where
             });
         }
 
-        let remaining = config.target_affine_parameter() - current_parameter;
-        let mut step = proposed_step.min(remaining);
+        let mut step = clamp_step_to_target(
+            proposed_step,
+            current_parameter,
+            config.target_affine_parameter(),
+        );
         let step_index = accepted_count + 1;
         let mut rejection_count = 0_usize;
 
-        let (accepted_state, used_step, next_proposed_step) = loop
+        let (accepted_state, accepted_midpoint, used_step, next_proposed_step) = loop
         {
             let trial = step_doubling_trial(
                 background,
@@ -363,60 +454,58 @@ where
                 step_index,
             )?;
 
-            let coordinate_error = checked_l2_distance(
-                &trial.refined_state.coordinates,
-                &trial.full_state.coordinates,
-                "adaptive_stepper_coordinate_error",
+            // Componentwise scaled RMS local error (shared by both adaptive
+            // controllers); the one full step and the two half steps are the
+            // step-doubling Richardson pair.
+            let normalized_error = scaled_local_error_norm(
+                &trial.full_state,
+                &trial.refined_state,
+                config.tolerance(),
             )?;
-            let velocity_error = checked_l2_distance(
-                &trial.refined_state.velocity,
-                &trial.full_state.velocity,
-                "adaptive_stepper_velocity_error",
-            )?;
-            let error_estimate = coordinate_error + velocity_error;
-            let normalized_error = error_estimate / config.error_tolerance();
 
-            if normalized_error <= 1.0
+            match control_step(
+                normalized_error,
+                step,
+                &mut rejection_count,
+                accepted_count,
+                config.min_step(),
+                config.max_step(),
+                config.max_rejections_per_step(),
+            )?
             {
-                let growth = if normalized_error > 0.0
+                StepControl::Accept { next_step } =>
                 {
-                    STEP_SAFETY_FACTOR * normalized_error.powf(-STEP_DOUBLING_ERROR_EXPONENT)
-                }
-                else
+                    break (trial.refined_state, trial.refined_midpoint, step, next_step);
+                },
+                StepControl::Retry { next_step } =>
                 {
-                    STEP_GROWTH_CAP
-                };
-                let next_step = (step * growth.min(STEP_GROWTH_CAP))
-                    .clamp(config.min_step(), config.max_step());
-                break (trial.refined_state, step, next_step);
+                    step = next_step;
+                },
             }
-
-            rejection_count += 1;
-            if rejection_count >= config.max_rejections_per_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
-                    accepted_step: accepted_count,
-                    attempted_step: step,
-                    error_estimate,
-                });
-            }
-
-            let shrink = STEP_SAFETY_FACTOR * normalized_error.powf(-STEP_DOUBLING_ERROR_EXPONENT);
-            let shrunk_step = step * shrink.max(STEP_SHRINK_FLOOR);
-
-            if shrunk_step < config.min_step()
-            {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
-                    accepted_step: accepted_count,
-                    attempted_step: step,
-                    error_estimate,
-                });
-            }
-
-            step = shrunk_step;
         };
 
+        // The accepted step's midpoint parameter, computed before advancing
+        // `current_parameter`. `2 * (0.5 * used_step) == used_step` exactly in
+        // IEEE-754, so the endpoint parameter below is unaffected.
+        let midpoint_parameter = current_parameter + 0.5 * used_step;
         current_parameter += used_step;
+
+        if retention == HistoryRetention::RefinedAcceptedHistory
+        {
+            // Persist the accepted midpoint (strictly between the previous
+            // endpoint and this endpoint) before the endpoint, so the retained
+            // history stays strictly parameter-ordered with no duplicates.
+            history.push_entry(
+                background,
+                &transport,
+                HistoryEntry::new(
+                    accepted_midpoint.coordinates,
+                    accepted_midpoint.velocity,
+                    midpoint_parameter,
+                ),
+            )?;
+        }
+
         history.push_entry(
             background,
             &transport,

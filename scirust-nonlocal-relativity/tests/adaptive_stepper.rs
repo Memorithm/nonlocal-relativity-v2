@@ -603,3 +603,122 @@ fn nonuniform_caputo_coordinate_memory_matches_uniform_caputo_closely_under_fixe
         );
     }
 }
+
+// ---- Phase 2: rejection-budget enforcement (step-doubling controller) ----
+
+#[test]
+fn stepper_minimum_step_exhaustion_is_a_distinct_error() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    // High min_step, large rejection budget: the shrink crosses min_step before
+    // the retry count is hit, so the error must be minimum-step exhaustion.
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.15, 0.1, 0.2, 1.0e-9, 1.0e-8, 1.0, 5_000, 100)
+            .unwrap();
+
+    let result = simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, config);
+
+    assert!(matches!(
+        result,
+        Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
+            accepted_step: 0,
+            min_step,
+            ..
+        }) if (min_step - 0.1).abs() < 1.0e-15
+    ));
+}
+
+/// Step-doubling counterpart of the embedded controller's reset test: budget 2
+/// fails, budget 3 completes hundreds of accepted steps, so the per-step
+/// rejection counter must reset on each acceptance.
+#[test]
+fn stepper_rejection_counter_resets_after_each_accepted_step() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+
+    let too_small = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.2, 0.00005, 0.2, 1.0e-9, 1.0e-8, 1.5, 50_000, 2,
+    )
+    .unwrap();
+    assert!(matches!(
+        simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, too_small),
+        Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted { .. })
+    ));
+
+    let sufficient = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.2, 0.00005, 0.2, 1.0e-9, 1.0e-8, 1.5, 50_000, 3,
+    )
+    .unwrap();
+    let trajectory =
+        simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, sufficient)
+            .unwrap();
+    assert!(
+        trajectory.len() > 50,
+        "expected many accepted steps, got {}",
+        trajectory.len()
+    );
+    assert_close(
+        trajectory.final_diagnostics().unwrap().affine_parameter,
+        1.5,
+        1.0e-9,
+    );
+}
+
+/// Golden bit-for-bit regression anchor for the deterministic output of the
+/// step-doubling controller (`simulate_nonlocal_worldline_adaptive_with_stepper`)
+/// under the scaled error norm and the shared control law. Guards the Phase 4
+/// controller-infrastructure unification and the shared step-size/rejection
+/// mechanism against unintended future drift.
+#[test]
+fn adaptive_stepper_scaled_norm_golden_values_bit_for_bit() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.05, 0.001, 0.2, 1.0e-9, 1.0e-8, 0.8, 5_000, 30)
+            .unwrap();
+
+    let trajectory =
+        simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, config).unwrap();
+
+    assert_eq!(trajectory.len(), 125);
+
+    let final_state = trajectory.final_state().unwrap();
+    let expected_coordinates_bits: [u64; 4] = [
+        0x3fee99d408a7c60f,
+        0x4023fbe788fad870,
+        0x3ff921fb54442d18,
+        0x3f9efcc9f5cfd755,
+    ];
+    let expected_velocity_bits: [u64; 4] = [
+        0x3ff3209f6f9964df,
+        0xbf84797e0f7ecb0b,
+        0x3bf46a8f7fc56e49,
+        0x3fa361e1875462de,
+    ];
+    for component in 0..4
+    {
+        assert_eq!(
+            final_state.coordinates[component].to_bits(),
+            expected_coordinates_bits[component],
+            "coordinate {component}"
+        );
+        assert_eq!(
+            final_state.velocity[component].to_bits(),
+            expected_velocity_bits[component],
+            "velocity {component}"
+        );
+    }
+
+    let final_diagnostics = trajectory.final_diagnostics().unwrap();
+    assert_eq!(
+        final_diagnostics.affine_parameter.to_bits(),
+        0x3fe999999999999a
+    );
+    assert_eq!(
+        final_diagnostics.memory_l2_norm.to_bits(),
+        0x3f34512da15b9632
+    );
+}

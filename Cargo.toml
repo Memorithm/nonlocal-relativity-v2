@@ -163,6 +163,7 @@ members = [
     "scirust-fluids",
     "scirust-thermo",
     "scirust-sim",
+    "experiments/nonlocal-relativity-v2",
 ]
 exclude = [
     "examples/simd_views_demo",
