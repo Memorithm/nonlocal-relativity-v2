@@ -774,6 +774,10 @@ where
         let remaining = config.target_affine_parameter() - current_parameter;
         let mut step = proposed_step.min(remaining);
         let step_index = accepted_count + 1;
+        // Explicit per-accepted-step rejection counter, reset (by being
+        // re-declared) for every new accepted step. Both adaptive controllers
+        // enforce `max_rejections_per_step` identically.
+        let mut rejection_count = 0_usize;
 
         let (accepted_state, used_step, next_proposed_step) = loop
         {
@@ -815,14 +819,27 @@ where
                 break (result.corrected_state, step, next_step);
             }
 
+            rejection_count += 1;
+            if rejection_count >= config.max_rejections_per_step()
+            {
+                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
+                    accepted_step: accepted_count,
+                    rejections: rejection_count,
+                    attempted_step: step,
+                    error_estimate: normalized_error,
+                });
+            }
+
             let shrink = STEP_SAFETY_FACTOR * normalized_error.powf(-EMBEDDED_ERROR_EXPONENT);
             let shrunk_step = step * shrink.max(STEP_SHRINK_FLOOR);
 
             if shrunk_step < config.min_step()
             {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
+                return Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
                     accepted_step: accepted_count,
                     attempted_step: step,
+                    proposed_step: shrunk_step,
+                    min_step: config.min_step(),
                     error_estimate: normalized_error,
                 });
             }

@@ -721,3 +721,114 @@ fn scaled_norm_step_count_is_robust_to_arbitrary_coordinate_scale() {
         "step counts diverged too far: base={base_steps}, offset={offset_steps}"
     );
 }
+
+// ---- Phase 2: rejection-budget enforcement (embedded Heun-Euler controller) ----
+
+#[test]
+fn embedded_rejection_budget_of_one_fails_on_first_rejection() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    // Generous initial step vs a tight tolerance forces the first trial to be
+    // rejected; a budget of one is then exhausted immediately, before the step
+    // ever shrinks below the (tiny) min_step.
+    let config = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.15, 0.00005, 0.2, 1.0e-8, 1.0e-8, 1.0, 5_000, 1,
+    )
+    .unwrap();
+
+    let result = simulate_nonlocal_worldline_adaptive(&background, initial, config);
+
+    assert!(matches!(
+        result,
+        Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
+            accepted_step: 0,
+            rejections: 1,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn embedded_minimum_step_exhaustion_is_a_distinct_error() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    // A high min_step (close to initial_step) and a large rejection budget: the
+    // proposed shrink crosses min_step before the retry count is reached, so
+    // this must be reported as minimum-step exhaustion, not rejection-budget
+    // exhaustion.
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.15, 0.1, 0.2, 1.0e-9, 1.0e-8, 1.0, 5_000, 100)
+            .unwrap();
+
+    let result = simulate_nonlocal_worldline_adaptive(&background, initial, config);
+
+    assert!(matches!(
+        result,
+        Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
+            accepted_step: 0,
+            min_step,
+            ..
+        }) if (min_step - 0.1).abs() < 1.0e-15
+    ));
+}
+
+#[test]
+fn embedded_larger_budget_allows_shrinkage_and_acceptance() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    // Same generous initial step as the budget-of-one case, but a budget large
+    // enough to shrink into tolerance and complete the whole trajectory.
+    let config = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.15, 0.00005, 0.2, 1.0e-8, 1.0e-8, 1.0, 5_000, 60,
+    )
+    .unwrap();
+
+    let trajectory = simulate_nonlocal_worldline_adaptive(&background, initial, config).unwrap();
+    assert_close(
+        trajectory.final_diagnostics().unwrap().affine_parameter,
+        1.0,
+        1.0e-9,
+    );
+}
+
+/// The rejection counter must be per accepted step, not cumulative across the
+/// run. With this config the hardest accepted step needs two rejections
+/// (budget 2 fails, budget 3 succeeds), yet the whole run accepts hundreds of
+/// steps — so the total rejection count far exceeds 3. A cumulative counter
+/// would be exhausted within the first few accepted steps; completing the run
+/// proves the counter resets on every acceptance.
+#[test]
+fn embedded_rejection_counter_resets_after_each_accepted_step() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+
+    let too_small = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.2, 0.00005, 0.2, 1.0e-9, 1.0e-8, 1.5, 50_000, 2,
+    )
+    .unwrap();
+    assert!(matches!(
+        simulate_nonlocal_worldline_adaptive(&background, initial, too_small),
+        Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted { .. })
+    ));
+
+    let sufficient = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.2, 0.00005, 0.2, 1.0e-9, 1.0e-8, 1.5, 50_000, 3,
+    )
+    .unwrap();
+    let trajectory =
+        simulate_nonlocal_worldline_adaptive(&background, initial, sufficient).unwrap();
+    assert!(
+        trajectory.len() > 50,
+        "expected many accepted steps, got {}",
+        trajectory.len()
+    );
+    assert_close(
+        trajectory.final_diagnostics().unwrap().affine_parameter,
+        1.5,
+        1.0e-9,
+    );
+}

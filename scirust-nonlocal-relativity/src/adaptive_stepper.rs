@@ -392,6 +392,7 @@ where
             {
                 return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
                     accepted_step: accepted_count,
+                    rejections: rejection_count,
                     attempted_step: step,
                     error_estimate: normalized_error,
                 });
@@ -402,9 +403,11 @@ where
 
             if shrunk_step < config.min_step()
             {
-                return Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted {
+                return Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
                     accepted_step: accepted_count,
                     attempted_step: step,
+                    proposed_step: shrunk_step,
+                    min_step: config.min_step(),
                     error_estimate: normalized_error,
                 });
             }

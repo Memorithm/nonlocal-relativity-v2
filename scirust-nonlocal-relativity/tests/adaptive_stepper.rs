@@ -603,3 +603,65 @@ fn nonuniform_caputo_coordinate_memory_matches_uniform_caputo_closely_under_fixe
         );
     }
 }
+
+// ---- Phase 2: rejection-budget enforcement (step-doubling controller) ----
+
+#[test]
+fn stepper_minimum_step_exhaustion_is_a_distinct_error() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+    // High min_step, large rejection budget: the shrink crosses min_step before
+    // the retry count is hit, so the error must be minimum-step exhaustion.
+    let config =
+        AdaptiveNonlocalConfig::new(0.55, 0.02, 0.15, 0.1, 0.2, 1.0e-9, 1.0e-8, 1.0, 5_000, 100)
+            .unwrap();
+
+    let result = simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, config);
+
+    assert!(matches!(
+        result,
+        Err(NonlocalRelativityError::AdaptiveMinimumStepExhausted {
+            accepted_step: 0,
+            min_step,
+            ..
+        }) if (min_step - 0.1).abs() < 1.0e-15
+    ));
+}
+
+/// Step-doubling counterpart of the embedded controller's reset test: budget 2
+/// fails, budget 3 completes hundreds of accepted steps, so the per-step
+/// rejection counter must reset on each acceptance.
+#[test]
+fn stepper_rejection_counter_resets_after_each_accepted_step() {
+    let background = Schwarzschild::try_new(1.0).unwrap();
+    let mut initial = circular_schwarzschild_state(1.0, 10.0);
+    initial.velocity[1] = -0.01;
+
+    let too_small = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.2, 0.00005, 0.2, 1.0e-9, 1.0e-8, 1.5, 50_000, 2,
+    )
+    .unwrap();
+    assert!(matches!(
+        simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, too_small),
+        Err(NonlocalRelativityError::AdaptiveRejectionBudgetExhausted { .. })
+    ));
+
+    let sufficient = AdaptiveNonlocalConfig::new(
+        0.55, 0.02, 0.2, 0.00005, 0.2, 1.0e-9, 1.0e-8, 1.5, 50_000, 3,
+    )
+    .unwrap();
+    let trajectory =
+        simulate_nonlocal_worldline_adaptive_with_stepper(&background, initial, sufficient)
+            .unwrap();
+    assert!(
+        trajectory.len() > 50,
+        "expected many accepted steps, got {}",
+        trajectory.len()
+    );
+    assert_close(
+        trajectory.final_diagnostics().unwrap().affine_parameter,
+        1.5,
+        1.0e-9,
+    );
+}

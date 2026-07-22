@@ -1340,14 +1340,43 @@ pub enum NonlocalRelativityError {
         target_affine_parameter: f64,
     },
 
-    /// The adaptive integrator rejected a single step more times than the
-    /// configured retry budget while shrinking toward the tolerance.
+    /// The adaptive integrator rejected a single accepted step more times than
+    /// the configured `max_rejections_per_step` retry budget while shrinking
+    /// toward the tolerance.
+    ///
+    /// Distinct from [`NonlocalRelativityError::AdaptiveMinimumStepExhausted`]:
+    /// here the retry *count* was reached; there the proposed shrink would have
+    /// crossed `min_step`.
     AdaptiveRejectionBudgetExhausted {
         /// Accepted step index at which the retry budget was exhausted.
         accepted_step: usize,
+        /// Number of rejections that were counted against the budget.
+        rejections: usize,
         /// Most recently attempted step size.
         attempted_step: f64,
-        /// Most recent local error estimate.
+        /// Most recent local error estimate (scaled RMS norm; `1.0` is at
+        /// tolerance).
+        error_estimate: f64,
+    },
+
+    /// The adaptive integrator could not bring a single accepted step within
+    /// tolerance without proposing a step below the configured `min_step`.
+    ///
+    /// Distinct from
+    /// [`NonlocalRelativityError::AdaptiveRejectionBudgetExhausted`]: here the
+    /// step-size floor was reached before the retry count.
+    AdaptiveMinimumStepExhausted {
+        /// Accepted step index at which shrinking hit the floor.
+        accepted_step: usize,
+        /// Step size that was rejected before the proposed shrink fell below
+        /// `min_step`.
+        attempted_step: f64,
+        /// The proposed shrunk step that fell below the floor.
+        proposed_step: f64,
+        /// Configured minimum step size.
+        min_step: f64,
+        /// Most recent local error estimate (scaled RMS norm; `1.0` is at
+        /// tolerance).
         error_estimate: f64,
     },
 }
@@ -1601,13 +1630,26 @@ impl fmt::Display for NonlocalRelativityError {
             ),
             Self::AdaptiveRejectionBudgetExhausted {
                 accepted_step,
+                rejections,
                 attempted_step,
                 error_estimate,
             } => write!(
                 formatter,
                 "adaptive integrator exhausted its rejection budget after accepted step \
-                 {accepted_step}, last attempted step {attempted_step} with error estimate \
-                 {error_estimate}"
+                 {accepted_step} ({rejections} rejections), last attempted step {attempted_step} \
+                 with scaled error estimate {error_estimate}"
+            ),
+            Self::AdaptiveMinimumStepExhausted {
+                accepted_step,
+                attempted_step,
+                proposed_step,
+                min_step,
+                error_estimate,
+            } => write!(
+                formatter,
+                "adaptive integrator could not meet tolerance after accepted step \
+                 {accepted_step} without shrinking step {attempted_step} to {proposed_step}, \
+                 below the minimum {min_step} (scaled error estimate {error_estimate})"
             ),
         }
     }
