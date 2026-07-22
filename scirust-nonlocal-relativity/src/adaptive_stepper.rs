@@ -142,8 +142,43 @@ impl<H, L, T> AdaptiveStepperPolicy<H, L, T> {
     }
 }
 
+/// Persistent-history retention strategy for the step-doubling adaptive
+/// integrator.
+///
+/// Each accepted step of the step-doubling controller computes a midpoint
+/// (`half_state_1`, at `current_parameter + step/2`) and an endpoint
+/// (`half_state_2`, at `current_parameter + step`) along the two-half-step
+/// branch. This enum selects which of them are retained in the persistent
+/// history the hereditary Caputo memory reads.
+///
+/// This is a research control, not a tuning knob: the default is unchanged
+/// behaviour. See `experiments/nonlocal-relativity-v2` and the v2 paper for
+/// the measured comparison of the two strategies against a fine independent
+/// reference, and the resulting decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HistoryRetention {
+    /// Retain only the accepted endpoint of each accepted step (the shipped
+    /// default). The two-half-step midpoint is used to evaluate the trial and
+    /// is then discarded, so the persistent history samples exactly the
+    /// accepted endpoints.
+    #[default]
+    EndpointOnly,
+    /// Retain both the accepted midpoint and the accepted endpoint of each
+    /// accepted step, at their true affine parameters — a denser retained
+    /// history for the hereditary memory evaluation, at a higher `O(N^2)`
+    /// memory cost (roughly `4x`, since the retained sample count roughly
+    /// doubles). Provided for the research comparison; combine only with a
+    /// coordinate-identity transport (a geometric transport across two
+    /// half-segments per step is a separate, unaddressed concern).
+    RefinedAcceptedHistory,
+}
+
 struct StepDoublingResult<const D: usize> {
     full_state: WorldlineState<D>,
+    /// The accepted midpoint of the two-half-step branch (`half_state_1`), at
+    /// affine parameter `current_parameter + step/2`. Retained persistently
+    /// only under [`HistoryRetention::RefinedAcceptedHistory`].
+    refined_midpoint: WorldlineState<D>,
     refined_state: WorldlineState<D>,
 }
 
@@ -253,6 +288,7 @@ where
 
     Ok(StepDoublingResult {
         full_state,
+        refined_midpoint: half_state_1,
         refined_state: half_state_2,
     })
 }
@@ -263,6 +299,11 @@ where
 /// classical step-doubling. See the module documentation for the mechanism,
 /// why [`crate::SemiImplicitEulerStepper`] specifically is reused, and why
 /// [`crate::HeunPeceStepper`] is not offered here.
+///
+/// This is [`simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention`]
+/// with [`HistoryRetention::EndpointOnly`] (the shipped default). Use the
+/// `_retention` entry point to select
+/// [`HistoryRetention::RefinedAcceptedHistory`] for the research comparison.
 ///
 /// As with [`crate::simulate_nonlocal_worldline_adaptive_with_policy`], the
 /// returned [`crate::NonlocalTrajectory`] samples a generally non-uniform
@@ -279,6 +320,47 @@ pub fn simulate_nonlocal_worldline_adaptive_with_stepper_policy<B, H, L, T, cons
     initial_state: WorldlineState<D>,
     config: AdaptiveNonlocalConfig,
     policy: AdaptiveStepperPolicy<H, L, T>,
+) -> NonlocalResult<NonlocalTrajectory<D>>
+where
+    B: Metric<D> + Connection<D>,
+    H: HistoryBackend<D>,
+    L: MemoryLaw<D>,
+    T: HistoryTransport<D>,
+{
+    simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention(
+        background,
+        initial_state,
+        config,
+        policy,
+        HistoryRetention::EndpointOnly,
+    )
+}
+
+/// Simulate the step-doubling adaptive worldline model with an explicit
+/// [`HistoryRetention`] strategy.
+///
+/// Identical to [`simulate_nonlocal_worldline_adaptive_with_stepper_policy`]
+/// (which passes [`HistoryRetention::EndpointOnly`]) except that
+/// [`HistoryRetention::RefinedAcceptedHistory`] additionally persists each
+/// accepted step's midpoint at its true affine parameter
+/// (`current_parameter + step/2`) before the endpoint, giving the hereditary
+/// Caputo memory a denser retained history. The returned trajectory's
+/// `states()` remain one accepted endpoint per step under either strategy;
+/// only the retained history the memory reads (reflected in
+/// `history_diagnostics()`) differs. See the module docs, the experiment
+/// suite, and the v2 paper for the measured comparison.
+pub fn simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention<
+    B,
+    H,
+    L,
+    T,
+    const D: usize,
+>(
+    background: &B,
+    initial_state: WorldlineState<D>,
+    config: AdaptiveNonlocalConfig,
+    policy: AdaptiveStepperPolicy<H, L, T>,
+    retention: HistoryRetention,
 ) -> NonlocalResult<NonlocalTrajectory<D>>
 where
     B: Metric<D> + Connection<D>,
@@ -356,7 +438,7 @@ where
         let step_index = accepted_count + 1;
         let mut rejection_count = 0_usize;
 
-        let (accepted_state, used_step, next_proposed_step) = loop
+        let (accepted_state, accepted_midpoint, used_step, next_proposed_step) = loop
         {
             let trial = step_doubling_trial(
                 background,
@@ -391,15 +473,39 @@ where
                 config.max_rejections_per_step(),
             )?
             {
-                StepControl::Accept { next_step } => break (trial.refined_state, step, next_step),
+                StepControl::Accept { next_step } =>
+                {
+                    break (trial.refined_state, trial.refined_midpoint, step, next_step);
+                }
                 StepControl::Retry { next_step } =>
                 {
                     step = next_step;
-                },
+                }
             }
         };
 
+        // The accepted step's midpoint parameter, computed before advancing
+        // `current_parameter`. `2 * (0.5 * used_step) == used_step` exactly in
+        // IEEE-754, so the endpoint parameter below is unaffected.
+        let midpoint_parameter = current_parameter + 0.5 * used_step;
         current_parameter += used_step;
+
+        if retention == HistoryRetention::RefinedAcceptedHistory
+        {
+            // Persist the accepted midpoint (strictly between the previous
+            // endpoint and this endpoint) before the endpoint, so the retained
+            // history stays strictly parameter-ordered with no duplicates.
+            history.push_entry(
+                background,
+                &transport,
+                HistoryEntry::new(
+                    accepted_midpoint.coordinates,
+                    accepted_midpoint.velocity,
+                    midpoint_parameter,
+                ),
+            )?;
+        }
+
         history.push_entry(
             background,
             &transport,

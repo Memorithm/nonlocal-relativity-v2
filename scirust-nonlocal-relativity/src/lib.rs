@@ -55,8 +55,9 @@ pub use adaptive::{
 };
 pub use adaptive_control::{AdaptiveTolerance, scaled_local_error_norm};
 pub use adaptive_stepper::{
-    AdaptiveStepperPolicy, simulate_nonlocal_worldline_adaptive_with_stepper,
+    AdaptiveStepperPolicy, HistoryRetention, simulate_nonlocal_worldline_adaptive_with_stepper,
     simulate_nonlocal_worldline_adaptive_with_stepper_policy,
+    simulate_nonlocal_worldline_adaptive_with_stepper_policy_retention,
 };
 pub use charts::{
     CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
