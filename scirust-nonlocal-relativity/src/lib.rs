@@ -46,6 +46,7 @@ mod charts;
 mod curved_transport;
 mod geometric_error;
 mod modulation;
+mod nonuniform_kernel;
 mod nonuniform_memory;
 mod proper_time;
 mod transport;

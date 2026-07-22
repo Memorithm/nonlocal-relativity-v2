@@ -140,9 +140,10 @@ The near-term ordering within Layer 1:
    Minkowski, areal/isotropic Schwarzschild), with `MinkowskiSpherical` and
    `IsotropicSchwarzschild` backgrounds and a `coordinate_independence`
    experiment.
-3. Consolidate the duplicated non-uniform Caputo memory helpers in the worldline
-   crate (a bit-identity-preserving refactor that pays down the top technical-debt
-   item recorded in the architecture report before it is copied a third time).
+3. **Consolidate the duplicated non-uniform Caputo memory helpers** — *delivered.*
+   Both callers (the fixed-step `MemoryLaw` impls and the embedded adaptive
+   controller) now delegate to one shared `nonuniform_kernel` module; the logic
+   was moved verbatim, so the crate's bit-identity golden tests still pass.
 4. Tetrads and parallel transport as a reusable geometry-core engine, with
    holonomy and geodesic-deviation (Jacobi) checks against closed forms in
    maximally symmetric spacetimes.

@@ -48,16 +48,17 @@
 //! would be a strictly inferior duplicate rather than a new capability.
 
 use crate::adaptive_control::{StepControl, clamp_step_to_target, control_step};
+use crate::nonuniform_kernel::nonuniform_transported_modulated_caputo_velocity_memory;
 use crate::{
     AdaptiveTolerance, CompleteUniformHistory, Connection, HistoryBackend, HistoryEntry,
     HistoryModulator, HistoryTransport, IdentityHistoryModulator, IdentityHistoryTransport, Metric,
     NonlocalRelativityError, NonlocalResult, NonlocalTrajectory, StepDiagnostics, WorldlineState,
     coordinate_l2_norm, gr_acceleration, lower_index, projected_memory_force,
     scaled_local_error_norm, validate_diagnostics, validate_generated_coordinate,
-    validate_generated_velocity, validate_history_velocity, validate_initial_state,
-    validate_vector, validated_christoffel, validated_metric, validated_metric_norm,
+    validate_generated_velocity, validate_initial_state, validate_vector, validated_christoffel,
+    validated_metric, validated_metric_norm,
 };
-use scirust_fractional::{FractionalError, FractionalOrder, caputo_l1_nonuniform};
+use scirust_fractional::FractionalOrder;
 
 /// Configuration for the adaptive-step fractional-memory worldline
 /// integrator.
@@ -350,124 +351,6 @@ impl<H, T, M> AdaptiveSimulationPolicy<H, T, M> {
 struct AdaptiveEvaluation<const D: usize> {
     acceleration: [f64; D],
     diagnostics: StepDiagnostics,
-}
-
-fn nonuniform_caputo_velocity_memory<const D: usize>(
-    velocity_samples: &[[f64; D]],
-    parameter_samples: &[f64],
-    order: FractionalOrder,
-    step_index: usize,
-) -> NonlocalResult<[f64; D]> {
-    if velocity_samples.len() == 1
-    {
-        return Ok([0.0; D]);
-    }
-
-    let mut memory = [0.0_f64; D];
-    let mut samples = Vec::with_capacity(velocity_samples.len());
-
-    for (component, memory_component) in memory.iter_mut().enumerate()
-    {
-        samples.clear();
-        for velocity in velocity_samples
-        {
-            let sample = velocity[component];
-
-            if !sample.is_finite()
-            {
-                return Err(NonlocalRelativityError::FractionalMemory {
-                    step: step_index,
-                    component,
-                    source: FractionalError::NonFiniteSample(samples.len()),
-                });
-            }
-
-            samples.push(sample);
-        }
-
-        let value = caputo_l1_nonuniform(&samples, parameter_samples, order).map_err(|source| {
-            NonlocalRelativityError::FractionalMemory {
-                step: step_index,
-                component,
-                source,
-            }
-        })?;
-
-        if !value.is_finite()
-        {
-            return Err(NonlocalRelativityError::NonFiniteMemory {
-                step: step_index,
-                component,
-                value,
-            });
-        }
-
-        *memory_component = value;
-    }
-
-    Ok(memory)
-}
-
-/// Evaluate the non-uniform Caputo velocity memory of a [`HistoryBackend`],
-/// applying `transport`'s evaluation-time transport and `modulator`'s weight
-/// to each retained sample first, exactly mirroring the fixed-step
-/// architecture's `modulated_transported_caputo_velocity_memory_at_step`
-/// with `caputo_l1_nonuniform` in place of `caputo_l1_uniform`.
-fn nonuniform_transported_modulated_caputo_velocity_memory<H, T, M, const D: usize>(
-    history: &H,
-    transport: &T,
-    modulator: &M,
-    current_state: &WorldlineState<D>,
-    order: FractionalOrder,
-    step_index: usize,
-) -> NonlocalResult<[f64; D]>
-where
-    H: HistoryBackend<D>,
-    T: HistoryTransport<D>,
-    M: HistoryModulator<D>,
-{
-    let retained_samples = history.retained_samples();
-
-    if retained_samples == 0
-    {
-        return Err(NonlocalRelativityError::FractionalMemory {
-            step: step_index,
-            component: 0,
-            source: FractionalError::EmptySamples,
-        });
-    }
-
-    let mut velocity_samples = Vec::with_capacity(retained_samples);
-    let mut parameter_samples = Vec::with_capacity(retained_samples);
-
-    for retained_index in 0..retained_samples
-    {
-        let entry = history
-            .entry(retained_index)
-            .ok_or(NonlocalRelativityError::HistoryEntryUnavailable { retained_index })?;
-        let transported_velocity =
-            transport.transport_velocity(retained_index, entry.velocity, current_state)?;
-        validate_history_velocity(&transported_velocity, retained_index)?;
-
-        let weight = modulator.weight(&entry)?;
-
-        if !weight.is_finite()
-        {
-            return Err(NonlocalRelativityError::NonFiniteModulationWeight(weight));
-        }
-
-        let mut modulated_velocity = [0.0_f64; D];
-        for component in 0..D
-        {
-            modulated_velocity[component] = weight * transported_velocity[component];
-        }
-        validate_history_velocity(&modulated_velocity, retained_index)?;
-
-        velocity_samples.push(modulated_velocity);
-        parameter_samples.push(entry.parameter);
-    }
-
-    nonuniform_caputo_velocity_memory(&velocity_samples, &parameter_samples, order, step_index)
 }
 
 #[allow(clippy::too_many_arguments)]
