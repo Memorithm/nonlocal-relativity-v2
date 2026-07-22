@@ -11,6 +11,9 @@
 //! - Riemann, Ricci, Einstein, and Kretschmann curvature tensors from any
 //!   metric-and-connection background, validated against exact analytic
 //!   oracles (see [`CurvatureTensors`]);
+//! - a reusable parallel-transport engine ([`transport_along_segment`],
+//!   [`transport_along_polyline`], [`holonomy_defect`]) validated by metric
+//!   compatibility and the holonomy/curvature identity;
 //! - geodesic equations compatible with `scirust-sim`.
 //!
 //! The crate does not assume that fractional calculus modifies general
@@ -46,6 +49,7 @@ mod kerr;
 mod metric;
 mod minkowski;
 mod minkowski_spherical;
+mod parallel_transport;
 mod reissner_nordstrom;
 mod schwarzschild;
 mod static_spherical;
@@ -60,5 +64,6 @@ pub use kerr::Kerr;
 pub use metric::{Metric, invert_metric, metric_norm};
 pub use minkowski::Minkowski;
 pub use minkowski_spherical::MinkowskiSpherical;
+pub use parallel_transport::{holonomy_defect, transport_along_polyline, transport_along_segment};
 pub use reissner_nordstrom::ReissnerNordstrom;
 pub use schwarzschild::Schwarzschild;
