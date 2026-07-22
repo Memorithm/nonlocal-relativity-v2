@@ -6,8 +6,11 @@
 //! - covariant metric tensors;
 //! - deterministic metric inversion;
 //! - numerical Levi-Civita Christoffel symbols;
-//! - four-dimensional Minkowski, Schwarzschild, Reissner-Nordström, and Kerr
-//!   spacetimes;
+//! - four-dimensional Minkowski, Schwarzschild, Reissner-Nordström, Kerr,
+//!   de Sitter, and anti-de Sitter spacetimes;
+//! - Riemann, Ricci, Einstein, and Kretschmann curvature tensors from any
+//!   metric-and-connection background, validated against exact analytic
+//!   oracles (see [`CurvatureTensors`]);
 //! - geodesic equations compatible with `scirust-sim`.
 //!
 //! The crate does not assume that fractional calculus modifies general
@@ -34,6 +37,8 @@
 #![deny(missing_docs)]
 
 mod connection;
+mod curvature;
+mod de_sitter;
 mod error;
 mod geodesic;
 mod kerr;
@@ -41,8 +46,11 @@ mod metric;
 mod minkowski;
 mod reissner_nordstrom;
 mod schwarzschild;
+mod static_spherical;
 
 pub use connection::{Connection, numerical_christoffel};
+pub use curvature::CurvatureTensors;
+pub use de_sitter::{AntiDeSitter, DeSitter};
 pub use error::RelativityError;
 pub use geodesic::GeodesicSystem;
 pub use kerr::Kerr;

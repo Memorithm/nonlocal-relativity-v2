@@ -54,15 +54,31 @@ pub fn require_finite(values: &[(&str, f64)]) -> Result<(), String> {
     Ok(())
 }
 
-/// Print the shared metadata header lines (as `#` comments) common to every
-/// experiment: the experiment name, geometric-unit convention, and commit.
-pub fn print_common_header(experiment: &str) {
+/// Print a metadata header (as `#` comments) with an explicit layer/category
+/// line and closing note, so each experiment declares exactly which scientific
+/// category it belongs to (established GR vs experimental phenomenology) rather
+/// than inheriting a single hardcoded label. Shared lines — units, determinism,
+/// provenance commit — are common to every experiment.
+pub fn print_experiment_header(experiment: &str, layer: &str, note: &str) {
     println!("# experiment: {experiment}");
-    println!("# layer: scirust-nonlocal-relativity (experimental, phenomenological)");
+    println!("# layer: {layer}");
     println!(
         "# units: geometric G = c = 1; lengths, times, and the affine parameter in mass units M"
     );
     println!("# determinism: no RNG, no wall clock; identical inputs give identical output");
     println!("# commit: {}", commit_hash());
-    println!("# NOTE: numerical experiment on a fixed model; not a physical validation.");
+    println!("# NOTE: {note}");
+}
+
+/// Print the shared metadata header for an experimental, phenomenological
+/// worldline experiment (the `scirust-nonlocal-relativity` layer). This is the
+/// default for the fractional-memory experiments; experiments that instead
+/// validate established general relativity call [`print_experiment_header`]
+/// directly with the correct category.
+pub fn print_common_header(experiment: &str) {
+    print_experiment_header(
+        experiment,
+        "scirust-nonlocal-relativity (experimental, phenomenological)",
+        "numerical experiment on a fixed model; not a physical validation.",
+    );
 }

@@ -22,6 +22,13 @@ pub enum RelativityError {
 
     /// The finite-difference step is non-finite or non-positive.
     InvalidDifferenceStep(f64),
+
+    /// A curvature-tensor component evaluated to a non-finite value.
+    NonFiniteCurvatureComponent {
+        /// Short name of the offending quantity (for example `"riemann"`,
+        /// `"ricci"`, `"ricci_scalar"`, `"einstein"`, `"kretschmann"`).
+        quantity: &'static str,
+    },
 }
 
 impl fmt::Display for RelativityError {
@@ -52,6 +59,10 @@ impl fmt::Display for RelativityError {
                     formatter,
                     "finite-difference step must be finite and positive; got {step}"
                 )
+            },
+            Self::NonFiniteCurvatureComponent { quantity } =>
+            {
+                write!(formatter, "curvature quantity '{quantity}' is not finite")
             },
         }
     }
