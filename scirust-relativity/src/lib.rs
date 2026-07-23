@@ -38,7 +38,13 @@
 //! - PPN parameter extraction ([`ppn`]) — the Eddington-Robertson `gamma` and
 //!   `beta` from static isotropic weak-field metrics by deterministic asymptotic
 //!   extrapolation, with an explicit isotropic-coordinate contract and validated
-//!   against synthetic and isotropic-Schwarzschild oracles (`gamma = beta = 1`).
+//!   against synthetic and isotropic-Schwarzschild oracles (`gamma = beta = 1`);
+//! - the Einstein-Hilbert action and its **numerical** variation ([`action`]) —
+//!   the vacuum field equations from a finite-difference functional derivative
+//!   `delta S / delta g` for static, axisymmetric backgrounds, built on the
+//!   metric-only [`ricci_scalar_from_metric`] and validated by vacuum
+//!   stationarity (`G_(mu nu) + Lambda g_(mu nu) = 0`), a mismatched-`Lambda`
+//!   nonzero cross-check, and grid convergence.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -63,6 +69,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod action;
 mod connection;
 mod covariant_transport;
 mod curvature;
@@ -91,7 +98,7 @@ pub use covariant_transport::{
     transport_covariant_tensor_along_polyline, transport_covariant_tensor_along_segment,
     transport_covector_along_polyline, transport_covector_along_segment,
 };
-pub use curvature::CurvatureTensors;
+pub use curvature::{CurvatureTensors, ricci_scalar_from_metric};
 pub use de_sitter::{AntiDeSitter, DeSitter};
 pub use error::RelativityError;
 pub use exponential_map::{geodesic_exponential, geodesic_logarithm};
