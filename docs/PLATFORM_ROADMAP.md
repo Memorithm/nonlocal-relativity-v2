@@ -63,7 +63,7 @@ headers. Blurring these categories is treated as a defect.
 | Layer | Scope | Status |
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
-| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | opening: design note ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md)) + linearized gravity delivered; PPN parameters next |
+| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | opening: linearized gravity + PPN `gamma`/`beta` delivered ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md)); action variation / ADM next |
 | 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | planned |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
@@ -252,10 +252,27 @@ order in a metric perturbation about Minkowski, validated by weak-field-Schwarzs
 vacuum, the Newtonian Poisson limit (`G^(1)_00 = 2 nabla^2 Phi`, exact for a
 polynomial potential), gauge invariance of the linearized Riemann, and an
 `O(h^2)` cross-check against the Layer 1 nonlinear curvature (`linearized` tests +
-`linearized_gravity` experiment). The follow-on slices — PPN parameters, the
-Einstein–Hilbert action's numerical variation, and 3+1 (ADM) kinematics — are
-scoped in the design note; the full symbolic-algebra action machinery is
-deliberately deferred until a slice needs it and it can be made deterministic.
+`linearized_gravity` experiment).
+
+Its second increment — **PPN parameter extraction** — is also **delivered**
+(design & conventions: [`LAYER_2_PPN.md`](LAYER_2_PPN.md)). The `ppn` module
+extracts the Eddington–Robertson `gamma` and `beta` from static, spherically
+symmetric, asymptotically flat weak-field metrics in an isotropic radial
+coordinate, by deterministic polynomial extrapolation of the finite-radius
+effective estimators to zero compactness. It enforces an explicit
+isotropic-coordinate contract (areal-coordinate charts are rejected, not silently
+misused), reports window / order / resolution / conditioning diagnostics as an
+*estimated* numerical uncertainty (not a bound), and is validated against exact
+synthetic metrics (injected `gamma`, `beta` recovered to machine precision),
+controlled higher-order contamination (finite-radius bias, extrapolation
+recovery), and exact isotropic Schwarzschild (`gamma = beta = 1`) — `ppn` tests +
+`ppn_extraction` experiment + `ppn` benches. Only `gamma` and `beta` are
+implemented; the exclusions are listed in the design note.
+
+The remaining follow-on slices — the Einstein–Hilbert action's numerical
+variation and 3+1 (ADM) kinematics — are scoped in the Layer 2 design note; the
+full symbolic-algebra action machinery is deliberately deferred until a slice
+needs it and it can be made deterministic.
 
 ## What this platform will not do
 
