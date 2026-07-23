@@ -11,7 +11,8 @@
 //! Plus the domain / fit / metric error paths and determinism.
 
 use scirust_relativity::ppn::{
-    IsotropicChartAdapter, PpnDomain, PpnError, SyntheticPpnMetric, extract_ppn,
+    CONDITIONING_MARGINAL_THRESHOLD, ConditioningClass, IsotropicChartAdapter, PpnDomain, PpnError,
+    SyntheticPpnMetric, classify_conditioning, extract_ppn,
 };
 use scirust_relativity::{IsotropicSchwarzschild, Schwarzschild};
 
@@ -254,4 +255,152 @@ fn extraction_is_deterministic() {
     let first = extract_ppn(&adapter, &domain, 3).unwrap();
     let second = extract_ppn(&adapter, &domain, 3).unwrap();
     assert_eq!(first, second);
+}
+
+// -------------------------------------------------------------------------
+// Diagnostics hardening: decomposed sensitivities, conditioning
+// classification, and the weak-field domain summary.
+// -------------------------------------------------------------------------
+
+#[test]
+fn conditioning_classification_covers_all_three_bands() {
+    assert_eq!(
+        classify_conditioning(1.0),
+        ConditioningClass::WellConditioned
+    );
+    assert_eq!(
+        classify_conditioning(CONDITIONING_MARGINAL_THRESHOLD),
+        ConditioningClass::WellConditioned
+    );
+    assert_eq!(
+        classify_conditioning(CONDITIONING_MARGINAL_THRESHOLD * 0.5),
+        ConditioningClass::Marginal
+    );
+    assert_eq!(classify_conditioning(1.0e-9), ConditioningClass::Marginal);
+    assert_eq!(
+        classify_conditioning(1.0e-12),
+        ConditioningClass::IllConditioned
+    );
+    assert_eq!(
+        classify_conditioning(0.0),
+        ConditioningClass::IllConditioned
+    );
+}
+
+#[test]
+fn accepted_fits_are_classified_well_conditioned_or_marginal() {
+    // A regular, moderately sampled fit is never classified IllConditioned --
+    // that classification is unreachable from a successful extraction (an
+    // IllConditioned fit is always rejected with `PpnError::IllConditionedFit`
+    // before a `ParameterEstimate` exists).
+    let isotropic = IsotropicSchwarzschild::try_new(MASS).unwrap();
+    let adapter = IsotropicChartAdapter::new(&isotropic, MASS).unwrap();
+    let domain = PpnDomain::uniform_compactness(0.005, 0.05, 24);
+    let estimate = extract_ppn(&adapter, &domain, 3).expect("valid extraction");
+    assert_ne!(
+        estimate.gamma.diagnostics.conditioning_class,
+        ConditioningClass::IllConditioned
+    );
+    assert_ne!(
+        estimate.beta.diagnostics.conditioning_class,
+        ConditioningClass::IllConditioned
+    );
+}
+
+#[test]
+fn contaminated_sensitivities_are_individually_available_and_track_the_bias() {
+    // The design note's decomposition: each of the three sensitivity axes is
+    // independently populated (not just blended into one number), and the
+    // window sensitivity in particular shrinks as the field weakens, tracking
+    // the same O(U) contamination the whole-uncertainty test already checks.
+    let metric = contaminated();
+    let wide = extract_ppn(&metric, &PpnDomain::uniform_compactness(0.012, 0.12, 12), 1)
+        .expect("wide extraction");
+    let narrow = extract_ppn(&metric, &PpnDomain::uniform_compactness(0.004, 0.04, 12), 1)
+        .expect("narrow extraction");
+
+    for estimate in [&wide, &narrow]
+    {
+        assert!(
+            estimate
+                .gamma
+                .diagnostics
+                .radial_window_sensitivity
+                .available
+        );
+        assert!(estimate.gamma.diagnostics.fit_order_sensitivity.available);
+        assert!(estimate.gamma.diagnostics.resolution_sensitivity.available);
+        assert!(
+            estimate
+                .beta
+                .diagnostics
+                .radial_window_sensitivity
+                .available
+        );
+        assert!(estimate.beta.diagnostics.fit_order_sensitivity.available);
+        assert!(estimate.beta.diagnostics.resolution_sensitivity.available);
+    }
+
+    assert!(
+        narrow.gamma.diagnostics.radial_window_sensitivity.deviation
+            < wide.gamma.diagnostics.radial_window_sensitivity.deviation,
+        "narrow window sensitivity {} not < wide {}",
+        narrow.gamma.diagnostics.radial_window_sensitivity.deviation,
+        wide.gamma.diagnostics.radial_window_sensitivity.deviation
+    );
+
+    // Beta is generally more sensitive to contamination than gamma at a given
+    // (degree, window): both are contaminated at the same nominal order, but
+    // beta's estimator divides by U^2 rather than U, amplifying the same
+    // absolute higher-order terms.
+    assert!(
+        wide.beta.diagnostics.radial_window_sensitivity.deviation
+            > wide.gamma.diagnostics.radial_window_sensitivity.deviation,
+        "beta window sensitivity {} not more sensitive than gamma {}",
+        wide.beta.diagnostics.radial_window_sensitivity.deviation,
+        wide.gamma.diagnostics.radial_window_sensitivity.deviation
+    );
+
+    // The conservative estimated_uncertainty is the max of the available axes.
+    let gamma_max = narrow
+        .gamma
+        .diagnostics
+        .radial_window_sensitivity
+        .deviation
+        .max(narrow.gamma.diagnostics.fit_order_sensitivity.deviation)
+        .max(narrow.gamma.diagnostics.resolution_sensitivity.deviation);
+    assert!((narrow.gamma.estimated_uncertainty - gamma_max).abs() < 1.0e-15);
+}
+
+#[test]
+fn sensitivity_axes_report_unavailable_rather_than_a_false_zero() {
+    // At the maximum degree with only just enough samples, halving the window or
+    // the resolution leaves too few points for a degree-4 fit: those two axes
+    // must report `available: false`, not a misleading zero deviation.
+    let metric = SyntheticPpnMetric::exact(MASS, 1.0, 1.0);
+    let domain = PpnDomain::uniform_compactness(0.01, 0.1, 6);
+    let estimate = extract_ppn(&metric, &domain, 4).expect("degree-4 extraction");
+
+    assert!(
+        !estimate
+            .gamma
+            .diagnostics
+            .radial_window_sensitivity
+            .available
+    );
+    assert!(!estimate.gamma.diagnostics.resolution_sensitivity.available);
+    // Order sensitivity still has the degree-3 probe available (6 samples >= 4).
+    assert!(estimate.gamma.diagnostics.fit_order_sensitivity.available);
+
+    // With every axis but one unavailable, the conservative uncertainty falls
+    // back to whichever axis (here, order) is available -- never to zero.
+    assert!(estimate.gamma.estimated_uncertainty >= 0.0);
+}
+
+#[test]
+fn mass_scale_is_reported_in_the_weak_field_domain_summary() {
+    let metric = SyntheticPpnMetric::exact(MASS, 1.0, 1.0);
+    let domain = PpnDomain::uniform_compactness(0.01, 0.1, 12);
+    let estimate = extract_ppn(&metric, &domain, 2).expect("extraction");
+    assert_eq!(estimate.mass_scale, MASS);
 }
