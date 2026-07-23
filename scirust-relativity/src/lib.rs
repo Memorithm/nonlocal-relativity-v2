@@ -44,7 +44,13 @@
 //!   `delta S / delta g` for static, axisymmetric backgrounds, built on the
 //!   metric-only [`ricci_scalar_from_metric`] and validated by vacuum
 //!   stationarity (`G_(mu nu) + Lambda g_(mu nu) = 0`), a mismatched-`Lambda`
-//!   nonzero cross-check, and grid convergence.
+//!   nonzero cross-check, and grid convergence;
+//! - 3+1 (ADM) kinematics ([`adm`]) — the lapse, shift, spatial metric, and
+//!   extrinsic curvature of a foliation, with the Hamiltonian and momentum
+//!   constraints as oracles (they vanish for exact solutions), reusing
+//!   [`ricci_scalar_from_metric`] and [`numerical_christoffel`] at `D = 3` and
+//!   validated on Schwarzschild, de Sitter, FLRW, and the horizon-penetrating
+//!   [`PainleveGullstrand`] slicing. The bridge to Layer 3.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -70,6 +76,7 @@
 #![deny(missing_docs)]
 
 pub mod action;
+pub mod adm;
 mod connection;
 mod covariant_transport;
 mod curvature;
@@ -85,6 +92,7 @@ mod linearized;
 mod metric;
 mod minkowski;
 mod minkowski_spherical;
+mod painleve_gullstrand;
 mod parallel_transport;
 pub mod ppn;
 mod reissner_nordstrom;
@@ -111,6 +119,7 @@ pub use linearized::LinearizedField;
 pub use metric::{Metric, determinant, invert_metric, metric_norm};
 pub use minkowski::Minkowski;
 pub use minkowski_spherical::MinkowskiSpherical;
+pub use painleve_gullstrand::PainleveGullstrand;
 pub use parallel_transport::{holonomy_defect, transport_along_polyline, transport_along_segment};
 pub use reissner_nordstrom::ReissnerNordstrom;
 pub use schwarzschild::Schwarzschild;
