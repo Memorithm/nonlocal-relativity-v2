@@ -18,3 +18,7 @@ harness = false
 [[bench]]
 name = "ppn"
 harness = false
+
+[[bench]]
+name = "action"
+harness = false

@@ -214,3 +214,10 @@ Layer 2 — Covariant Gravity Workbench:
   exact and contaminated synthetic oracles, isotropic-Schwarzschild convergence
   to `gamma = beta = 1`, and areal-coordinate rejection; see
   [`docs/LAYER_2_PPN.md`](../../docs/LAYER_2_PPN.md).
+- `action_variation` — numerical variation of the Einstein–Hilbert action
+  `S = integral (R - 2 Lambda) sqrt(-g) d^4x` for static axisymmetric
+  backgrounds: a metric-only Ricci scalar recovering `4 Lambda` / `0`, vacuum
+  stationarity (`G_{mu nu} + Lambda g_{mu nu} = 0`) for Schwarzschild and
+  `Lambda`-matched de Sitter, a mismatched-`Lambda` nonzero cross-check against
+  the Einstein tensor, and grid convergence; see
+  [`docs/LAYER_2_ACTION_VARIATION.md`](../../docs/LAYER_2_ACTION_VARIATION.md).
