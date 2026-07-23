@@ -122,9 +122,11 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   `numerical_christoffel` (a disclosed finite-difference connection). Static
   spherically symmetric `f(r)` metrics share the `static_spherical` lapse helper.
 - **Parallel transport:** `transport_along_segment` / `transport_along_polyline`
-  / `holonomy_defect`, integrating the transport ODE with the `scirust-sim` RK4
-  engine; validated by flat exactness, metric compatibility, and the
-  holonomy/curvature identity against the Riemann tensor.
+  / `holonomy_defect` for vectors, plus `transport_covector_*` and
+  `transport_covariant_tensor_*` for lower-index objects, integrating the
+  transport ODE with the `scirust-sim` RK4 engine; validated by flat exactness,
+  the holonomy/curvature identity, and metric compatibility (norm preservation,
+  metric self-transport, index-lowering commutation, contraction preservation).
 - **Geodesic deviation:** `integrate_geodesic_deviation` solves the covariant
   Jacobi system `(x, u, xi, w)` with the Riemann source, validated against the
   coordinate separation of two nearby geodesics (convention-free ground truth).
@@ -297,11 +299,11 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
 - **Layer 1 (Geometry Core) — partial.** Present: metrics, connections,
   curvature, geodesics, nine backgrounds (including spatially flat FLRW),
   coordinate-independence diagnostics, a reusable parallel-transport engine with
-  first-class holonomy, geodesic-deviation (Jacobi) fields, and exponential /
-  logarithm maps. Missing: tetrads / orthonormal frames in the geometry core
-  (one exists, observer-specialised, in the worldline crate — to be generalised,
-  not duplicated), covector/tensor transport, and bitensors / Synge world
-  function.
+  first-class holonomy, covector/tensor transport, geodesic-deviation (Jacobi)
+  fields, and exponential / logarithm maps. Missing: tetrads / orthonormal
+  frames in the geometry core (one exists, observer-specialised, in the
+  worldline crate — to be generalised, not duplicated), and bitensors / Synge
+  world function.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.

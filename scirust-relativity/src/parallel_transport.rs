@@ -80,7 +80,7 @@ where
     }
 }
 
-fn validate_finite_coordinates<const D: usize>(
+pub(crate) fn validate_finite_coordinates<const D: usize>(
     coordinates: &[f64; D],
 ) -> Result<(), RelativityError> {
     if let Some((index, _)) = coordinates
@@ -93,7 +93,9 @@ fn validate_finite_coordinates<const D: usize>(
     Ok(())
 }
 
-fn validate_finite_vector<const D: usize>(vector: &[f64; D]) -> Result<(), RelativityError> {
+pub(crate) fn validate_finite_vector<const D: usize>(
+    vector: &[f64; D],
+) -> Result<(), RelativityError> {
     if vector.iter().any(|value| !value.is_finite())
     {
         return Err(RelativityError::NonFiniteTransportedVector);
