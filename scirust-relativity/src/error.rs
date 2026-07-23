@@ -44,6 +44,14 @@ pub enum RelativityError {
     /// A geodesic-deviation (Jacobi) field component evaluated to a non-finite
     /// value.
     NonFiniteDeviationVector,
+
+    /// The geodesic underlying an exponential-map evaluation could not be
+    /// integrated to a finite endpoint (for example it left the regular chart).
+    ExponentialMapIntegrationFailed,
+
+    /// The logarithm-map Newton iteration did not reach the requested tolerance
+    /// within the allowed number of iterations.
+    LogarithmMapDidNotConverge,
 }
 
 impl fmt::Display for RelativityError {
@@ -100,6 +108,20 @@ impl fmt::Display for RelativityError {
             Self::NonFiniteDeviationVector =>
             {
                 write!(formatter, "geodesic-deviation vector is not finite")
+            },
+            Self::ExponentialMapIntegrationFailed =>
+            {
+                write!(
+                    formatter,
+                    "exponential-map geodesic could not be integrated to a finite endpoint"
+                )
+            },
+            Self::LogarithmMapDidNotConverge =>
+            {
+                write!(
+                    formatter,
+                    "logarithm-map Newton iteration did not converge to tolerance"
+                )
             },
         }
     }

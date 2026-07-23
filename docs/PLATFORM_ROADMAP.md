@@ -122,6 +122,9 @@ The following exists today, is tested, and ships in a green CI:
   integrated with the Riemann source, validated against the actual separation
   of nearby geodesics (and exact flat linear growth), with a focusing
   experiment across de Sitter / anti-de Sitter / Schwarzschild.
+- **Exponential / logarithm maps**: `exp_p(v)` (geodesic endpoint at unit
+  affine parameter) and `log_p(q)` (its Newton-shooting inverse), validated by
+  flat exactness and the curved round-trip identity.
 - Geodesic integration (`GeodesicSystem`) compatible with `scirust-sim`.
 
 An engineering map of the whole relativistic-computation subgraph — capabilities,
@@ -168,10 +171,16 @@ The near-term ordering within Layer 1:
    system `(x, u, xi, w)` integrated with the `scirust-sim` RK4 engine and the
    Riemann source, validated against the convention-free ground truth (the
    coordinate separation of two nearby geodesics) and exact flat linear growth.
-7. Tetrads (orthonormal frames) in the geometry core — generalising the
-   worldline crate's observer tetrad rather than duplicating it — with
-   orthonormal parallel transport on the transport engine.
-8. Bitensors and Synge's world function on backgrounds with known expansions.
+7. **Geodesic exponential / logarithm maps** — *delivered.* `exp_p(v)` follows
+   the geodesic for unit affine parameter; `log_p(q)` inverts it by Newton
+   shooting (the exponential's finite-difference Jacobian inverted with the
+   crate's Gauss-Jordan routine). Validated by flat exactness and the curved
+   round-trip identity.
+8. Tetrads (orthonormal frames) in the geometry core — generalising the
+   worldline crate's observer tetrad rather than duplicating it (a careful
+   cross-crate refactor that keeps the worldline's public API and its tests) —
+   with orthonormal parallel transport on the transport engine.
+9. Bitensors and Synge's world function on backgrounds with known expansions.
 7. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
    close the empty-benchmarks gap.
 
