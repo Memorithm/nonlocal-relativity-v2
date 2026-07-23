@@ -19,7 +19,10 @@
 //! - geodesic equations compatible with `scirust-sim`, geodesic-deviation
 //!   (Jacobi) fields ([`integrate_geodesic_deviation`]) validated against the
 //!   separation of nearby geodesics, and geodesic exponential/logarithm maps
-//!   ([`geodesic_exponential`], [`geodesic_logarithm`]).
+//!   ([`geodesic_exponential`], [`geodesic_logarithm`]);
+//! - local orthonormal frames (tetrads) for timelike observers
+//!   ([`orthonormal_tetrad`]), built by metric Gram-Schmidt and validated by
+//!   orthonormality, completeness, and preservation under parallel transport.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -62,6 +65,7 @@ mod parallel_transport;
 mod reissner_nordstrom;
 mod schwarzschild;
 mod static_spherical;
+mod tetrad;
 
 pub use connection::{Connection, numerical_christoffel};
 pub use covariant_transport::{
@@ -83,3 +87,4 @@ pub use minkowski_spherical::MinkowskiSpherical;
 pub use parallel_transport::{holonomy_defect, transport_along_polyline, transport_along_segment};
 pub use reissner_nordstrom::ReissnerNordstrom;
 pub use schwarzschild::Schwarzschild;
+pub use tetrad::{OrthonormalTetrad, orthonormal_tetrad};

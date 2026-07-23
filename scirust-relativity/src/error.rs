@@ -52,6 +52,30 @@ pub enum RelativityError {
     /// The logarithm-map Newton iteration did not reach the requested tolerance
     /// within the allowed number of iterations.
     LogarithmMapDidNotConverge,
+
+    /// The timelike-norm floor requested for an orthonormal-frame (tetrad)
+    /// construction is non-finite or non-positive.
+    InvalidTetradFloor(f64),
+
+    /// The vector chosen as the timelike leg of a tetrad is not timelike:
+    /// `g(u, u) > -floor` under the `(-,+,+,+)` convention (this includes a
+    /// non-finite norm).
+    NonTimelikeFrameVector {
+        /// The offending norm `g(u, u)`.
+        metric_norm: f64,
+    },
+
+    /// A tetrad leg evaluated to a non-finite component.
+    NonFiniteTetradLeg,
+
+    /// Fewer than `dimension` independent orthonormal legs could be built, so
+    /// the frame is degenerate.
+    DegenerateFrame {
+        /// Number of independent legs that were built.
+        legs_found: usize,
+        /// The dimension `D` (the required number of legs).
+        dimension: usize,
+    },
 }
 
 impl fmt::Display for RelativityError {
@@ -121,6 +145,34 @@ impl fmt::Display for RelativityError {
                 write!(
                     formatter,
                     "logarithm-map Newton iteration did not converge to tolerance"
+                )
+            },
+            Self::InvalidTetradFloor(floor) =>
+            {
+                write!(
+                    formatter,
+                    "tetrad timelike-norm floor must be finite and positive; got {floor}"
+                )
+            },
+            Self::NonTimelikeFrameVector { metric_norm } =>
+            {
+                write!(
+                    formatter,
+                    "tetrad timelike leg is not timelike; g(u, u) = {metric_norm}"
+                )
+            },
+            Self::NonFiniteTetradLeg =>
+            {
+                write!(formatter, "tetrad leg has a non-finite component")
+            },
+            Self::DegenerateFrame {
+                legs_found,
+                dimension,
+            } =>
+            {
+                write!(
+                    formatter,
+                    "degenerate frame: only {legs_found} of {dimension} independent legs were built"
                 )
             },
         }

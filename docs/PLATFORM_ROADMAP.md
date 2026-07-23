@@ -183,10 +183,19 @@ The near-term ordering within Layer 1:
    metric-compatibility signatures: the metric transports to itself, index
    lowering commutes with transport, and the covector-vector contraction is
    preserved (`covariant_transport` tests + experiment).
-9. Tetrads (orthonormal frames) in the geometry core — generalising the
-   worldline crate's observer tetrad rather than duplicating it (a careful
-   cross-crate refactor that keeps the worldline's public API and its tests) —
-   with orthonormal parallel transport on the transport engine.
+9. **Tetrads (orthonormal frames) in the geometry core** — *delivered.*
+   `orthonormal_tetrad` builds a local orthonormal frame `{e_a}` for a timelike
+   observer by metric Gram-Schmidt (`e_0` the normalized four-velocity), with a
+   typed `RelativityError` for every failure. This *generalises* the
+   experimental worldline crate's observer tetrad instead of duplicating it: the
+   worldline's `build_orthonormal_tetrad` now delegates to this primitive and
+   re-exports the shared `OrthonormalTetrad` type, keeping its public API and all
+   four of its tetrad tests bit-for-bit unchanged (the Gram-Schmidt lives in
+   exactly one place). Validated by orthonormality (`g(e_a,e_b) = eta_ab`),
+   completeness (any vector reconstructs from its frame components), agreement of
+   the frame temporal/spatial split with the closed-form metric split, and
+   preservation of orthonormality under parallel transport of the frame legs
+   (`tetrad` tests + `orthonormal_tetrad` experiment).
 10. Bitensors and Synge's world function on backgrounds with known expansions.
 11. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
     close the empty-benchmarks gap.
