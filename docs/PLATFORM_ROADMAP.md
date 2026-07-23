@@ -63,7 +63,7 @@ headers. Blurring these categories is treated as a defect.
 | Layer | Scope | Status |
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
-| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | opening: linearized gravity + PPN `gamma`/`beta` + Einstein–Hilbert action variation delivered ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md)); ADM kinematics next |
+| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
 | 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | planned |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
@@ -287,10 +287,25 @@ Einstein tensor, and grid convergence (`action` tests + `action_variation`
 experiment + `action` benches). A numerical approximation, never an exact
 variation; only vacuum stationarity is validated (no matter sources).
 
-The remaining follow-on slice — **3+1 (ADM) kinematics** (the bridge to Layer 3)
-— is scoped in the Layer 2 design note; the full symbolic-algebra action
-machinery is deliberately deferred until a slice needs it and it can be made
-deterministic.
+Its fourth increment — **3+1 (ADM) kinematics** — is also **delivered** (design
+& conventions: [`LAYER_2_ADM.md`](LAYER_2_ADM.md)). The `adm` module decomposes a
+4-metric on the foliation by constant-time slices into the lapse `N`, shift
+`N^i`, spatial metric `gamma_ij`, and extrinsic curvature `K_ij`, and evaluates
+the Gauss–Codazzi **Hamiltonian** (`R^(3) + K^2 - K_ij K^{ij} - 2 Lambda`) and
+**momentum** (`D_j(K^{ij} - gamma^{ij} K)`) constraints, which vanish for exact
+solutions. It reuses [`ricci_scalar_from_metric`] and `numerical_christoffel` at
+`D = 3` for the spatial curvature and connection, and is validated on four exact
+foliations — Schwarzschild (scalar-flat slice), static de Sitter
+(`R^(3) = 2 Lambda`), FLRW (`K = -3H`), and the horizon-penetrating
+[`PainleveGullstrand`] slicing (non-zero shift, spatially varying `K`, a
+non-trivial momentum constraint) — plus the algebraic reconstruction identity
+(`adm` tests + `adm_kinematics` experiment + `adm` benches). This is the natural
+bridge to Layer 3; it evolves nothing in time.
+
+With these four slices the near-term Layer 2 sequence is complete. The full
+symbolic-algebra action machinery is deliberately deferred until a slice needs
+it and it can be made deterministic; **Layer 3 (Numerical Relativity)**, whose
+evolution equations advance exactly this ADM data in time, is the next frontier.
 
 ## What this platform will not do
 

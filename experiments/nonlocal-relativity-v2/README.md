@@ -221,3 +221,8 @@ Layer 2 — Covariant Gravity Workbench:
   `Lambda`-matched de Sitter, a mismatched-`Lambda` nonzero cross-check against
   the Einstein tensor, and grid convergence; see
   [`docs/LAYER_2_ACTION_VARIATION.md`](../../docs/LAYER_2_ACTION_VARIATION.md).
+- `adm_kinematics` — the 3+1 (ADM) decomposition (lapse, shift, spatial metric,
+  extrinsic curvature) and the Gauss–Codazzi Hamiltonian and momentum
+  constraints across four exact foliations — Schwarzschild, static de Sitter,
+  FLRW, and horizon-penetrating Painlevé–Gullstrand — with the constraints
+  vanishing for each; see [`docs/LAYER_2_ADM.md`](../../docs/LAYER_2_ADM.md).

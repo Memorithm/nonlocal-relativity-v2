@@ -187,22 +187,37 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   `Lambda`-matched de Sitter — residual ~`O(dx^4)`), a mismatched-`Lambda`
   nonzero cross-check, and grid convergence. A numerical approximation, never an
   exact variation. See `docs/LAYER_2_ACTION_VARIATION.md`.
+- **3+1 (ADM) kinematics (Layer 2):** the `adm` module decomposes a 4-metric on
+  the constant-time foliation into lapse, shift, spatial metric, and extrinsic
+  curvature (`adm_decomposition`), and evaluates the Gauss–Codazzi Hamiltonian
+  and momentum constraints (`adm_constraints`), which vanish for exact solutions.
+  It reuses `ricci_scalar_from_metric` and `numerical_christoffel` at `D = 3` for
+  the spatial curvature and connection, carries a typed `AdmError`, and is
+  validated on Schwarzschild, static de Sitter, FLRW, and the horizon-penetrating
+  `PainleveGullstrand` background (the non-zero-shift, spatially-varying-`K`
+  oracle) plus the algebraic reconstruction identity. The bridge to Layer 3; it
+  evolves nothing. See `docs/LAYER_2_ADM.md`.
+- **Backgrounds:** Minkowski (Cartesian and spherical), Schwarzschild,
+  isotropic Schwarzschild, Reissner–Nordström, Kerr, de Sitter, anti-de Sitter,
+  spatially flat FLRW, and Painlevé–Gullstrand (a horizon-penetrating
+  Schwarzschild foliation, `Metric` only — the ADM non-zero-shift oracle).
 - **Dynamics:** `GeodesicSystem<C, D>` implements `scirust_sim::System` (state
   `[x, u]`, RHS the geodesic equation `−Γ^ρ_{μν} u^μ u^ν`).
 - **Errors:** `RelativityError` (non-finite coordinate/metric/curvature/transport/
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 124 across seventeen integration-test files (curvature, geometry,
+- **Tests:** 130 across eighteen integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
-  exponential_map, tetrad, synge, van_vleck, linearized, ppn, action).
-- **Benchmarks:** `benches/geometry_core.rs`, `benches/ppn.rs`, and
-  `benches/action.rs` (`criterion`, `harness = false`) time the hot paths —
-  Christoffel, `invert_metric`, the curvature engine, RK4 transport,
-  world-function / van Vleck shooting, PPN sampling / extrapolation / extraction,
-  and the metric-only Ricci scalar / action variation (with grid scaling).
-  Wall-clock, so machine-dependent — the library stays deterministic.
+  exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm).
+- **Benchmarks:** `benches/geometry_core.rs`, `benches/ppn.rs`,
+  `benches/action.rs`, and `benches/adm.rs` (`criterion`, `harness = false`) time
+  the hot paths — Christoffel, `invert_metric`, the curvature engine, RK4
+  transport, world-function / van Vleck shooting, PPN sampling / extrapolation /
+  extraction, the metric-only Ricci scalar / action variation, and the ADM
+  decomposition / constraints. Wall-clock, so machine-dependent — the library
+  stays deterministic.
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
 
@@ -241,7 +256,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Nineteen deterministic experiment binaries, each printing a `#`-prefixed
+Twenty deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -251,7 +266,7 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 (`curvature_invariants`, `coordinate_independence`, `parallel_transport`,
 `covariant_transport`, `flrw_curvature`, `geodesic_deviation`, `exponential_map`,
 `orthonormal_tetrad`, `world_function`, `van_vleck_determinant`) plus the Layer 2
-`linearized_gravity`, `ppn_extraction`, and `action_variation`.
+`linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`.
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -338,11 +353,12 @@ work):
   *path-triggered* and text-scanned for forbidden markers, but never compiled,
   tested, or run in CI (it is absent from every `-p` list, and the examples job
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
-- **Documentation drift (largely resolved):** 19 experiment binaries on disk;
+- **Documentation drift (largely resolved):** 20 experiment binaries on disk;
   the experiments README now itemises both the six phenomenological binaries and
-  the thirteen established-GR ones (geometry core plus the Layer 2
-  `linearized_gravity`, `ppn_extraction`, and `action_variation`). The remaining
-  drift is the paper's reproduction section, which still lists only 3.
+  the fourteen established-GR ones (geometry core plus the Layer 2
+  `linearized_gravity`, `ppn_extraction`, `action_variation`, and
+  `adm_kinematics`). The remaining drift is the paper's reproduction section,
+  which still lists only 3.
 - ~~**No performance benchmarks anywhere** in the subgraph — no `benches/`, no
   `criterion`/`iai`/`divan`.~~ **Resolved:** `criterion` wall-clock benches now
   cover the geometry-core hot paths (`scirust-relativity/benches/geometry_core.rs`)
@@ -387,14 +403,17 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   Layers 2–6 are the next frontier.
 - **Layer 2 (Covariant Gravity Workbench) — opening.** The design note
   (`docs/LAYER_2_COVARIANT_GRAVITY.md`) fixes the scope, category labels, and
-  oracles. Three increments are delivered and validated: **linearized gravity**
+  oracles. Four increments are delivered and validated: **linearized gravity**
   (`LinearizedField`: the weak-field Einstein equations to first order in
   `h = g - eta`), **PPN extraction** (the `ppn` module: Eddington–Robertson
   `gamma`, `beta` from static isotropic weak-field metrics, `docs/LAYER_2_PPN.md`),
-  and the **Einstein–Hilbert action variation** (the `action` module: a numerical
+  the **Einstein–Hilbert action variation** (the `action` module: a numerical
   `delta S / delta g` reproducing `G_{mu nu} + Lambda g_{mu nu} = 0` for static
-  axisymmetric vacua, `docs/LAYER_2_ACTION_VARIATION.md`). 3+1 (ADM) kinematics is
-  the scoped follow-on; full symbolic action machinery is deferred.
+  axisymmetric vacua, `docs/LAYER_2_ACTION_VARIATION.md`), and **3+1 (ADM)
+  kinematics** (the `adm` module: lapse/shift/spatial-metric/extrinsic-curvature
+  and the Gauss–Codazzi constraints, `docs/LAYER_2_ADM.md`). This completes the
+  near-term Layer 2 sequence and bridges to Layer 3; full symbolic action
+  machinery is deferred.
 - **Layer 3 (Numerical Relativity) — absent.** No perturbation theory,
   self-force, or ADM/BSSN evolution. `scirust-sim` lacks the dense output,
   event detection, and constraint-preserving/projection integration such work
@@ -438,12 +457,13 @@ Additive, each validated against an oracle, each one PR:
    the geometry-core hot paths and the `O(N²)` Caputo history; timings are
    machine-dependent, the deterministic op-count proxy remains the reproducible
    companion). This closes the near-term Layer 1 sequence.
-9. **Layer 2 (Covariant Gravity Workbench) opens** — *in progress*. Design note
-   landed (`docs/LAYER_2_COVARIANT_GRAVITY.md`); **linearized gravity**
+9. **Layer 2 (Covariant Gravity Workbench)** — *near-term sequence complete*.
+   Design note (`docs/LAYER_2_COVARIANT_GRAVITY.md`); **linearized gravity**
    (`LinearizedField`), **PPN extraction** (the `ppn` module,
-   `docs/LAYER_2_PPN.md`), and the **Einstein–Hilbert action variation** (the
-   `action` module, `docs/LAYER_2_ACTION_VARIATION.md`) are *done*. Next: 3+1
-   (ADM) kinematics (the bridge to Layer 3).
+   `docs/LAYER_2_PPN.md`), the **Einstein–Hilbert action variation** (the
+   `action` module, `docs/LAYER_2_ACTION_VARIATION.md`), and **3+1 (ADM)
+   kinematics** (the `adm` module, `docs/LAYER_2_ADM.md`) are all *done*. Next:
+   **Layer 3 (Numerical Relativity)**, which evolves the ADM data in time.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.
