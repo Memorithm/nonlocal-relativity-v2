@@ -188,3 +188,64 @@ dedicated `scirust-gravity` crate remains an option if the Layer 2 surface
 grows), with a dedicated `PpnError`, a `ppn`-scoped module tree, a
 `linearized_gravity`-style experiment, and `criterion` benches — all reusing the
 existing conventions.
+
+## 11. Hardening addendum: decomposed diagnostics
+
+This section records a follow-up hardening of the increment above (§1–10, all
+unchanged): the single blended `estimated_uncertainty` is now backed by an
+explicit, independently-inspectable diagnostics surface, so a caller can see
+*which* sensitivity axis is driving a reported uncertainty rather than only its
+conservative maximum.
+
+**New types** (`ppn` module): `ParameterSensitivity { deviation, available }` — a
+single probe's absolute intercept deviation, with `available: false` (never a
+misleading `deviation: 0.0`) when the perturbed fit could not be attempted at
+all (too few points after windowing/thinning, or an ill-conditioned sub-system).
+`PpnParameterDiagnostics { radial_window_sensitivity, fit_order_sensitivity,
+resolution_sensitivity, conditioning_class }` — the three probes broken out
+individually (previously folded into one `worst`-case number inside
+`ParameterEstimate.estimated_uncertainty`, which is retained unchanged as the
+conservative summary: the maximum of whichever probes were available, or the
+fit residual if none was). `ConditioningClass` (`WellConditioned` / `Marginal` /
+`IllConditioned`) via `classify_conditioning(indicator)`, with the marginal
+threshold `CONDITIONING_MARGINAL_THRESHOLD = 1e-6` four orders above the
+existing hard-reject floor (`1e-10`). `ParameterEstimate` gained a `diagnostics:
+PpnParameterDiagnostics` field; `PpnEstimate` gained `mass_scale: f64`,
+completing the weak-field domain summary already carried by `sample_count`,
+`compactness_min`, and `compactness_max`.
+
+**Two deliberate non-changes, both licensed by "adapt naming and shape to
+repository conventions":**
+
+- **No fourth `Rejected` conditioning variant.** A fit below the hard-reject
+  floor never reaches a `ParameterEstimate` — `fit_polynomial_intercept` already
+  returns `Err(PpnError::IllConditionedFit)` before one is constructed. Adding a
+  `Rejected` variant to a successful result's diagnostics would be a
+  contradiction in terms; `IllConditioned` documents that boundary and is
+  independently unit-tested via `classify_conditioning`, but is unreachable from
+  a successful extraction.
+- **No separate `SamplingSpacing` enum.** `PpnSampling` already has
+  `UniformCompactness` (linear in the dimensionless weak-field variable `U`) and
+  `LogarithmicRadius` as distinct variants, which states the sampled unit in the
+  variant name rather than needing a second enum to disambiguate it. The
+  `ppn_extraction` experiment sweeps both.
+- **No `scientific_category` CSV column.** Every existing experiment in the
+  suite carries its scientific-category label in the `#`-prefixed header
+  (`print_experiment_header`'s `layer` argument) and in prose, never as a
+  per-row data column; the `ppn_extraction` CSV's `metric` field (for example
+  `synthetic_exact_gr` vs `isotropic_schwarzschild` vs `areal_schwarzschild`)
+  already identifies which oracle class a row belongs to. Adding a redundant
+  column would break with that established convention.
+
+**Experiment.** `ppn_extraction` now also sweeps: a second exact-synthetic
+oracle away from `(1, 1)` (`gamma_star = 0.8, beta_star = 1.2`, avoiding the
+accidental symmetry a GR-only sweep could hide); the `LogarithmicRadius`
+sampling spacing; and reports, per parameter, `*_relative_error` (against the
+known oracle), the three sensitivity axes (`na` when unavailable, never a
+misleading `0`), and `*_conditioning_class`, alongside the pre-existing
+`*_estimated_uncertainty` and `*_fit_residual` columns.
+
+**Nothing in §1–10 changed.** The physics, the coordinate contract, the solver,
+and all four oracles are exactly as validated in the original increment; this
+section only makes the numerical honesty already designed in §6 more
+explicit and independently testable.

@@ -16,6 +16,51 @@ pub const MAX_DEGREE: usize = 4;
 /// falls below this.
 const CONDITIONING_FLOOR: f64 = 1.0e-10;
 
+/// At or above this, an accepted fit is classified [`ConditioningClass::WellConditioned`]
+/// rather than [`ConditioningClass::Marginal`]. Set four orders of magnitude above
+/// `CONDITIONING_FLOOR` — comfortably inside `f64` working precision (`~1e-15`),
+/// while still flagging fits that are accepted yet far from ideal.
+pub const CONDITIONING_MARGINAL_THRESHOLD: f64 = 1.0e-6;
+
+/// A classification of a fit's conditioning indicator ([`PolynomialFit::conditioning`]).
+///
+/// There is no accepted-fit variant for "rejected": a fit whose indicator falls
+/// below `CONDITIONING_FLOOR` is always rejected outright with
+/// [`PpnError::IllConditionedFit`] before any [`PolynomialFit`] (or downstream
+/// `ParameterEstimate`) is constructed — see [`fit_polynomial_intercept`].
+/// `IllConditioned` documents that reject boundary so the full spectrum is named
+/// and independently testable via [`classify_conditioning`]; it cannot appear
+/// inside a successful extraction's diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditioningClass {
+    /// Indicator at or above [`CONDITIONING_MARGINAL_THRESHOLD`].
+    WellConditioned,
+    /// Indicator at or above `CONDITIONING_FLOOR` but below
+    /// [`CONDITIONING_MARGINAL_THRESHOLD`]: accepted, but close to the reject
+    /// floor — treat estimates built on it with extra caution.
+    Marginal,
+    /// Indicator below `CONDITIONING_FLOOR`. Unreachable from a successful
+    /// extraction (see the type-level documentation); named for completeness.
+    IllConditioned,
+}
+
+/// Classify a raw conditioning indicator (see [`PolynomialFit::conditioning`]).
+#[must_use]
+pub fn classify_conditioning(indicator: f64) -> ConditioningClass {
+    if indicator < CONDITIONING_FLOOR
+    {
+        ConditioningClass::IllConditioned
+    }
+    else if indicator < CONDITIONING_MARGINAL_THRESHOLD
+    {
+        ConditioningClass::Marginal
+    }
+    else
+    {
+        ConditioningClass::WellConditioned
+    }
+}
+
 /// The result of a least-squares polynomial fit `y ≈ sum_k c_k x^k`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolynomialFit {

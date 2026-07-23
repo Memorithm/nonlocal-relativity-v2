@@ -169,10 +169,14 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   to zero compactness (a self-contained least-squares solver). It enforces an
   explicit isotropic-coordinate contract (`StaticIsotropicMetric` +
   `IsotropicChartAdapter`, which rejects areal charts via a conformal-flatness
-  check), carries its own typed `PpnError`, and reports window/order/resolution/
-  conditioning diagnostics as an *estimated* uncertainty (not a bound). Validated
-  against exact and contaminated synthetic metrics and exact isotropic
-  Schwarzschild (`gamma = beta = 1`). See `docs/LAYER_2_PPN.md`.
+  check), carries its own typed `PpnError`, and reports the radial-window /
+  fit-order / resolution sensitivities individually (`PpnParameterDiagnostics`,
+  each a `ParameterSensitivity { deviation, available }` so an unattempted probe
+  is never read as zero) plus a `ConditioningClass` classification, alongside the
+  conservative blended `estimated_uncertainty` (not a bound). Validated against
+  exact GR and non-GR synthetic metrics, contaminated synthetic metrics, and
+  exact isotropic Schwarzschild (`gamma = beta = 1`). See `docs/LAYER_2_PPN.md`
+  (§11 for the diagnostics hardening).
 - **Einstein–Hilbert action variation (Layer 2):** the `action` module
   numerically varies `S = integral (R - 2 Lambda) sqrt(-g) d^4x`
   (`einstein_hilbert_action_variation`) for a static, axisymmetric background
@@ -207,7 +211,7 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 130 across eighteen integration-test files (curvature, geometry,
+- **Tests:** 135 across eighteen integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm).
