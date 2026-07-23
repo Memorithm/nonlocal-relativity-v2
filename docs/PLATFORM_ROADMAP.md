@@ -63,7 +63,7 @@ headers. Blurring these categories is treated as a defect.
 | Layer | Scope | Status |
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
-| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | design note landed ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md)); linearized-gravity increment next |
+| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | opening: design note ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md)) + linearized gravity delivered; PPN parameters next |
 | 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | planned |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
@@ -243,16 +243,19 @@ Layers 2–6 begin only after Layer 1 is broad and solid. Each will open with a
 design note fixing its oracles and its category labels before any code lands.
 
 With the near-term Layer 1 sequence (items 1–12) delivered, **Layer 2 (Covariant
-Gravity Workbench) is now open**, starting from its design note,
-[`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md). That note fixes
-Layer 2's scope, its category labels, and the exact oracles for its first
-increment — **linearized gravity** (the linearized Riemann/Ricci/Einstein tensors
-and the Lorenz-gauge wave operator, validated by weak-field-Schwarzschild vacuum,
-the Newtonian Poisson limit, gauge invariance of the linearized Riemann, and an
-`O(h^2)` cross-check against the Layer 1 nonlinear curvature) — with PPN
-parameters, the Einstein–Hilbert action's variation, and 3+1 (ADM) kinematics as
-the follow-on slices. The full symbolic-algebra action machinery is deliberately
-deferred until a slice needs it and it can be made deterministic.
+Gravity Workbench) is now open**, on its design note,
+[`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md). Its first
+increment — **linearized gravity** — is **delivered**: [`LinearizedField`]
+computes the linearized Riemann/Ricci/Einstein tensors and the trace-reversed
+perturbation (whose Lorenz-gauge vacuum equation is the wave operator) to first
+order in a metric perturbation about Minkowski, validated by weak-field-Schwarzschild
+vacuum, the Newtonian Poisson limit (`G^(1)_00 = 2 nabla^2 Phi`, exact for a
+polynomial potential), gauge invariance of the linearized Riemann, and an
+`O(h^2)` cross-check against the Layer 1 nonlinear curvature (`linearized` tests +
+`linearized_gravity` experiment). The follow-on slices — PPN parameters, the
+Einstein–Hilbert action's numerical variation, and 3+1 (ADM) kinematics — are
+scoped in the design note; the full symbolic-algebra action machinery is
+deliberately deferred until a slice needs it and it can be made deterministic.
 
 ## What this platform will not do
 

@@ -29,7 +29,12 @@
 //!   ([`van_vleck_determinant`]) — built on the geodesic logarithm map and a
 //!   deterministic [`determinant`], validated by flat exactness, the fundamental
 //!   identity, base/field symmetry, and the known maximally-symmetric
-//!   coincidence expansion.
+//!   coincidence expansion;
+//! - linearized gravity ([`LinearizedField`]) — the field equations to first
+//!   order in a metric perturbation about Minkowski (the opening slice of the
+//!   Layer 2 Covariant Gravity Workbench), validated by weak-field-Schwarzschild
+//!   vacuum, the Newtonian Poisson limit, gauge invariance, and an `O(h^2)`
+//!   cross-check against the nonlinear curvature.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -65,6 +70,7 @@ mod geodesic;
 mod geodesic_deviation;
 mod isotropic_schwarzschild;
 mod kerr;
+mod linearized;
 mod metric;
 mod minkowski;
 mod minkowski_spherical;
@@ -89,6 +95,7 @@ pub use geodesic::GeodesicSystem;
 pub use geodesic_deviation::{JacobiSample, integrate_geodesic_deviation};
 pub use isotropic_schwarzschild::IsotropicSchwarzschild;
 pub use kerr::Kerr;
+pub use linearized::LinearizedField;
 pub use metric::{Metric, determinant, invert_metric, metric_norm};
 pub use minkowski::Minkowski;
 pub use minkowski_spherical::MinkowskiSpherical;
