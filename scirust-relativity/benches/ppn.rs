@@ -74,6 +74,46 @@ fn ppn(criterion: &mut Criterion) {
         bencher.iter(|| black_box(fit_polynomial_intercept(black_box(&xs), black_box(&ys), 3)));
     });
 
+    // Diagnostic calculation alone: the four extra fits a full extraction takes
+    // per parameter beyond the primary one (window-halved, the two adjacent
+    // orders, and resolution-halved) -- the marginal cost the hardened
+    // diagnostics add over a bare `fit_polynomial_intercept` call. Uses only the
+    // public solver, mirroring `extract_ppn`'s internal sensitivity probes.
+    criterion.bench_function("ppn_diagnostic_probes_24_deg3", |bencher| {
+        let sample_radii = radii(24);
+        let compactness: Vec<f64> = sample_radii.iter().map(|&r| MASS / r).collect();
+        let gamma_effective: Vec<f64> = sample_radii
+            .iter()
+            .map(|&radius| {
+                let u = MASS / radius;
+                (adapter.spatial_conformal_factor(radius).expect("conformal") - 1.0) / (2.0 * u)
+            })
+            .collect();
+        let half = compactness.len().div_ceil(2);
+        let window_u = &compactness[..half];
+        let window_y = &gamma_effective[..half];
+        let coarse_u: Vec<f64> = compactness.iter().step_by(2).copied().collect();
+        let coarse_y: Vec<f64> = gamma_effective.iter().step_by(2).copied().collect();
+        bencher.iter(|| {
+            black_box(fit_polynomial_intercept(
+                black_box(window_u),
+                black_box(window_y),
+                3,
+            ))
+            .expect("window probe");
+            black_box(fit_polynomial_intercept(&compactness, &gamma_effective, 2))
+                .expect("order-1 probe");
+            black_box(fit_polynomial_intercept(&compactness, &gamma_effective, 4))
+                .expect("order+1 probe");
+            black_box(fit_polynomial_intercept(
+                black_box(&coarse_u),
+                black_box(&coarse_y),
+                3,
+            ))
+            .expect("resolution probe")
+        });
+    });
+
     // A complete extraction.
     criterion.bench_function("ppn_full_extraction_24_deg3", |bencher| {
         bencher.iter(|| {
