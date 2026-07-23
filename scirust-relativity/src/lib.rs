@@ -11,8 +11,10 @@
 //! - Riemann, Ricci, Einstein, and Kretschmann curvature tensors from any
 //!   metric-and-connection background, validated against exact analytic
 //!   oracles (see [`CurvatureTensors`]);
-//! - a reusable parallel-transport engine ([`transport_along_segment`],
-//!   [`transport_along_polyline`], [`holonomy_defect`]) validated by metric
+//! - a reusable parallel-transport engine for vectors ([`transport_along_segment`],
+//!   [`transport_along_polyline`], [`holonomy_defect`]), covectors, and rank-2
+//!   covariant tensors ([`transport_covector_along_segment`],
+//!   [`transport_covariant_tensor_along_segment`]), validated by metric
 //!   compatibility and the holonomy/curvature identity;
 //! - geodesic equations compatible with `scirust-sim`, geodesic-deviation
 //!   (Jacobi) fields ([`integrate_geodesic_deviation`]) validated against the
@@ -43,6 +45,7 @@
 #![deny(missing_docs)]
 
 mod connection;
+mod covariant_transport;
 mod curvature;
 mod de_sitter;
 mod error;
@@ -61,6 +64,10 @@ mod schwarzschild;
 mod static_spherical;
 
 pub use connection::{Connection, numerical_christoffel};
+pub use covariant_transport::{
+    transport_covariant_tensor_along_polyline, transport_covariant_tensor_along_segment,
+    transport_covector_along_polyline, transport_covector_along_segment,
+};
 pub use curvature::CurvatureTensors;
 pub use de_sitter::{AntiDeSitter, DeSitter};
 pub use error::RelativityError;

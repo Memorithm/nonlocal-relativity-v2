@@ -113,11 +113,13 @@ The following exists today, is tested, and ships in a green CI:
   radius `r = rho (1 + M/2rho)^2`). Spherical Minkowski is a strong flatness
   test: non-zero Christoffel symbols yielding numerically zero curvature.
   Validated by tests and a `coordinate_independence` experiment.
-- **Parallel-transport engine**: transport of a contravariant vector along a
-  coordinate path (segment / polyline / closed-loop holonomy), reusing the
-  `scirust-sim` RK4 integrator. Validated by flat-space exactness, metric
-  compatibility (norm preservation), zero holonomy on flat closed loops, and
-  the holonomy/curvature identity checked against the numerical Riemann tensor.
+- **Parallel-transport engine**: transport of contravariant vectors, covectors,
+  and rank-2 covariant tensors along a coordinate path (segment / polyline /
+  closed-loop holonomy), reusing the `scirust-sim` RK4 integrator. Validated by
+  flat-space exactness, metric compatibility (vector-norm preservation, metric
+  self-transport, index-lowering commutation, contraction preservation), zero
+  holonomy on flat closed loops, and the holonomy/curvature identity checked
+  against the numerical Riemann tensor.
 - **Geodesic-deviation (Jacobi) fields**: the covariant Jacobi system
   integrated with the Riemann source, validated against the actual separation
   of nearby geodesics (and exact flat linear growth), with a focusing
@@ -176,13 +178,18 @@ The near-term ordering within Layer 1:
    shooting (the exponential's finite-difference Jacobian inverted with the
    crate's Gauss-Jordan routine). Validated by flat exactness and the curved
    round-trip identity.
-8. Tetrads (orthonormal frames) in the geometry core — generalising the
+8. **Covector and rank-2 tensor parallel transport** — *delivered.* The
+   transport engine extended to lower-index objects, validated by the three
+   metric-compatibility signatures: the metric transports to itself, index
+   lowering commutes with transport, and the covector-vector contraction is
+   preserved (`covariant_transport` tests + experiment).
+9. Tetrads (orthonormal frames) in the geometry core — generalising the
    worldline crate's observer tetrad rather than duplicating it (a careful
    cross-crate refactor that keeps the worldline's public API and its tests) —
    with orthonormal parallel transport on the transport engine.
-9. Bitensors and Synge's world function on backgrounds with known expansions.
-7. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
-   close the empty-benchmarks gap.
+10. Bitensors and Synge's world function on backgrounds with known expansions.
+11. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
+    close the empty-benchmarks gap.
 
 Layers 2–6 begin only after Layer 1 is broad and solid. Each will open with a
 design note fixing its oracles and its category labels before any code lands.
