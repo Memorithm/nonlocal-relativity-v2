@@ -63,7 +63,7 @@ headers. Blurring these categories is treated as a defect.
 | Layer | Scope | Status |
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
-| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | opening: linearized gravity + PPN `gamma`/`beta` delivered ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md)); action variation / ADM next |
+| 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | opening: linearized gravity + PPN `gamma`/`beta` + Einstein–Hilbert action variation delivered ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md)); ADM kinematics next |
 | 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | planned |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
@@ -269,10 +269,28 @@ recovery), and exact isotropic Schwarzschild (`gamma = beta = 1`) — `ppn` test
 `ppn_extraction` experiment + `ppn` benches. Only `gamma` and `beta` are
 implemented; the exclusions are listed in the design note.
 
-The remaining follow-on slices — the Einstein–Hilbert action's numerical
-variation and 3+1 (ADM) kinematics — are scoped in the Layer 2 design note; the
-full symbolic-algebra action machinery is deliberately deferred until a slice
-needs it and it can be made deterministic.
+Its third increment — the **Einstein–Hilbert action and its numerical
+variation** — is also **delivered** (design & conventions:
+[`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md)). The `action`
+module numerically varies `S = integral (R - 2 Lambda) sqrt(-g) d^4x` for a
+static, axisymmetric background against a compact test perturbation — a central
+difference in the amplitude of a Simpson-quadratured action whose integrand uses
+a new metric-only nested-difference Ricci scalar ([`ricci_scalar_from_metric`],
+a Layer 1 generalization) — and compares it to the analytic-integrand prediction
+`-integral sqrt(-g) E^{ab} h_{ab}` from the Einstein tensor. The static +
+axisymmetric symmetry reduces the 4D variation to a 2D `(r, theta)` integral;
+the compact bump makes the Gibbons–Hawking boundary term vanish. Validated by
+metric-only curvature recovering `4 Lambda` / `0`, vacuum stationarity for
+Schwarzschild and `Lambda`-matched de Sitter (`G_{mu nu} + Lambda g_{mu nu} = 0`,
+residual ~`O(dx^4)`), a mismatched-`Lambda` nonzero cross-check against the
+Einstein tensor, and grid convergence (`action` tests + `action_variation`
+experiment + `action` benches). A numerical approximation, never an exact
+variation; only vacuum stationarity is validated (no matter sources).
+
+The remaining follow-on slice — **3+1 (ADM) kinematics** (the bridge to Layer 3)
+— is scoped in the Layer 2 design note; the full symbolic-algebra action
+machinery is deliberately deferred until a slice needs it and it can be made
+deterministic.
 
 ## What this platform will not do
 
