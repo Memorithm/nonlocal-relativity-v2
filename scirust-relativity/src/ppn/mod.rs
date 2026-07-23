@@ -37,7 +37,10 @@ mod oracle;
 
 pub use coordinate::{IsotropicChartAdapter, StaticIsotropicMetric};
 pub use error::PpnError;
-pub use extrapolation::{MAX_DEGREE, PolynomialFit, fit_polynomial_intercept};
+pub use extrapolation::{
+    CONDITIONING_MARGINAL_THRESHOLD, ConditioningClass, MAX_DEGREE, PolynomialFit,
+    classify_conditioning, fit_polynomial_intercept,
+};
 pub use oracle::SyntheticPpnMetric;
 
 /// Hard weak-field gate: the strongest-field sample's compactness must not exceed
@@ -222,6 +225,65 @@ impl PpnDomain {
     }
 }
 
+/// A single numerical-sensitivity probe: how much the fitted intercept moves
+/// when one aspect of the extraction (radial window, polynomial order, or
+/// sample resolution) is deliberately perturbed. Not a bound — see
+/// [`ParameterEstimate::estimated_uncertainty`] and the module documentation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParameterSensitivity {
+    /// The absolute deviation of the perturbed fit's intercept from the primary
+    /// fit's. Only meaningful when [`available`](Self::available) is `true`.
+    pub deviation: f64,
+    /// Whether a perturbed fit was actually computed. `false` means no valid
+    /// perturbed fit could be attempted (for example, order sensitivity at the
+    /// minimum degree with too few samples for the adjacent degree) — `deviation`
+    /// carries no information in that case and must never be read as "zero
+    /// sensitivity".
+    pub available: bool,
+}
+
+impl ParameterSensitivity {
+    /// No perturbed fit was attempted or none succeeded.
+    const UNAVAILABLE: Self = Self {
+        deviation: 0.0,
+        available: false,
+    };
+
+    /// Record a successful perturbed fit, keeping the larger deviation if one is
+    /// already recorded (used where more than one probe feeds a single axis, for
+    /// example both adjacent polynomial orders).
+    fn record(self, deviation: f64) -> Self {
+        let deviation = if self.available
+        {
+            self.deviation.max(deviation)
+        }
+        else
+        {
+            deviation
+        };
+        Self {
+            deviation,
+            available: true,
+        }
+    }
+}
+
+/// Structured numerical diagnostics for one extracted parameter, breaking
+/// [`ParameterEstimate::estimated_uncertainty`] down into its individual
+/// sensitivity axes plus the fit's conditioning classification. See
+/// `docs/LAYER_2_PPN.md` for how each is computed and why none is a bound.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PpnParameterDiagnostics {
+    /// Sensitivity to restricting the fit to the weaker-field half of the domain.
+    pub radial_window_sensitivity: ParameterSensitivity,
+    /// Sensitivity to the adjacent supported polynomial degree(s).
+    pub fit_order_sensitivity: ParameterSensitivity,
+    /// Sensitivity to halving the sample resolution (every other sample).
+    pub resolution_sensitivity: ParameterSensitivity,
+    /// The fit's conditioning classification (see [`classify_conditioning`]).
+    pub conditioning_class: ConditioningClass,
+}
+
 /// A per-radius effective estimate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FiniteRadiusEstimate {
@@ -238,15 +300,21 @@ pub struct FiniteRadiusEstimate {
 pub struct ParameterEstimate {
     /// The asymptotic (`U -> 0`) value.
     pub asymptotic_value: f64,
-    /// A conservative *estimated* numerical uncertainty (window / order /
-    /// resolution sensitivity), not a rigorous bound.
+    /// A conservative *estimated* numerical uncertainty (the largest available
+    /// sensitivity in [`diagnostics`](Self::diagnostics), or the fit residual if
+    /// none was available), not a rigorous bound.
     pub estimated_uncertainty: f64,
     /// The least-squares residual norm of the accepted fit.
     pub fit_residual: f64,
-    /// The fit's conditioning indicator.
+    /// The fit's conditioning indicator (see [`classify_conditioning`] for the
+    /// classification carried in [`diagnostics`](Self::diagnostics)).
     pub conditioning: f64,
     /// The per-radius effective estimates.
     pub finite_radius_values: Vec<FiniteRadiusEstimate>,
+    /// The individual sensitivity axes and conditioning classification that
+    /// [`estimated_uncertainty`](Self::estimated_uncertainty) conservatively
+    /// summarizes.
+    pub diagnostics: PpnParameterDiagnostics,
 }
 
 /// The full PPN extraction result.
@@ -256,6 +324,11 @@ pub struct PpnEstimate {
     pub gamma: ParameterEstimate,
     /// The `beta` estimate.
     pub beta: ParameterEstimate,
+    /// The mass scale `G M` used, completing the weak-field domain summary
+    /// together with [`sample_count`](Self::sample_count),
+    /// [`compactness_min`](Self::compactness_min), and
+    /// [`compactness_max`](Self::compactness_max).
+    pub mass_scale: f64,
     /// The polynomial degree used.
     pub fit_order: usize,
     /// The number of samples used.
@@ -337,6 +410,7 @@ pub fn extract_ppn<M: StaticIsotropicMetric>(
     Ok(PpnEstimate {
         gamma,
         beta,
+        mass_scale: mass,
         fit_order: degree,
         sample_count: radii.len(),
         compactness_min,
@@ -355,7 +429,7 @@ fn extrapolate_parameter(
     let fit = fit_polynomial_intercept(compactness, effective, degree)?;
     let asymptotic_value = fit.intercept;
 
-    let estimated_uncertainty = estimate_uncertainty(
+    let probes = probe_sensitivities(
         compactness,
         effective,
         degree,
@@ -376,67 +450,99 @@ fn extrapolate_parameter(
 
     Ok(ParameterEstimate {
         asymptotic_value,
-        estimated_uncertainty,
+        estimated_uncertainty: probes.conservative_uncertainty,
         fit_residual: fit.residual_norm,
         conditioning: fit.conditioning,
         finite_radius_values,
+        diagnostics: PpnParameterDiagnostics {
+            radial_window_sensitivity: probes.window,
+            fit_order_sensitivity: probes.order,
+            resolution_sensitivity: probes.resolution,
+            conditioning_class: classify_conditioning(fit.conditioning),
+        },
     })
 }
 
-/// A conservative estimated uncertainty from window / order / resolution
-/// sensitivity of the intercept. Sub-fits that fail (too few points, ill
-/// conditioned) are simply not counted; if none is available, the fit residual
-/// is used as a coarse proxy.
-fn estimate_uncertainty(
+/// The three individual sensitivity probes plus the conservative blended
+/// uncertainty derived from them.
+struct SensitivityProbes {
+    window: ParameterSensitivity,
+    order: ParameterSensitivity,
+    resolution: ParameterSensitivity,
+    /// The largest available deviation among `window`, `order`, and
+    /// `resolution`; the fit residual if none was available. Not a bound.
+    conservative_uncertainty: f64,
+}
+
+/// Compute the window / order / resolution sensitivity probes of the fitted
+/// intercept. Sub-fits that fail (too few points after windowing/thinning, or
+/// ill-conditioned) are recorded as [`ParameterSensitivity::UNAVAILABLE`] on
+/// that axis, never silently treated as zero sensitivity.
+fn probe_sensitivities(
     compactness: &[f64],
     effective: &[f64],
     degree: usize,
     primary: f64,
     fit_residual: f64,
-) -> f64 {
-    let mut worst = 0.0_f64;
-    let mut any = false;
-    let mut record = |value: f64| {
-        worst = worst.max((value - primary).abs());
-        any = true;
-    };
-
+) -> SensitivityProbes {
     // Window sensitivity: fit only the weaker-field (smaller-U) half.
     let mut indexed: Vec<usize> = (0..compactness.len()).collect();
     indexed.sort_by(|&a, &b| compactness[a].total_cmp(&compactness[b]));
     let half = indexed.len().div_ceil(2);
     let window_u: Vec<f64> = indexed[..half].iter().map(|&i| compactness[i]).collect();
     let window_y: Vec<f64> = indexed[..half].iter().map(|&i| effective[i]).collect();
-    if let Ok(fit) = fit_polynomial_intercept(&window_u, &window_y, degree)
+    let window = match fit_polynomial_intercept(&window_u, &window_y, degree)
     {
-        record(fit.intercept);
-    }
+        Ok(fit) => ParameterSensitivity::UNAVAILABLE.record((fit.intercept - primary).abs()),
+        Err(_) => ParameterSensitivity::UNAVAILABLE,
+    };
 
     // Order sensitivity: the adjacent degrees. The higher adjacent degree is the
     // important one — for a biased low-degree primary it exposes the leading
-    // systematic error, keeping the estimate conservative.
+    // systematic error, keeping the estimate conservative. Both are folded into
+    // one axis (the worse of the two) since either alone answers "is the chosen
+    // degree adequate?".
+    let mut order = ParameterSensitivity::UNAVAILABLE;
     if degree > 1
     {
         if let Ok(fit) = fit_polynomial_intercept(compactness, effective, degree - 1)
         {
-            record(fit.intercept);
+            order = order.record((fit.intercept - primary).abs());
         }
     }
     if degree < MAX_DEGREE
     {
         if let Ok(fit) = fit_polynomial_intercept(compactness, effective, degree + 1)
         {
-            record(fit.intercept);
+            order = order.record((fit.intercept - primary).abs());
         }
     }
 
     // Resolution sensitivity: every other sample.
     let coarse_u: Vec<f64> = compactness.iter().step_by(2).copied().collect();
     let coarse_y: Vec<f64> = effective.iter().step_by(2).copied().collect();
-    if let Ok(fit) = fit_polynomial_intercept(&coarse_u, &coarse_y, degree)
+    let resolution = match fit_polynomial_intercept(&coarse_u, &coarse_y, degree)
     {
-        record(fit.intercept);
-    }
+        Ok(fit) => ParameterSensitivity::UNAVAILABLE.record((fit.intercept - primary).abs()),
+        Err(_) => ParameterSensitivity::UNAVAILABLE,
+    };
 
-    if any { worst } else { fit_residual }
+    let mut conservative = 0.0_f64;
+    let mut any = false;
+    for probe in [window, order, resolution]
+    {
+        if probe.available
+        {
+            conservative = conservative.max(probe.deviation);
+            any = true;
+        }
+    }
+    let conservative_uncertainty = if any { conservative } else { fit_residual };
+
+    SensitivityProbes {
+        window,
+        order,
+        resolution,
+        conservative_uncertainty,
+    }
 }
