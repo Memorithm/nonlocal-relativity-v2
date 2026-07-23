@@ -228,10 +228,16 @@ The near-term ordering within Layer 1:
     known maximally-symmetric leading expansion `(Delta - 1)/sigma -> Lambda/3`
     for de Sitter / anti-de Sitter (`van_vleck` tests + `van_vleck_determinant`
     experiment).
-12. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
-    close the empty-benchmarks gap — with Layer 1's differential-geometry surface
-    now broad (curvature, transport, geodesics, tetrads, world function), this is
-    the last near-term Layer 1 item before Layers 2–6 open.
+12. **First performance benchmarks** — *delivered.* `criterion` wall-clock
+    benches for the geometry-core hot paths (`scirust-relativity/benches/geometry_core.rs`:
+    Christoffel, metric inversion, the finite-difference curvature engine, RK4
+    transport, and the world-function / van Vleck shooting) and the `O(N^2)`
+    Caputo history (`scirust-nonlocal-relativity/benches/caputo_history.rs`, whose
+    time roughly quadruples per doubling of `N`). Benchmark **timing is
+    machine-dependent and not bit-reproducible** — that is inherent; the library
+    functions stay deterministic, and the reproducible companion is the
+    operation-count proxy in `complexity_scaling`. This is the last near-term
+    Layer 1 item; Layers 2–6 open next.
 
 Layers 2–6 begin only after Layer 1 is broad and solid. Each will open with a
 design note fixing its oracles and its category labels before any code lands.

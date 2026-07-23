@@ -164,6 +164,10 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck).
+- **Benchmarks:** `benches/geometry_core.rs` (`criterion`, `harness = false`)
+  times the hot paths (Christoffel, `invert_metric`, the curvature engine, RK4
+  transport, world-function / van Vleck shooting). Wall-clock, so
+  machine-dependent — the library stays deterministic.
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
 
@@ -303,10 +307,14 @@ work):
   ten established-GR geometry-core binaries are described in the roadmap and
   pinned by their own crate tests but not itemised in the README; the paper's
   reproduction section lists 3.
-- **No performance benchmarks anywhere** in the subgraph — no `benches/`, no
-  `criterion`/`iai`/`divan`. The only "performance" measure is a deterministic
-  operation-count proxy in `complexity_scaling`/`history_retention`. The
-  roadmap's performance-benchmark goals are entirely unmet.
+- ~~**No performance benchmarks anywhere** in the subgraph — no `benches/`, no
+  `criterion`/`iai`/`divan`.~~ **Resolved:** `criterion` wall-clock benches now
+  cover the geometry-core hot paths (`scirust-relativity/benches/geometry_core.rs`)
+  and the `O(N^2)` Caputo history
+  (`scirust-nonlocal-relativity/benches/caputo_history.rs`). Benchmark timings are
+  machine-dependent and not bit-reproducible (inherent to timing); the
+  deterministic, reproducible operation-count proxy in `complexity_scaling`
+  remains the companion measure.
 
 ## 7. Extension points (designed-in, reuse-first)
 
@@ -337,8 +345,10 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   fields, exponential / logarithm maps, local orthonormal frames (tetrads) in
   the geometry core (the worldline observer tetrad now delegates to this shared
   primitive), and Synge's world function with its gradient bitensors and the
-  van Vleck–Morette determinant. The differential-geometry surface is now broad;
-  the remaining near-term item is the first performance benchmarks.
+  van Vleck–Morette determinant, with the first `criterion` performance benches
+  over the geometry-core hot paths and the `O(N^2)` Caputo history. The
+  differential-geometry surface and its near-term benchmark goal are now in place;
+  Layers 2–6 are the next frontier.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -381,8 +391,10 @@ Additive, each validated against an oracle, each one PR:
    Jacobian on a new deterministic `determinant`; validated by flat/coincidence
    unity, `Delta(x', x) = Delta(x, x')` symmetry, and the known
    maximally-symmetric `(Delta - 1)/sigma -> Lambda/3` expansion).
-8. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
-   to close the empty-benchmarks gap — the last near-term Layer 1 item.
+8. **First performance benchmarks** — *done* (`criterion` wall-clock benches for
+   the geometry-core hot paths and the `O(N²)` Caputo history; timings are
+   machine-dependent, the deterministic op-count proxy remains the reproducible
+   companion). This closes the near-term Layer 1 sequence.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.
