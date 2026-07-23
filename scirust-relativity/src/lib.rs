@@ -22,7 +22,11 @@
 //!   ([`geodesic_exponential`], [`geodesic_logarithm`]);
 //! - local orthonormal frames (tetrads) for timelike observers
 //!   ([`orthonormal_tetrad`]), built by metric Gram-Schmidt and validated by
-//!   orthonormality, completeness, and preservation under parallel transport.
+//!   orthonormality, completeness, and preservation under parallel transport;
+//! - Synge's world function and its first-derivative gradient bitensors
+//!   ([`world_function`], [`world_function_with_gradients`]), built on the
+//!   geodesic logarithm map and validated by flat exactness, the fundamental
+//!   identity, and base/field symmetry.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -65,6 +69,7 @@ mod parallel_transport;
 mod reissner_nordstrom;
 mod schwarzschild;
 mod static_spherical;
+mod synge;
 mod tetrad;
 
 pub use connection::{Connection, numerical_christoffel};
@@ -87,4 +92,7 @@ pub use minkowski_spherical::MinkowskiSpherical;
 pub use parallel_transport::{holonomy_defect, transport_along_polyline, transport_along_segment};
 pub use reissner_nordstrom::ReissnerNordstrom;
 pub use schwarzschild::Schwarzschild;
+pub use synge::{
+    WorldFunction, WorldFunctionSettings, world_function, world_function_with_gradients,
+};
 pub use tetrad::{OrthonormalTetrad, orthonormal_tetrad};

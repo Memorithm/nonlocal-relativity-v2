@@ -142,15 +142,21 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   closed-form metric split, and preservation of orthonormality under parallel
   transport of the legs. The experimental worldline observer tetrad delegates to
   this primitive rather than duplicating the Gram-Schmidt construction.
+- **Synge's world function:** `world_function` / `world_function_with_gradients`
+  give the biscalar `sigma(x', x) = (1/2) g(x')(v, v)` (with `v = log_{x'}(x)`)
+  and its first-derivative gradient bitensors `sigma^{mu'} = -v`,
+  `sigma^mu = -log_x(x')`, reusing the geodesic logarithm map; validated by flat
+  exactness, base/field symmetry, the field-point fundamental identity
+  `2 sigma = g(x) sigma^mu sigma^mu`, and the gradient round trip.
 - **Dynamics:** `GeodesicSystem<C, D>` implements `scirust_sim::System` (state
   `[x, u]`, RHS the geodesic equation `−Γ^ρ_{μν} u^μ u^ν`).
-- **Errors:** `RelativityError` (non-finite coordinate/metric/curvature/transport,
-  singular metric, invalid difference/affine step, non-convergent logarithm map,
-  and tetrad failures: invalid floor, non-timelike frame vector, non-finite leg,
-  degenerate frame).
-- **Tests:** 89 across twelve integration-test files (curvature, geometry, kerr,
+- **Errors:** `RelativityError` (non-finite coordinate/metric/curvature/transport/
+  world-function, singular metric, invalid difference/affine step, non-convergent
+  logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
+  non-finite leg, degenerate frame).
+- **Tests:** 95 across thirteen integration-test files (curvature, geometry, kerr,
   reissner_nordstrom, schwarzschild, coordinate_independence, parallel_transport,
-  covariant_transport, flrw, geodesic_deviation, exponential_map, tetrad).
+  covariant_transport, flrw, geodesic_deviation, exponential_map, tetrad, synge).
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
 
@@ -189,7 +195,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Fourteen deterministic experiment binaries, each printing a `#`-prefixed
+Fifteen deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -198,7 +204,7 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 `modulation_sensitivity`) and the **established-GR** geometry-core set
 (`curvature_invariants`, `coordinate_independence`, `parallel_transport`,
 `covariant_transport`, `flrw_curvature`, `geodesic_deviation`, `exponential_map`,
-`orthonormal_tetrad`).
+`orthonormal_tetrad`, `world_function`).
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -285,9 +291,9 @@ work):
   *path-triggered* and text-scanned for forbidden markers, but never compiled,
   tested, or run in CI (it is absent from every `-p` list, and the examples job
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
-- **Documentation drift:** 14 experiment binaries on disk; the experiments
+- **Documentation drift:** 15 experiment binaries on disk; the experiments
   README's detailed section itemises the six phenomenological ones, while the
-  eight established-GR geometry-core binaries are described in the roadmap and
+  nine established-GR geometry-core binaries are described in the roadmap and
   pinned by their own crate tests but not itemised in the README; the paper's
   reproduction section lists 3.
 - **No performance benchmarks anywhere** in the subgraph — no `benches/`, no
@@ -321,9 +327,11 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   curvature, geodesics, nine backgrounds (including spatially flat FLRW),
   coordinate-independence diagnostics, a reusable parallel-transport engine with
   first-class holonomy, covector/tensor transport, geodesic-deviation (Jacobi)
-  fields, exponential / logarithm maps, and local orthonormal frames (tetrads)
-  in the geometry core (the worldline observer tetrad now delegates to this
-  shared primitive). Missing: bitensors / Synge world function.
+  fields, exponential / logarithm maps, local orthonormal frames (tetrads) in
+  the geometry core (the worldline observer tetrad now delegates to this shared
+  primitive), and Synge's world function with its first-derivative gradient
+  bitensors. Missing: the van Vleck–Morette determinant (the remaining
+  second-derivative world-function bitensor).
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -359,9 +367,13 @@ Additive, each validated against an oracle, each one PR:
 5. Geodesic-deviation (Jacobi) fields, exponential/logarithm maps,
    covector/tensor transport, and tetrads in the geometry core (generalising the
    worldline observer tetrad, not duplicating it) — *done*.
-6. **Bitensors and Synge's world function** on backgrounds with known
-   expansions — the next Layer 1 increment.
-7. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
+6. **Synge's world function and its gradient bitensors** — *done* (built on the
+   geodesic logarithm map; validated by flat exactness, symmetry, the
+   fundamental identity, and the gradient round trip).
+7. **The van Vleck–Morette determinant** — the remaining second-derivative
+   world-function bitensor; needs a deterministic determinant primitive. Next
+   Layer 1 increment.
+8. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
    to close the empty-benchmarks gap.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note

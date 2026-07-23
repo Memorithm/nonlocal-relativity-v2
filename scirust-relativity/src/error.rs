@@ -76,6 +76,10 @@ pub enum RelativityError {
         /// The dimension `D` (the required number of legs).
         dimension: usize,
     },
+
+    /// Synge's world function or one of its gradient components evaluated to a
+    /// non-finite value.
+    NonFiniteWorldFunction,
 }
 
 impl fmt::Display for RelativityError {
@@ -174,6 +178,10 @@ impl fmt::Display for RelativityError {
                     formatter,
                     "degenerate frame: only {legs_found} of {dimension} independent legs were built"
                 )
+            },
+            Self::NonFiniteWorldFunction =>
+            {
+                write!(formatter, "world function or its gradient is not finite")
             },
         }
     }
