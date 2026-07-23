@@ -127,6 +127,16 @@ The following exists today, is tested, and ships in a green CI:
 - **Exponential / logarithm maps**: `exp_p(v)` (geodesic endpoint at unit
   affine parameter) and `log_p(q)` (its Newton-shooting inverse), validated by
   flat exactness and the curved round-trip identity.
+- **Local orthonormal frames (tetrads)**: `orthonormal_tetrad` builds an
+  observer frame `{e_a}` with `g(e_a, e_b) = eta_ab` by metric Gram-Schmidt,
+  validated by orthonormality, completeness, and preservation under parallel
+  transport; the experimental worldline observer tetrad delegates to it (one copy
+  of the algorithm across both crates).
+- **Synge's world function**: `world_function` / `world_function_with_gradients`
+  give `sigma(x', x)` and its gradient bitensors `sigma^{mu'}`, `sigma^mu` from
+  the geodesic logarithm map, validated by flat exactness, base/field symmetry,
+  the fundamental identity `2 sigma = g sigma^mu sigma^mu`, and the gradient
+  round trip.
 - Geodesic integration (`GeodesicSystem`) compatible with `scirust-sim`.
 
 An engineering map of the whole relativistic-computation subgraph — capabilities,
@@ -196,8 +206,19 @@ The near-term ordering within Layer 1:
    the frame temporal/spatial split with the closed-form metric split, and
    preservation of orthonormality under parallel transport of the frame legs
    (`tetrad` tests + `orthonormal_tetrad` experiment).
-10. Bitensors and Synge's world function on backgrounds with known expansions.
-11. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
+10. **Synge's world function and its gradient bitensors** — *delivered.*
+    `world_function` and `world_function_with_gradients` give
+    `sigma(x', x) = (1/2) g(x')(v, v)` with `v = log_{x'}(x)` (reusing the
+    geodesic logarithm map), plus the gradient bitensors `sigma^{mu'} = -v` and
+    `sigma^mu = -log_x(x')`. Validated by flat exactness (`sigma` and both
+    gradients exact), base/field symmetry, the field-point fundamental identity
+    `2 sigma = g(x) sigma^mu sigma^mu` (an independent shooting from `x`), the
+    gradient round trip, and quadratic vanishing near coincidence (`synge` tests
+    + `world_function` experiment).
+11. The van Vleck–Morette determinant (the second-derivative bitensor
+    `det(-sigma_{mu nu'})` with metric densities), which needs a deterministic
+    determinant primitive — the immediate world-function follow-on.
+12. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
     close the empty-benchmarks gap.
 
 Layers 2–6 begin only after Layer 1 is broad and solid. Each will open with a
