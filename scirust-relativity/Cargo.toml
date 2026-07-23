@@ -14,3 +14,7 @@ criterion = { version = "0.5", default-features = false }
 [[bench]]
 name = "geometry_core"
 harness = false
+
+[[bench]]
+name = "ppn"
+harness = false
