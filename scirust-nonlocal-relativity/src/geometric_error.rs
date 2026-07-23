@@ -34,9 +34,11 @@
 //! complemented by a full local-orthonormal-frame (tetrad) projection,
 //! [`tetrad_state_error`], which expresses `delta` in an observer's own
 //! orthonormal basis component by component. The tetrad
-//! ([`build_orthonormal_tetrad`]) is built by metric Gram-Schmidt: the
-//! timelike leg is the normalized four-velocity, and the spacelike legs are
-//! orthonormalized coordinate-basis directions. Both are exactly verifiable
+//! ([`build_orthonormal_tetrad`]) delegates to the reusable geometry-core
+//! primitive [`scirust_relativity::orthonormal_tetrad`], which builds the frame
+//! by metric Gram-Schmidt: the timelike leg is the normalized four-velocity,
+//! and the spacelike legs are orthonormalized coordinate-basis directions. Both
+//! are exactly verifiable
 //! (the frame is orthonormal, `g(e_a, e_b) = eta_ab`, and the projected
 //! components reconstruct `delta` exactly), and the tetrad's temporal/spatial
 //! magnitudes agree with the scalar split — see the flat-spacetime tests in
@@ -46,6 +48,17 @@
 use crate::{
     NonlocalRelativityError, NonlocalResult, lower_index, metric_contraction, validate_scalar,
 };
+use scirust_relativity::{RelativityError, orthonormal_tetrad};
+
+/// A local orthonormal frame (tetrad) at a chart point.
+///
+/// This is the reusable geometry-core [`scirust_relativity::OrthonormalTetrad`]:
+/// the `D` legs `e_a` satisfy `g(e_a, e_b) = eta_ab` with
+/// `eta = diag(-1, +1, ..., +1)`, leg `0` timelike and legs `1..D` spacelike.
+/// It is re-exported here so this crate's observer-frame diagnostic
+/// ([`build_orthonormal_tetrad`], [`tetrad_state_error`]) exposes the same type
+/// the geometry core builds, rather than a duplicate.
+pub use scirust_relativity::OrthonormalTetrad;
 
 /// Metric-aware decomposition of a coordinate state-error vector relative to a
 /// timelike observer. See the module documentation.
@@ -140,8 +153,8 @@ pub fn timelike_state_error<const D: usize>(
 
 /// Validate `timelike_floor` and the observer, returning `g(u,u)` when the
 /// observer is timelike (`g(u,u) < -timelike_floor` under a `(-,+,+,+)`
-/// convention). Shared by [`timelike_state_error`] and
-/// [`build_orthonormal_tetrad`].
+/// convention). Used by [`timelike_state_error`]; the tetrad builder applies
+/// the identical validation inside the geometry-core primitive it delegates to.
 fn validated_timelike_norm<const D: usize>(
     metric: &[[f64; D]; D],
     four_velocity: &[f64; D],
@@ -171,36 +184,14 @@ fn validated_timelike_norm<const D: usize>(
     Ok(metric_norm)
 }
 
-/// A local orthonormal frame (tetrad) at a chart point.
-///
-/// The `D` legs `e_a` satisfy `g(e_a, e_b) = eta_ab` with
-/// `eta = diag(-1, +1, ..., +1)` up to rounding: leg `0` is the timelike leg
-/// aligned with the observer four-velocity, and legs `1..D` are spacelike. The
-/// spatial legs are one (non-unique) orthonormal choice; their span, and the
-/// timelike leg, are fixed by the observer.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct OrthonormalTetrad<const D: usize> {
-    legs: [[f64; D]; D],
-}
-
-impl<const D: usize> OrthonormalTetrad<D> {
-    /// Borrow the tetrad legs `e_a` (contravariant components in the chart),
-    /// leg `0` first.
-    #[must_use]
-    pub const fn legs(&self) -> &[[f64; D]; D] {
-        &self.legs
-    }
-
-    /// The Minkowski signature entry `eta_aa = g(e_a, e_a)` of leg `index`:
-    /// `-1.0` for the timelike leg `0`, `+1.0` for the spacelike legs.
-    #[must_use]
-    pub fn signature(index: usize) -> f64 {
-        if index == 0 { -1.0 } else { 1.0 }
-    }
-}
-
 /// Build a local orthonormal frame (tetrad) at a chart point for a timelike
 /// observer, by metric Gram-Schmidt.
+///
+/// This delegates to the reusable geometry-core primitive
+/// [`scirust_relativity::orthonormal_tetrad`] so the Gram-Schmidt construction
+/// lives in exactly one place; it maps that primitive's typed errors back to
+/// this crate's [`NonlocalRelativityError`] contract (see [`map_tetrad_error`]),
+/// leaving the observable behaviour unchanged.
 ///
 /// The timelike leg is the normalized four-velocity; the spacelike legs are
 /// the chart's coordinate-basis directions orthonormalized against the frame
@@ -217,61 +208,53 @@ pub fn build_orthonormal_tetrad<const D: usize>(
     four_velocity: &[f64; D],
     timelike_floor: f64,
 ) -> NonlocalResult<OrthonormalTetrad<D>> {
-    let metric_norm = validated_timelike_norm(metric, four_velocity, timelike_floor)?;
+    orthonormal_tetrad(metric, four_velocity, timelike_floor).map_err(map_tetrad_error)
+}
 
-    let mut legs = [[0.0_f64; D]; D];
-
-    // Timelike leg: e_0 = u / sqrt(-g(u,u)), so g(e_0, e_0) = -1.
-    let timelike_scale = (-metric_norm).sqrt();
-    for component in 0..D
+/// Map a geometry-core [`RelativityError`] from
+/// [`scirust_relativity::orthonormal_tetrad`] back to this crate's
+/// [`NonlocalRelativityError`] contract, so the delegating
+/// [`build_orthonormal_tetrad`] reports exactly the variants its callers and
+/// tests relied on before the Gram-Schmidt construction moved into the
+/// geometry core.
+fn map_tetrad_error(error: RelativityError) -> NonlocalRelativityError {
+    match error
     {
-        legs[0][component] = four_velocity[component] / timelike_scale;
-        validate_scalar("tetrad_timelike_leg", legs[0][component], component)?;
-    }
-
-    // Spacelike legs by metric Gram-Schmidt over the coordinate basis.
-    let mut built = 1_usize;
-    let mut candidate = 0_usize;
-    while built < D && candidate < D
-    {
-        let mut vector = [0.0_f64; D];
-        vector[candidate] = 1.0;
-
-        for leg_vector in legs.iter().take(built)
+        RelativityError::InvalidTetradFloor(floor) =>
         {
-            let inner = metric_contraction(metric, &vector, leg_vector);
-            let leg_norm = metric_contraction(metric, leg_vector, leg_vector);
-            let coefficient = inner / leg_norm;
-            for component in 0..D
-            {
-                vector[component] -= coefficient * leg_vector[component];
-            }
-        }
-
-        let residual_norm = metric_contraction(metric, &vector, &vector);
-        if residual_norm.is_finite() && residual_norm > timelike_floor
+            NonlocalRelativityError::InvalidMetricNormFloor(floor)
+        },
+        // The geometry-core primitive folds "non-finite norm" and "finite but
+        // not timelike" into one variant; split them back so this crate keeps
+        // reporting the same two norms it did before delegating.
+        RelativityError::NonTimelikeFrameVector { metric_norm } if metric_norm.is_finite() =>
         {
-            let scale = residual_norm.sqrt();
-            for component in 0..D
-            {
-                legs[built][component] = vector[component] / scale;
-                validate_scalar("tetrad_spacelike_leg", legs[built][component], component)?;
+            NonlocalRelativityError::NonTimelikeMetricNorm { metric_norm }
+        },
+        RelativityError::NonTimelikeFrameVector { metric_norm } =>
+        {
+            NonlocalRelativityError::NonFiniteMetricNorm {
+                step: 0,
+                value: metric_norm,
             }
-            built += 1;
-        }
-
-        candidate += 1;
+        },
+        RelativityError::DegenerateFrame {
+            legs_found,
+            dimension,
+        } => NonlocalRelativityError::DegenerateObserverFrame {
+            legs_found,
+            dimension,
+        },
+        // A non-finite leg (`RelativityError::NonFiniteTetradLeg`) — and any
+        // other geometry-core error the tetrad primitive is not documented to
+        // return — surfaces as a non-finite tetrad diagnostic, matching the
+        // pre-delegation `validate_scalar` guards on the frame legs.
+        _ => NonlocalRelativityError::NonFiniteDiagnostic {
+            step: 0,
+            quantity: "tetrad_leg",
+            value: f64::NAN,
+        },
     }
-
-    if built < D
-    {
-        return Err(NonlocalRelativityError::DegenerateObserverFrame {
-            legs_found: built,
-            dimension: D,
-        });
-    }
-
-    Ok(OrthonormalTetrad { legs })
 }
 
 /// The tetrad-frame decomposition of a coordinate state-error vector.

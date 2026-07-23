@@ -134,12 +134,23 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   unit affine parameter) and `geodesic_logarithm` (Newton-shooting inverse using
   the exponential's finite-difference Jacobian and the crate's matrix inverse),
   validated by flat exactness and the curved round-trip identity.
+- **Orthonormal frames (tetrads):** `orthonormal_tetrad` builds a local
+  orthonormal frame `{e_a}` (`g(e_a,e_b) = eta_ab`, `e_0` the normalized
+  four-velocity) for a timelike observer by metric Gram-Schmidt, exposing the
+  shared `OrthonormalTetrad<D>` type; validated by orthonormality, completeness
+  (any vector reconstructs from its frame components), agreement with the
+  closed-form metric split, and preservation of orthonormality under parallel
+  transport of the legs. The experimental worldline observer tetrad delegates to
+  this primitive rather than duplicating the Gram-Schmidt construction.
 - **Dynamics:** `GeodesicSystem<C, D>` implements `scirust_sim::System` (state
   `[x, u]`, RHS the geodesic equation `−Γ^ρ_{μν} u^μ u^ν`).
-- **Errors:** `RelativityError` (non-finite coordinate/metric/curvature,
-  singular metric, invalid difference step).
-- **Tests:** 45 across five files (curvature, geometry, kerr,
-  reissner_nordstrom, schwarzschild) plus the coordinate-independence suite.
+- **Errors:** `RelativityError` (non-finite coordinate/metric/curvature/transport,
+  singular metric, invalid difference/affine step, non-convergent logarithm map,
+  and tetrad failures: invalid floor, non-timelike frame vector, non-finite leg,
+  degenerate frame).
+- **Tests:** 89 across twelve integration-test files (curvature, geometry, kerr,
+  reissner_nordstrom, schwarzschild, coordinate_independence, parallel_transport,
+  covariant_transport, flrw, geodesic_deviation, exponential_map, tetrad).
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
 
@@ -168,18 +179,26 @@ norm, one accept/reject/step-control routine, shared by both the embedded
 Heun–Euler and the step-doubling controllers). Exact validation oracles exist
 for flat cylindrical-Minkowski transport (`charts`) and Schwarzschild
 circular-orbit transport (`curved_transport`, a fixed-term matrix exponential).
-Determinism is enforced by `.to_bits()` bit-identity tests. ~45-variant typed
+Its observer-frame diagnostic (`build_orthonormal_tetrad`, `tetrad_state_error`)
+delegates to the geometry core's `orthonormal_tetrad` and re-exports the shared
+`OrthonormalTetrad`, so the Gram-Schmidt construction is not duplicated across
+crates; the delegation maps each geometry-core error back to the crate's own
+`NonlocalRelativityError` variant, keeping the public API and its tetrad tests
+bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity tests. ~45-variant typed
 `NonlocalRelativityError`. 13 integration-test files, 12 examples.
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Seven deterministic experiment binaries, each printing a `#`-prefixed metadata
-header (units, determinism, provenance commit, scientific-category label) then
-CSV, with finiteness validation and a non-overclaiming interpretation:
-`adaptive_convergence`, `history_retention`, `complexity_scaling`,
-`bounded_memory_error`, `kerr_fd_sensitivity`, `modulation_sensitivity`,
-`curvature_invariants` (established-GR category), plus the new
-`coordinate_independence`.
+Fourteen deterministic experiment binaries, each printing a `#`-prefixed
+metadata header (units, determinism, provenance commit, scientific-category
+label) then CSV, with finiteness validation and a non-overclaiming
+interpretation. They split by scientific category: the **experimental,
+phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
+`complexity_scaling`, `bounded_memory_error`, `kerr_fd_sensitivity`,
+`modulation_sensitivity`) and the **established-GR** geometry-core set
+(`curvature_invariants`, `coordinate_independence`, `parallel_transport`,
+`covariant_transport`, `flrw_curvature`, `geodesic_deviation`, `exponential_map`,
+`orthonormal_tetrad`).
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -266,9 +285,11 @@ work):
   *path-triggered* and text-scanned for forbidden markers, but never compiled,
   tested, or run in CI (it is absent from every `-p` list, and the examples job
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
-- **Documentation drift:** 7 experiment binaries on disk; the experiments README
-  documents 6 (omits `curvature_invariants`); the paper's reproduction section
-  lists 3.
+- **Documentation drift:** 14 experiment binaries on disk; the experiments
+  README's detailed section itemises the six phenomenological ones, while the
+  eight established-GR geometry-core binaries are described in the roadmap and
+  pinned by their own crate tests but not itemised in the README; the paper's
+  reproduction section lists 3.
 - **No performance benchmarks anywhere** in the subgraph — no `benches/`, no
   `criterion`/`iai`/`divan`. The only "performance" measure is a deterministic
   operation-count proxy in `complexity_scaling`/`history_retention`. The
@@ -300,10 +321,9 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   curvature, geodesics, nine backgrounds (including spatially flat FLRW),
   coordinate-independence diagnostics, a reusable parallel-transport engine with
   first-class holonomy, covector/tensor transport, geodesic-deviation (Jacobi)
-  fields, and exponential / logarithm maps. Missing: tetrads / orthonormal
-  frames in the geometry core (one exists, observer-specialised, in the
-  worldline crate — to be generalised, not duplicated), and bitensors / Synge
-  world function.
+  fields, exponential / logarithm maps, and local orthonormal frames (tetrads)
+  in the geometry core (the worldline observer tetrad now delegates to this
+  shared primitive). Missing: bitensors / Synge world function.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -336,10 +356,12 @@ Additive, each validated against an oracle, each one PR:
 4. **FLRW background** with its exact curvature oracle — *done* (generic over a
    scale factor; de Sitter and radiation/matter eras, coordinate-independence
    cross-check against the static de Sitter chart).
-5. Geodesic-deviation (Jacobi) fields and exponential/logarithm maps — *done*.
-   Tetrads in the geometry core (generalising the worldline observer tetrad) and
-   covector/tensor transport remain.
-6. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
+5. Geodesic-deviation (Jacobi) fields, exponential/logarithm maps,
+   covector/tensor transport, and tetrads in the geometry core (generalising the
+   worldline observer tetrad, not duplicating it) — *done*.
+6. **Bitensors and Synge's world function** on backgrounds with known
+   expansions — the next Layer 1 increment.
+7. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
    to close the empty-benchmarks gap.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
