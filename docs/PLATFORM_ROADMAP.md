@@ -261,13 +261,16 @@ symmetric, asymptotically flat weak-field metrics in an isotropic radial
 coordinate, by deterministic polynomial extrapolation of the finite-radius
 effective estimators to zero compactness. It enforces an explicit
 isotropic-coordinate contract (areal-coordinate charts are rejected, not silently
-misused), reports window / order / resolution / conditioning diagnostics as an
-*estimated* numerical uncertainty (not a bound), and is validated against exact
-synthetic metrics (injected `gamma`, `beta` recovered to machine precision),
-controlled higher-order contamination (finite-radius bias, extrapolation
-recovery), and exact isotropic Schwarzschild (`gamma = beta = 1`) — `ppn` tests +
-`ppn_extraction` experiment + `ppn` benches. Only `gamma` and `beta` are
-implemented; the exclusions are listed in the design note.
+misused), reports the radial-window / fit-order / resolution sensitivities
+*individually* (each an available-or-not `ParameterSensitivity`, never a false
+zero) plus a well-conditioned/marginal/ill-conditioned classification, alongside
+the conservative blended *estimated* numerical uncertainty (not a bound) —
+hardened per `LAYER_2_PPN.md` §11 — and is validated against exact GR and
+non-GR synthetic metrics (injected `gamma`, `beta` recovered to machine
+precision), controlled higher-order contamination (finite-radius bias,
+extrapolation recovery), and exact isotropic Schwarzschild (`gamma = beta = 1`)
+— `ppn` tests + `ppn_extraction` experiment + `ppn` benches. Only `gamma` and
+`beta` are implemented; the exclusions are listed in the design note.
 
 Its third increment — the **Einstein–Hilbert action and its numerical
 variation** — is also **delivered** (design & conventions:
