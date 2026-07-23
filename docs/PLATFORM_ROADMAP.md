@@ -137,6 +137,10 @@ The following exists today, is tested, and ships in a green CI:
   the geodesic logarithm map, validated by flat exactness, base/field symmetry,
   the fundamental identity `2 sigma = g sigma^mu sigma^mu`, and the gradient
   round trip.
+- **Van Vleck–Morette determinant**: `van_vleck_determinant` (on a deterministic
+  `determinant` primitive) from the exponential-map Jacobian, validated by flat /
+  coincidence unity, the `Delta(x', x) = Delta(x, x')` symmetry, and the known
+  maximally-symmetric leading expansion `(Delta - 1)/sigma -> Lambda/3`.
 - Geodesic integration (`GeodesicSystem`) compatible with `scirust-sim`.
 
 An engineering map of the whole relativistic-computation subgraph — capabilities,
@@ -215,11 +219,19 @@ The near-term ordering within Layer 1:
     `2 sigma = g(x) sigma^mu sigma^mu` (an independent shooting from `x`), the
     gradient round trip, and quadratic vanishing near coincidence (`synge` tests
     + `world_function` experiment).
-11. The van Vleck–Morette determinant (the second-derivative bitensor
-    `det(-sigma_{mu nu'})` with metric densities), which needs a deterministic
-    determinant primitive — the immediate world-function follow-on.
+11. **The van Vleck–Morette determinant** — *delivered.* `van_vleck_determinant`
+    computes `Delta(x', x) = sqrt|g(x')| / (sqrt|g(x)| det J)` from the
+    exponential-map Jacobian `J = d exp_{x'}(v)/dv` (the Lorentzian-correct form
+    of `-det(sigma_{mu nu'}) / sqrt(g g')`), on a new deterministic `determinant`
+    primitive. Validated by flat and coincidence unity, the symmetry
+    `Delta(x', x) = Delta(x, x')` (an independent-Jacobian cross-check), and the
+    known maximally-symmetric leading expansion `(Delta - 1)/sigma -> Lambda/3`
+    for de Sitter / anti-de Sitter (`van_vleck` tests + `van_vleck_determinant`
+    experiment).
 12. First performance benchmarks (curvature engine; Caputo `O(N^2)` history) to
-    close the empty-benchmarks gap.
+    close the empty-benchmarks gap — with Layer 1's differential-geometry surface
+    now broad (curvature, transport, geodesics, tetrads, world function), this is
+    the last near-term Layer 1 item before Layers 2–6 open.
 
 Layers 2–6 begin only after Layer 1 is broad and solid. Each will open with a
 design note fixing its oracles and its category labels before any code lands.

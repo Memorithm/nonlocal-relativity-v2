@@ -23,10 +23,13 @@
 //! - local orthonormal frames (tetrads) for timelike observers
 //!   ([`orthonormal_tetrad`]), built by metric Gram-Schmidt and validated by
 //!   orthonormality, completeness, and preservation under parallel transport;
-//! - Synge's world function and its first-derivative gradient bitensors
-//!   ([`world_function`], [`world_function_with_gradients`]), built on the
-//!   geodesic logarithm map and validated by flat exactness, the fundamental
-//!   identity, and base/field symmetry.
+//! - Synge's world function and its bitensors — the biscalar and its
+//!   first-derivative gradients ([`world_function`],
+//!   [`world_function_with_gradients`]) and the van Vleck-Morette determinant
+//!   ([`van_vleck_determinant`]) — built on the geodesic logarithm map and a
+//!   deterministic [`determinant`], validated by flat exactness, the fundamental
+//!   identity, base/field symmetry, and the known maximally-symmetric
+//!   coincidence expansion.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -86,13 +89,14 @@ pub use geodesic::GeodesicSystem;
 pub use geodesic_deviation::{JacobiSample, integrate_geodesic_deviation};
 pub use isotropic_schwarzschild::IsotropicSchwarzschild;
 pub use kerr::Kerr;
-pub use metric::{Metric, invert_metric, metric_norm};
+pub use metric::{Metric, determinant, invert_metric, metric_norm};
 pub use minkowski::Minkowski;
 pub use minkowski_spherical::MinkowskiSpherical;
 pub use parallel_transport::{holonomy_defect, transport_along_polyline, transport_along_segment};
 pub use reissner_nordstrom::ReissnerNordstrom;
 pub use schwarzschild::Schwarzschild;
 pub use synge::{
-    WorldFunction, WorldFunctionSettings, world_function, world_function_with_gradients,
+    WorldFunction, WorldFunctionSettings, van_vleck_determinant, world_function,
+    world_function_with_gradients,
 };
 pub use tetrad::{OrthonormalTetrad, orthonormal_tetrad};
