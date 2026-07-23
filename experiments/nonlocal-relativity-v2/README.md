@@ -1,17 +1,29 @@
 # Nonlocal Relativity v2 — reproducible experiment suite
 
-Deterministic numerical experiments for the experimental
-`scirust-nonlocal-relativity` layer (fractional-memory test-particle worldline
-dynamics on fixed general-relativistic backgrounds). Every experiment is a
-pure-Rust binary with **no RNG and no wall-clock dependence**, so identical
-inputs produce byte-identical output. Each prints a `#`-prefixed metadata and
-units header, then CSV rows, validates that every emitted number is finite, and
-closes with a short interpretation.
+Deterministic numerical experiments for the SciRust relativity stack. The
+suite spans two scientific categories, kept strictly separate:
 
-**These are numerical experiments on a fixed phenomenological model. None of
-them is a physical validation, and none of them establishes new physics.** See
+- **Experimental phenomenological layer** (`scirust-nonlocal-relativity`):
+  fractional-memory test-particle worldline dynamics on fixed
+  general-relativistic backgrounds (the [Experiments](#experiments) section).
+- **Established general relativity** (`scirust-relativity` geometry core and
+  the Layer 2 Covariant Gravity Workbench): textbook-GR primitives checked
+  against exact analytic and closed-form oracles (the
+  [Established general-relativity experiments](#established-general-relativity-experiments-geometry-core-and-layer-2)
+  section).
+
+Every experiment is a pure-Rust binary with **no RNG and no wall-clock
+dependence**, so identical inputs produce byte-identical output. Each prints a
+`#`-prefixed metadata and units header, then CSV rows, validates that every
+emitted number is finite, and closes with a short interpretation.
+
+**The phenomenological experiments are numerical experiments on a fixed
+phenomenological model: none is a physical validation, and none establishes new
+physics.** See
 [`docs/EXPERIMENTAL_NONLOCAL_RELATIVITY.md`](../../docs/EXPERIMENTAL_NONLOCAL_RELATIVITY.md)
-for the scientific boundary.
+for the scientific boundary. **The established-GR experiments validate the
+implementation against known results of textbook general relativity; they too
+introduce no new physics.**
 
 ## Running
 
@@ -145,3 +157,60 @@ transport convergence (`exact_transport_convergence`), exact Schwarzschild
 circular-orbit transport convergence (`schwarzschild_orbit_transport`), and
 proper-time vs affine memory (`proper_time_memory_comparison`). Run any with
 `cargo run --release -p scirust-nonlocal-relativity --example <name>`.
+
+## Established general-relativity experiments (geometry core and Layer 2)
+
+The same binary crate also hosts the deterministic experiments that validate the
+`scirust-relativity` geometry core and the Layer 2 Covariant Gravity Workbench
+against **exact analytic and closed-form oracles of textbook general
+relativity**. They share the reproducibility contract above (no RNG, no
+wall-clock, finite-checked CSV), but belong to a different scientific category:
+each is an implementation validation against established GR, not a study of the
+phenomenological memory model. Run any with
+
+```bash
+cargo run --release -p nonlocal-relativity-experiments --bin <name>
+```
+
+Geometry-core primitives:
+
+- `orthonormal_tetrad` — local orthonormal-frame (tetrad) construction:
+  orthonormality, completeness, and the temporal/spatial split against the
+  closed-form metric projection. Exact single-point construction, so residuals
+  sit at the rounding floor.
+- `parallel_transport` — parallel-transport metric-compatibility drift, flat
+  closed-loop holonomy, and the holonomy/curvature identity around a small
+  parallelogram (cross-checking the transport and curvature engines).
+- `covariant_transport` — parallel transport of covectors and tensors under
+  metric compatibility (`nabla g = 0`), including metric self-transport.
+- `curvature_invariants` — Riemann/Ricci/Einstein/Kretschmann tensors against
+  the exact Schwarzschild and (anti-)de Sitter scalar oracles, with a
+  finite-difference step sweep exposing the central-difference trade-off.
+- `coordinate_independence` — chart-independence of the Ricci and Kretschmann
+  scalars (Cartesian vs spherical Minkowski; areal vs isotropic Schwarzschild,
+  matched through the areal radius).
+- `flrw_curvature` — spatially flat FLRW curvature against the exact Friedmann
+  formulas (exponential/de Sitter and power-law scale factors).
+- `geodesic_deviation` — Jacobi-field tidal focusing: exact linear growth in
+  flat spacetime, (de)focusing in (anti-)de Sitter, and the Schwarzschild
+  radial-vs-transverse tidal asymmetry.
+- `exponential_map` — geodesic exponential/logarithm round-trip accuracy
+  `|log_p(exp_p(v)) - v|` across backgrounds.
+- `world_function` — Synge world function: flat exactness plus the
+  convention-free symmetry, fundamental (`2 sigma = g sigma^mu sigma_mu`), and
+  gradient-round-trip identities.
+- `van_vleck_determinant` — van Vleck–Morette determinant from the
+  exponential-map Jacobian: flat exactness, symmetry, and the near-coincidence
+  expansion.
+
+Layer 2 — Covariant Gravity Workbench:
+
+- `linearized_gravity` — the weak-field Einstein equations and their four
+  oracles (Newtonian Poisson limit, weak-field Schwarzschild vacuum, gauge
+  invariance, and the `O(h^2)` nonlinear cross-check); see
+  [`docs/LAYER_2_COVARIANT_GRAVITY.md`](../../docs/LAYER_2_COVARIANT_GRAVITY.md).
+- `ppn_extraction` — asymptotic extraction of the Eddington–Robertson PPN
+  parameters `gamma` and `beta` from static isotropic weak-field metrics, with
+  exact and contaminated synthetic oracles, isotropic-Schwarzschild convergence
+  to `gamma = beta = 1`, and areal-coordinate rejection; see
+  [`docs/LAYER_2_PPN.md`](../../docs/LAYER_2_PPN.md).

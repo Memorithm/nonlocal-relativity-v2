@@ -34,7 +34,11 @@
 //!   order in a metric perturbation about Minkowski (the opening slice of the
 //!   Layer 2 Covariant Gravity Workbench), validated by weak-field-Schwarzschild
 //!   vacuum, the Newtonian Poisson limit, gauge invariance, and an `O(h^2)`
-//!   cross-check against the nonlinear curvature.
+//!   cross-check against the nonlinear curvature;
+//! - PPN parameter extraction ([`ppn`]) — the Eddington-Robertson `gamma` and
+//!   `beta` from static isotropic weak-field metrics by deterministic asymptotic
+//!   extrapolation, with an explicit isotropic-coordinate contract and validated
+//!   against synthetic and isotropic-Schwarzschild oracles (`gamma = beta = 1`).
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -75,6 +79,7 @@ mod metric;
 mod minkowski;
 mod minkowski_spherical;
 mod parallel_transport;
+pub mod ppn;
 mod reissner_nordstrom;
 mod schwarzschild;
 mod static_spherical;
