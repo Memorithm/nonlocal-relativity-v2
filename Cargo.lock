@@ -3391,6 +3391,7 @@ dependencies = [
 name = "scirust-nonlocal-relativity"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "scirust-fractional",
  "scirust-relativity",
 ]
@@ -3438,6 +3439,7 @@ dependencies = [
 name = "scirust-relativity"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "scirust-sim",
 ]
 

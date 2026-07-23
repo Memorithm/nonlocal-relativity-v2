@@ -109,8 +109,9 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
 - **Traits:** `Metric<D>` (`components`), `Connection<D>` (`christoffel`,
   indexed `[rho][mu][nu]`).
 - **Operations:** `invert_metric` (deterministic Gauss–Jordan, partial
-  pivoting), `metric_norm`, `numerical_christoffel` (central-difference
-  Levi-Civita), and `CurvatureTensors<D>` — Riemann, Ricci, Ricci scalar,
+  pivoting), `determinant` (deterministic Gauss elimination), `metric_norm`,
+  `numerical_christoffel` (central-difference Levi-Civita), and
+  `CurvatureTensors<D>` — Riemann, Ricci, Ricci scalar,
   Einstein, and Kretschmann via central differences of the Christoffel symbols,
   with typed errors and a guarantee of no non-finite output.
 - **Backgrounds:** `Minkowski`, `MinkowskiSpherical`, `Schwarzschild`,
@@ -142,21 +143,31 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   closed-form metric split, and preservation of orthonormality under parallel
   transport of the legs. The experimental worldline observer tetrad delegates to
   this primitive rather than duplicating the Gram-Schmidt construction.
-- **Synge's world function:** `world_function` / `world_function_with_gradients`
-  give the biscalar `sigma(x', x) = (1/2) g(x')(v, v)` (with `v = log_{x'}(x)`)
-  and its first-derivative gradient bitensors `sigma^{mu'} = -v`,
-  `sigma^mu = -log_x(x')`, reusing the geodesic logarithm map; validated by flat
-  exactness, base/field symmetry, the field-point fundamental identity
-  `2 sigma = g(x) sigma^mu sigma^mu`, and the gradient round trip.
+- **Synge's world function and bitensors:** `world_function` /
+  `world_function_with_gradients` give the biscalar
+  `sigma(x', x) = (1/2) g(x')(v, v)` (with `v = log_{x'}(x)`) and its
+  first-derivative gradient bitensors `sigma^{mu'} = -v`, `sigma^mu = -log_x(x')`;
+  `van_vleck_determinant` gives the second-derivative bitensor
+  `Delta(x', x) = sqrt|g(x')| / (sqrt|g(x)| det J)` from the exponential-map
+  Jacobian. All reuse the geodesic logarithm map; validated by flat exactness,
+  base/field symmetry, the field-point fundamental identity
+  `2 sigma = g(x) sigma^mu sigma^mu`, the gradient round trip, van Vleck
+  flat/coincidence unity and `Delta(x', x) = Delta(x, x')` symmetry, and the
+  known maximally-symmetric expansion `(Delta - 1)/sigma -> Lambda/3`.
 - **Dynamics:** `GeodesicSystem<C, D>` implements `scirust_sim::System` (state
   `[x, u]`, RHS the geodesic equation `−Γ^ρ_{μν} u^μ u^ν`).
 - **Errors:** `RelativityError` (non-finite coordinate/metric/curvature/transport/
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 95 across thirteen integration-test files (curvature, geometry, kerr,
-  reissner_nordstrom, schwarzschild, coordinate_independence, parallel_transport,
-  covariant_transport, flrw, geodesic_deviation, exponential_map, tetrad, synge).
+- **Tests:** 103 across fourteen integration-test files (curvature, geometry,
+  kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
+  parallel_transport, covariant_transport, flrw, geodesic_deviation,
+  exponential_map, tetrad, synge, van_vleck).
+- **Benchmarks:** `benches/geometry_core.rs` (`criterion`, `harness = false`)
+  times the hot paths (Christoffel, `invert_metric`, the curvature engine, RK4
+  transport, world-function / van Vleck shooting). Wall-clock, so
+  machine-dependent — the library stays deterministic.
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
 
@@ -195,7 +206,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Fifteen deterministic experiment binaries, each printing a `#`-prefixed
+Sixteen deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -204,7 +215,7 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 `modulation_sensitivity`) and the **established-GR** geometry-core set
 (`curvature_invariants`, `coordinate_independence`, `parallel_transport`,
 `covariant_transport`, `flrw_curvature`, `geodesic_deviation`, `exponential_map`,
-`orthonormal_tetrad`, `world_function`).
+`orthonormal_tetrad`, `world_function`, `van_vleck_determinant`).
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -291,15 +302,19 @@ work):
   *path-triggered* and text-scanned for forbidden markers, but never compiled,
   tested, or run in CI (it is absent from every `-p` list, and the examples job
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
-- **Documentation drift:** 15 experiment binaries on disk; the experiments
+- **Documentation drift:** 16 experiment binaries on disk; the experiments
   README's detailed section itemises the six phenomenological ones, while the
-  nine established-GR geometry-core binaries are described in the roadmap and
+  ten established-GR geometry-core binaries are described in the roadmap and
   pinned by their own crate tests but not itemised in the README; the paper's
   reproduction section lists 3.
-- **No performance benchmarks anywhere** in the subgraph — no `benches/`, no
-  `criterion`/`iai`/`divan`. The only "performance" measure is a deterministic
-  operation-count proxy in `complexity_scaling`/`history_retention`. The
-  roadmap's performance-benchmark goals are entirely unmet.
+- ~~**No performance benchmarks anywhere** in the subgraph — no `benches/`, no
+  `criterion`/`iai`/`divan`.~~ **Resolved:** `criterion` wall-clock benches now
+  cover the geometry-core hot paths (`scirust-relativity/benches/geometry_core.rs`)
+  and the `O(N^2)` Caputo history
+  (`scirust-nonlocal-relativity/benches/caputo_history.rs`). Benchmark timings are
+  machine-dependent and not bit-reproducible (inherent to timing); the
+  deterministic, reproducible operation-count proxy in `complexity_scaling`
+  remains the companion measure.
 
 ## 7. Extension points (designed-in, reuse-first)
 
@@ -329,9 +344,11 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   first-class holonomy, covector/tensor transport, geodesic-deviation (Jacobi)
   fields, exponential / logarithm maps, local orthonormal frames (tetrads) in
   the geometry core (the worldline observer tetrad now delegates to this shared
-  primitive), and Synge's world function with its first-derivative gradient
-  bitensors. Missing: the van Vleck–Morette determinant (the remaining
-  second-derivative world-function bitensor).
+  primitive), and Synge's world function with its gradient bitensors and the
+  van Vleck–Morette determinant, with the first `criterion` performance benches
+  over the geometry-core hot paths and the `O(N^2)` Caputo history. The
+  differential-geometry surface and its near-term benchmark goal are now in place;
+  Layers 2–6 are the next frontier.
 - **Layer 2 (Covariant Gravity Workbench) — absent.** No symbolic action,
   variational calculus, automatic field-equation derivation, or PPN/weak-field
   machinery.
@@ -370,11 +387,14 @@ Additive, each validated against an oracle, each one PR:
 6. **Synge's world function and its gradient bitensors** — *done* (built on the
    geodesic logarithm map; validated by flat exactness, symmetry, the
    fundamental identity, and the gradient round trip).
-7. **The van Vleck–Morette determinant** — the remaining second-derivative
-   world-function bitensor; needs a deterministic determinant primitive. Next
-   Layer 1 increment.
-8. **First performance benchmarks** (curvature engine, Caputo `O(N²)` history)
-   to close the empty-benchmarks gap.
+7. **The van Vleck–Morette determinant** — *done* (from the exponential-map
+   Jacobian on a new deterministic `determinant`; validated by flat/coincidence
+   unity, `Delta(x', x) = Delta(x, x')` symmetry, and the known
+   maximally-symmetric `(Delta - 1)/sigma -> Lambda/3` expansion).
+8. **First performance benchmarks** — *done* (`criterion` wall-clock benches for
+   the geometry-core hot paths and the `O(N²)` Caputo history; timings are
+   machine-dependent, the deterministic op-count proxy remains the reproducible
+   companion). This closes the near-term Layer 1 sequence.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.

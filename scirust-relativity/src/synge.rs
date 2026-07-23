@@ -34,7 +34,10 @@
 //! general relativity, built entirely on the existing geodesic exponential /
 //! logarithm maps; no new geodesic solver is introduced.
 
-use crate::{Connection, Metric, RelativityError, geodesic_logarithm, metric_norm};
+use crate::{
+    Connection, Metric, RelativityError, determinant, geodesic_exponential, geodesic_logarithm,
+    metric_norm,
+};
 
 /// Numerical controls for the geodesic shooting used to evaluate the world
 /// function, forwarded to [`crate::geodesic_logarithm`].
@@ -192,4 +195,81 @@ where
         gradient_base,
         gradient_field,
     })
+}
+
+/// The van Vleck–Morette determinant `Delta(base, field)`.
+///
+/// `Delta` measures the focusing of the geodesic congruence emanating from
+/// `base`: it equals `1` in flat spacetime and at coincidence, exceeds `1` where
+/// neighbouring geodesics focus, and falls below `1` where they defocus. Under
+/// the `(-,+,+,+)` convention it is computed from the Jacobian of the exponential
+/// map,
+///
+/// ```text
+/// Delta(base, field) = sqrt|det g(base)| / ( sqrt|det g(field)| * det J ),
+/// J^alpha_gamma = d[exp_base(v)]^alpha / d v^gamma   at   v = log_base(field),
+/// ```
+///
+/// which is the standard `-det(sigma_{mu nu'}) / sqrt(g(base) g(field))` form
+/// rewritten through the exponential map. The Jacobian is evaluated by central
+/// finite differences of [`crate::geodesic_exponential`] — the same construction
+/// the logarithm map uses internally — so no new machinery is introduced. It is
+/// symmetric, `Delta(base, field) = Delta(field, base)`, which the crate's tests
+/// check as an independent validation.
+///
+/// Returns a typed [`RelativityError`] on a shooting failure, a singular
+/// exponential Jacobian ([`RelativityError::SingularMetric`]), or a non-finite
+/// result; it never panics.
+pub fn van_vleck_determinant<B, const D: usize>(
+    background: &B,
+    base: &[f64; D],
+    field: &[f64; D],
+    settings: &WorldFunctionSettings,
+) -> Result<f64, RelativityError>
+where
+    B: Metric<D> + Connection<D> + Copy,
+{
+    let tangent = geodesic_logarithm(
+        background,
+        base,
+        field,
+        settings.step,
+        settings.jacobian_step,
+        settings.tolerance,
+        settings.max_iterations,
+    )?;
+
+    // Exponential-map Jacobian J^alpha_gamma = d exp_base(v)^alpha / d v^gamma at
+    // v = tangent, by central finite differences.
+    let mut jacobian = [[0.0_f64; D]; D];
+    for gamma in 0..D
+    {
+        let mut forward = tangent;
+        let mut backward = tangent;
+        forward[gamma] += settings.jacobian_step;
+        backward[gamma] -= settings.jacobian_step;
+        let image_forward = geodesic_exponential(background, base, &forward, settings.step)?;
+        let image_backward = geodesic_exponential(background, base, &backward, settings.step)?;
+        for (alpha, row) in jacobian.iter_mut().enumerate()
+        {
+            row[gamma] =
+                (image_forward[alpha] - image_backward[alpha]) / (2.0 * settings.jacobian_step);
+        }
+    }
+
+    let det_jacobian = determinant(&jacobian)?;
+    if det_jacobian == 0.0
+    {
+        return Err(RelativityError::SingularMetric);
+    }
+
+    let det_metric_base = determinant(&background.components(base))?;
+    let det_metric_field = determinant(&background.components(field))?;
+
+    let delta = det_metric_base.abs().sqrt() / (det_metric_field.abs().sqrt() * det_jacobian);
+    if !delta.is_finite()
+    {
+        return Err(RelativityError::NonFiniteWorldFunction);
+    }
+    Ok(delta)
 }
