@@ -165,18 +165,18 @@ impl<const D: usize> CurvatureTensors<D> {
     }
 }
 
-/// The Ricci scalar `R = g^(mu nu) R_(mu nu)` of a metric from its **components
-/// alone**, by a nested central difference: the Christoffel symbols are built
-/// from differences of the metric (step `metric_step`, via
-/// [`numerical_christoffel`]) and *those* are differenced again (step
-/// `connection_step`) for `d Gamma`, reusing the same Riemann -> Ricci -> scalar
-/// assembly as [`CurvatureTensors::compute`].
+/// The Ricci tensor `R_(mu nu)` of a metric from its **components alone**, by a
+/// nested central difference: the Christoffel symbols are built from
+/// differences of the metric (step `metric_step`, via [`numerical_christoffel`])
+/// and *those* are differenced again (step `connection_step`) for `d Gamma`,
+/// reusing the same Riemann -> Ricci assembly as [`CurvatureTensors::compute`].
 ///
 /// Unlike [`CurvatureTensors::compute`], which differentiates an *analytic*
 /// [`Connection`], this needs no connection — it is the curvature of a bare
 /// metric field, one finite-difference layer deeper and correspondingly noisier.
-/// It underlies the Layer 2 Einstein-Hilbert action variation, whose perturbed
-/// field has no analytic connection (see `docs/LAYER_2_ACTION_VARIATION.md`).
+/// [`ricci_scalar_from_metric`] is a thin wrapper contracting this tensor with
+/// the inverse metric; the Layer 3 ADM evolution equations need the full tensor
+/// (see `docs/LAYER_3_ADM_EVOLUTION.md`), not only its trace.
 ///
 /// Returns a typed [`RelativityError`] for non-finite coordinates, an invalid
 /// step, a singular metric, or any non-finite intermediate; it never panics and
@@ -184,25 +184,26 @@ impl<const D: usize> CurvatureTensors<D> {
 ///
 /// # Example
 ///
-/// De Sitter's Ricci scalar is exactly `4 * Lambda`; the nested difference
-/// recovers it from the metric components alone.
+/// De Sitter is maximally symmetric, so its Ricci tensor is exactly
+/// `Lambda * g_(mu nu)`.
 ///
 /// ```
-/// use scirust_relativity::{DeSitter, ricci_scalar_from_metric};
+/// use scirust_relativity::{DeSitter, Metric, ricci_tensor_from_metric};
 /// use std::f64::consts::FRAC_PI_2;
 ///
 /// let lambda = 0.03;
 /// let spacetime = DeSitter::try_new(lambda).expect("valid cosmological constant");
-/// let scalar = ricci_scalar_from_metric(&spacetime, &[0.0, 3.0, FRAC_PI_2, 0.0], 1.0e-3, 1.0e-3)
-///     .expect("finite curvature");
-/// assert!((scalar - 4.0 * lambda).abs() < 1.0e-5);
+/// let point = [0.0, 3.0, FRAC_PI_2, 0.0];
+/// let ricci = ricci_tensor_from_metric(&spacetime, &point, 1.0e-3, 1.0e-3).expect("finite");
+/// let metric = spacetime.components(&point);
+/// assert!((ricci[1][1] - lambda * metric[1][1]).abs() < 1.0e-4);
 /// ```
-pub fn ricci_scalar_from_metric<M, const D: usize>(
+pub fn ricci_tensor_from_metric<M, const D: usize>(
     metric: &M,
     coordinates: &[f64; D],
     connection_step: f64,
     metric_step: f64,
-) -> Result<f64, RelativityError>
+) -> Result<[[f64; D]; D], RelativityError>
 where
     M: Metric<D>,
 {
@@ -218,8 +219,6 @@ where
         return Err(RelativityError::InvalidDifferenceStep(connection_step));
     }
 
-    let covariant = metric.components(coordinates);
-    let inverse = invert_metric(&covariant)?;
     // `metric_step` is validated inside `numerical_christoffel`.
     let christoffel = numerical_christoffel(metric, coordinates, metric_step)?;
 
@@ -260,6 +259,44 @@ where
     validate_tensor4("riemann", &riemann)?;
     let ricci = ricci_from_riemann(&riemann);
     validate_tensor2("ricci", &ricci)?;
+    Ok(ricci)
+}
+
+/// The Ricci scalar `R = g^(mu nu) R_(mu nu)` of a metric from its **components
+/// alone**. A thin wrapper contracting [`ricci_tensor_from_metric`] with the
+/// inverse metric; see that function for the method and conventions.
+///
+/// Returns a typed [`RelativityError`] for non-finite coordinates, an invalid
+/// step, a singular metric, or any non-finite intermediate; it never panics and
+/// never silently returns a non-finite result.
+///
+/// # Example
+///
+/// De Sitter's Ricci scalar is exactly `4 * Lambda`; the nested difference
+/// recovers it from the metric components alone.
+///
+/// ```
+/// use scirust_relativity::{DeSitter, ricci_scalar_from_metric};
+/// use std::f64::consts::FRAC_PI_2;
+///
+/// let lambda = 0.03;
+/// let spacetime = DeSitter::try_new(lambda).expect("valid cosmological constant");
+/// let scalar = ricci_scalar_from_metric(&spacetime, &[0.0, 3.0, FRAC_PI_2, 0.0], 1.0e-3, 1.0e-3)
+///     .expect("finite curvature");
+/// assert!((scalar - 4.0 * lambda).abs() < 1.0e-5);
+/// ```
+pub fn ricci_scalar_from_metric<M, const D: usize>(
+    metric: &M,
+    coordinates: &[f64; D],
+    connection_step: f64,
+    metric_step: f64,
+) -> Result<f64, RelativityError>
+where
+    M: Metric<D>,
+{
+    let ricci = ricci_tensor_from_metric(metric, coordinates, connection_step, metric_step)?;
+    let covariant = metric.components(coordinates);
+    let inverse = invert_metric(&covariant)?;
     let ricci_scalar = contract_scalar(&inverse, &ricci);
     if !ricci_scalar.is_finite()
     {

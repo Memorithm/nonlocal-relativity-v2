@@ -50,8 +50,16 @@
 //!   constraints as oracles (they vanish for exact solutions), reusing
 //!   [`ricci_scalar_from_metric`] and [`numerical_christoffel`] at `D = 3` and
 //!   validated on Schwarzschild, de Sitter, FLRW, and the horizon-penetrating
-//!   [`PainleveGullstrand`] slicing. The bridge to Layer 3.
+//!   [`PainleveGullstrand`] slicing. The bridge to Layer 3;
+//! - the ADM constraint and evolution core ([`adm_evolution`]) — Layer 3.1: the
+//!   Hamiltonian and momentum constraints and the evolution right-hand sides of
+//!   `partial_t gamma_ij` and `partial_t K_ij`, evaluated from independently
+//!   supplied spatial data (not extracted from an already-known 4-metric, which
+//!   is what [`adm`] does), reusing [`ricci_tensor_from_metric`] and
+//!   [`numerical_christoffel`] at `D = 3` and validated on Minkowski, a static
+//!   Schwarzschild slice, flat FLRW, and deliberate constraint violations.
 //!
+
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
 //! experimental constitutive or non-local extensions.
@@ -77,6 +85,7 @@
 
 pub mod action;
 pub mod adm;
+pub mod adm_evolution;
 mod connection;
 mod covariant_transport;
 mod curvature;
@@ -106,7 +115,7 @@ pub use covariant_transport::{
     transport_covariant_tensor_along_polyline, transport_covariant_tensor_along_segment,
     transport_covector_along_polyline, transport_covector_along_segment,
 };
-pub use curvature::{CurvatureTensors, ricci_scalar_from_metric};
+pub use curvature::{CurvatureTensors, ricci_scalar_from_metric, ricci_tensor_from_metric};
 pub use de_sitter::{AntiDeSitter, DeSitter};
 pub use error::RelativityError;
 pub use exponential_map::{geodesic_exponential, geodesic_logarithm};

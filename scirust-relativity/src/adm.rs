@@ -320,7 +320,10 @@ fn extrinsic_curvature_at<B: Metric<4>>(
 }
 
 /// Raise both indices of a symmetric spatial tensor with `gamma^{ij}`.
-fn raise(inverse: &[[f64; 3]; 3], tensor: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
+///
+/// `pub(crate)`: reused by the Layer 3 `adm_evolution` module so it does not
+/// duplicate this index algebra.
+pub(crate) fn raise(inverse: &[[f64; 3]; 3], tensor: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
     let mut raised = [[0.0_f64; 3]; 3];
     for p in 0..3
     {
@@ -341,7 +344,10 @@ fn raise(inverse: &[[f64; 3]; 3], tensor: &[[f64; 3]; 3]) -> [[f64; 3]; 3] {
 }
 
 /// The mean curvature `K = gamma^{ij} K_ij`.
-fn mean_curvature(inverse: &[[f64; 3]; 3], extrinsic: &[[f64; 3]; 3]) -> f64 {
+///
+/// `pub(crate)`: reused by the Layer 3 `adm_evolution` module so it does not
+/// duplicate this index algebra.
+pub(crate) fn mean_curvature(inverse: &[[f64; 3]; 3], extrinsic: &[[f64; 3]; 3]) -> f64 {
     let mut value = 0.0;
     for i in 0..3
     {
