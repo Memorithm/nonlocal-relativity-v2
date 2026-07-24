@@ -6,10 +6,11 @@ suite spans two scientific categories, kept strictly separate:
 - **Experimental phenomenological layer** (`scirust-nonlocal-relativity`):
   fractional-memory test-particle worldline dynamics on fixed
   general-relativistic backgrounds (the [Experiments](#experiments) section).
-- **Established general relativity** (`scirust-relativity` geometry core and
-  the Layer 2 Covariant Gravity Workbench): textbook-GR primitives checked
-  against exact analytic and closed-form oracles (the
-  [Established general-relativity experiments](#established-general-relativity-experiments-geometry-core-and-layer-2)
+- **Established general relativity** (`scirust-relativity` geometry core, the
+  Layer 2 Covariant Gravity Workbench, and the opening Layer 3 Numerical
+  Relativity slice): textbook-GR primitives checked against exact analytic and
+  closed-form oracles (the
+  [Established general-relativity experiments](#established-general-relativity-experiments-geometry-core-layer-2-and-layer-3)
   section).
 
 Every experiment is a pure-Rust binary with **no RNG and no wall-clock
@@ -158,15 +159,16 @@ circular-orbit transport convergence (`schwarzschild_orbit_transport`), and
 proper-time vs affine memory (`proper_time_memory_comparison`). Run any with
 `cargo run --release -p scirust-nonlocal-relativity --example <name>`.
 
-## Established general-relativity experiments (geometry core and Layer 2)
+## Established general-relativity experiments (geometry core, Layer 2, and Layer 3)
 
 The same binary crate also hosts the deterministic experiments that validate the
-`scirust-relativity` geometry core and the Layer 2 Covariant Gravity Workbench
-against **exact analytic and closed-form oracles of textbook general
-relativity**. They share the reproducibility contract above (no RNG, no
-wall-clock, finite-checked CSV), but belong to a different scientific category:
-each is an implementation validation against established GR, not a study of the
-phenomenological memory model. Run any with
+`scirust-relativity` geometry core, the Layer 2 Covariant Gravity Workbench, and
+the opening Layer 3 Numerical Relativity slice against **exact analytic and
+closed-form oracles of textbook general relativity**. They share the
+reproducibility contract above (no RNG, no wall-clock, finite-checked CSV), but
+belong to a different scientific category: each is an implementation validation
+against established GR, not a study of the phenomenological memory model. Run
+any with
 
 ```bash
 cargo run --release -p nonlocal-relativity-experiments --bin <name>
@@ -226,3 +228,15 @@ Layer 2 — Covariant Gravity Workbench:
   constraints across four exact foliations — Schwarzschild, static de Sitter,
   FLRW, and horizon-penetrating Painlevé–Gullstrand — with the constraints
   vanishing for each; see [`docs/LAYER_2_ADM.md`](../../docs/LAYER_2_ADM.md).
+
+Layer 3 — Numerical Relativity:
+
+- `adm_constraint_sweep` — the ADM Hamiltonian and momentum constraints and the
+  evolution right-hand sides (`partial_t gamma_ij`, `partial_t K_ij`), evaluated
+  from **independently supplied** 3+1 data (unlike `adm_kinematics`, which
+  extracts from an already-known 4-metric): exact Minkowski and a static
+  Schwarzschild slice (both constraint-satisfying, zero evolution RHS), flat
+  FLRW (reduces to the first Friedmann equation), deliberately perturbed
+  constraint-violating states at several amplitudes, and a rejected singular
+  spatial metric; see
+  [`docs/LAYER_3_ADM_EVOLUTION.md`](../../docs/LAYER_3_ADM_EVOLUTION.md).

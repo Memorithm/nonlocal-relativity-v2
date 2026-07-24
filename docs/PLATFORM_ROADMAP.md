@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | planned |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core delivered ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)); a spatial grid, time integrator, and BSSN are next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -307,8 +307,33 @@ bridge to Layer 3; it evolves nothing in time.
 
 With these four slices the near-term Layer 2 sequence is complete. The full
 symbolic-algebra action machinery is deliberately deferred until a slice needs
-it and it can be made deterministic; **Layer 3 (Numerical Relativity)**, whose
-evolution equations advance exactly this ADM data in time, is the next frontier.
+it and it can be made deterministic.
+
+**Layer 3 (Numerical Relativity) now opens**, on its design note
+[`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md). Its first increment —
+the **ADM constraint and evolution core** (Layer 3.1) — is **delivered**. Unlike
+Layer 2's `adm` module, which *extracts* the lapse/shift/spatial-metric/
+extrinsic-curvature *backward* from an already-known 4-metric, the `adm_evolution`
+module evaluates the Gauss–Codazzi Hamiltonian and momentum constraints and the
+right-hand sides of `partial_t gamma_ij` and `partial_t K_ij` *forward*, from
+independently supplied 3+1 data (`AdmSources` for the matter projections, plus
+lapse/shift/extrinsic-curvature fields) — the direction a future time integrator
+actually needs. It reuses the dimension-generic `ricci_scalar_from_metric` and a
+new sibling `ricci_tensor_from_metric` (added by refactoring the former into a
+thin wrapper, zero duplication) at `D = 3`. Notably, deriving the extrinsic-
+curvature evolution equation surfaced a **real sign error**: the naively-copied
+textbook matter-term sign (`+ 8 pi alpha (...)`) is wrong for this repository's
+established `K_ij` convention; the correct sign (`-`) was confirmed by directly
+comparing the closed-form right-hand side against a time finite-difference of
+Layer 2's already-validated FLRW extraction (`5.3e-9` agreement for the correct
+sign vs. `1.83` — a full sign flip — for the naive one). Validated on Minkowski,
+a static Schwarzschild slice (whose lapse-Hessian/Ricci-tensor combination must
+cancel exactly for a time-independent solution), flat FLRW (reduces to the first
+Friedmann equation), and deliberate constraint violations with closed-form,
+monotonically scaling residuals (`adm_evolution` tests + `adm_constraint_sweep`
+experiment + `adm_evolution` benches). A discretized spatial grid and a time
+integrator — at which point ADM's weak hyperbolicity will make BSSN the natural
+next design note — are the next Layer 3 frontier.
 
 ## What this platform will not do
 

@@ -201,6 +201,25 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   `PainleveGullstrand` background (the non-zero-shift, spatially-varying-`K`
   oracle) plus the algebraic reconstruction identity. The bridge to Layer 3; it
   evolves nothing. See `docs/LAYER_2_ADM.md`.
+- **ADM constraint and evolution core (Layer 3.1, opens Layer 3):** the
+  `adm_evolution` module evaluates the Gauss–Codazzi Hamiltonian
+  (`hamiltonian_constraint`, decomposed into `R^(3)`, `K^2`, `K_ij K^{ij}`, and
+  the matter term) and momentum (`momentum_constraint`) constraints, and the
+  right-hand sides of `partial_t gamma_ij` (`metric_evolution_rhs`) and
+  `partial_t K_ij` (`curvature_evolution_rhs`, decomposed into the lapse
+  Hessian, the Ricci term, the quadratic extrinsic-curvature term, the Lie
+  derivative, and the matter term) — all from **independently supplied** 3+1
+  data (`AdmSources` for the typed matter projections; `SpatialScalarField` /
+  `SpatialVectorField` / `SpatialTensorField` for the lapse, shift, and
+  extrinsic curvature), unlike `adm`'s backward extraction from a known
+  4-metric. Reuses the new `ricci_tensor_from_metric` and
+  `numerical_christoffel` at `D = 3`; carries a typed `AdmEvolutionError`.
+  Validated on Minkowski, a static Schwarzschild slice, flat FLRW (including a
+  direct cross-check against a time finite-difference of `adm`'s extraction —
+  the regression test for the extrinsic-curvature evolution equation's
+  matter-term sign, corrected from the naive textbook copy after this numerical
+  check), and deliberate constraint violations. See
+  `docs/LAYER_3_ADM_EVOLUTION.md`.
 - **Backgrounds:** Minkowski (Cartesian and spherical), Schwarzschild,
   isotropic Schwarzschild, Reissner–Nordström, Kerr, de Sitter, anti-de Sitter,
   spatially flat FLRW, and Painlevé–Gullstrand (a horizon-penetrating
@@ -211,16 +230,19 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 135 across eighteen integration-test files (curvature, geometry,
+- **Tests:** 145 across nineteen integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
-  exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm).
+  exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
+  adm_evolution).
 - **Benchmarks:** `benches/geometry_core.rs`, `benches/ppn.rs`,
-  `benches/action.rs`, and `benches/adm.rs` (`criterion`, `harness = false`) time
-  the hot paths — Christoffel, `invert_metric`, the curvature engine, RK4
-  transport, world-function / van Vleck shooting, PPN sampling / extrapolation /
-  extraction, the metric-only Ricci scalar / action variation, and the ADM
-  decomposition / constraints. Wall-clock, so machine-dependent — the library
+  `benches/action.rs`, `benches/adm.rs`, and `benches/adm_evolution.rs`
+  (`criterion`, `harness = false`) time the hot paths — Christoffel,
+  `invert_metric`, the curvature engine, RK4 transport, world-function / van
+  Vleck shooting, PPN sampling / extrapolation / extraction, the metric-only
+  Ricci scalar / action variation, the ADM decomposition / constraints, and the
+  ADM Hamiltonian / momentum / evolution-RHS evaluators. Wall-clock, so
+  machine-dependent — the library
   stays deterministic.
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
@@ -260,7 +282,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Twenty deterministic experiment binaries, each printing a `#`-prefixed
+Twenty-one deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -270,7 +292,8 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 (`curvature_invariants`, `coordinate_independence`, `parallel_transport`,
 `covariant_transport`, `flrw_curvature`, `geodesic_deviation`, `exponential_map`,
 `orthonormal_tetrad`, `world_function`, `van_vleck_determinant`) plus the Layer 2
-`linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`.
+`linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`,
+and the Layer 3 `adm_constraint_sweep`.
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -357,12 +380,12 @@ work):
   *path-triggered* and text-scanned for forbidden markers, but never compiled,
   tested, or run in CI (it is absent from every `-p` list, and the examples job
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
-- **Documentation drift (largely resolved):** 20 experiment binaries on disk;
+- **Documentation drift (largely resolved):** 21 experiment binaries on disk;
   the experiments README now itemises both the six phenomenological binaries and
-  the fourteen established-GR ones (geometry core plus the Layer 2
+  the fifteen established-GR / Layer 3 ones (geometry core plus the Layer 2
   `linearized_gravity`, `ppn_extraction`, `action_variation`, and
-  `adm_kinematics`). The remaining drift is the paper's reproduction section,
-  which still lists only 3.
+  `adm_kinematics`, and the Layer 3 `adm_constraint_sweep`). The remaining
+  drift is the paper's reproduction section, which still lists only 3.
 - ~~**No performance benchmarks anywhere** in the subgraph — no `benches/`, no
   `criterion`/`iai`/`divan`.~~ **Resolved:** `criterion` wall-clock benches now
   cover the geometry-core hot paths (`scirust-relativity/benches/geometry_core.rs`)
@@ -418,10 +441,16 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   and the Gauss–Codazzi constraints, `docs/LAYER_2_ADM.md`). This completes the
   near-term Layer 2 sequence and bridges to Layer 3; full symbolic action
   machinery is deferred.
-- **Layer 3 (Numerical Relativity) — absent.** No perturbation theory,
-  self-force, or ADM/BSSN evolution. `scirust-sim` lacks the dense output,
-  event detection, and constraint-preserving/projection integration such work
-  needs.
+- **Layer 3 (Numerical Relativity) — opening.** The design note
+  (`docs/LAYER_3_ADM_EVOLUTION.md`) fixes the scope, category labels, and
+  oracles. Its first increment — the **ADM constraint and evolution core**
+  (the `adm_evolution` module: the Hamiltonian/momentum constraints and the
+  `partial_t gamma_ij` / `partial_t K_ij` evolution right-hand sides, evaluated
+  from independently supplied 3+1 data) — is delivered. No perturbation theory,
+  self-force, or ADM/BSSN *time* evolution yet: these are right-hand-side
+  evaluators at a single point, not a stepper, and no spatial grid exists.
+  `scirust-sim` still lacks the dense output, event detection, and
+  constraint-preserving/projection integration that a real evolution needs.
 - **Layer 4 (Gravitational Memory) — experimental prototype only.** The
   fractional-memory worldline layer exists and is clearly labelled
   phenomenological; standard/Christodoulou memory and detector response are
@@ -466,8 +495,14 @@ Additive, each validated against an oracle, each one PR:
    (`LinearizedField`), **PPN extraction** (the `ppn` module,
    `docs/LAYER_2_PPN.md`), the **Einstein–Hilbert action variation** (the
    `action` module, `docs/LAYER_2_ACTION_VARIATION.md`), and **3+1 (ADM)
-   kinematics** (the `adm` module, `docs/LAYER_2_ADM.md`) are all *done*. Next:
-   **Layer 3 (Numerical Relativity)**, which evolves the ADM data in time.
+   kinematics** (the `adm` module, `docs/LAYER_2_ADM.md`) are all *done*.
+10. **Layer 3 (Numerical Relativity) opens** — *in progress*. Design note
+    (`docs/LAYER_3_ADM_EVOLUTION.md`); the **ADM constraint and evolution core**
+    (the `adm_evolution` module: Hamiltonian/momentum constraints and the
+    `partial_t gamma_ij` / `partial_t K_ij` right-hand sides from independently
+    supplied 3+1 data, not extracted from a known 4-metric) is *done*. Next: a
+    discretized spatial grid and a time integrator to actually evolve
+    `(gamma_ij, K_ij)`, at which point BSSN becomes the natural design note.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.
