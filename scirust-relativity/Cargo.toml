@@ -26,3 +26,7 @@ harness = false
 [[bench]]
 name = "adm"
 harness = false
+
+[[bench]]
+name = "adm_evolution"
+harness = false
