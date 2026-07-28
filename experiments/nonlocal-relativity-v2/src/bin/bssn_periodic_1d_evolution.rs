@@ -1,0 +1,541 @@
+//! BSSN on a uniform periodic one-dimensional grid (Layer 3.4).
+//!
+//! Deterministic: no RNG, no wall clock, no parallelism. Identical inputs give
+//! byte-identical output.
+//!
+//! The headline result is **negative and deliberate**: the pipeline is
+//! second-order accurate but the discretisation obtained by reusing Layer 3.3's
+//! nested finite differences is *unstable*, and explicit dissipation does not
+//! cure it. Both are measured here rather than asserted.
+
+use scirust_relativity::Metric;
+use scirust_relativity::adm_evolution::{AdmSources, SpatialTensorField};
+use scirust_relativity::bssn::bssn_to_adm;
+use scirust_relativity::bssn_grid::{
+    BssnGridState, BssnGridSystem, TransverseTracelessWave, bssn_grid_constraints,
+    bssn_grid_ricci_report, evolve_bssn_grid, project_grid_trace_free,
+    project_grid_unit_determinant,
+};
+use scirust_relativity::grid1d::UniformGrid1d;
+
+const TWO_PI: f64 = std::f64::consts::TAU;
+const DOMAIN_LOWER: f64 = 0.0;
+const DOMAIN_UPPER: f64 = 1.0;
+/// Small enough that the neglected `O(A^2)` nonlinearity stays far below the
+/// `O(dx^2)` truncation error at every resolution swept here.
+const WAVE_AMPLITUDE: f64 = 1.0e-6;
+
+/// A smooth periodic manufactured metric. Not a solution of the Einstein
+/// equations — a numerical oracle for the derivative stack.
+struct ManufacturedMetric {
+    amplitude: f64,
+    wave_number: f64,
+}
+
+impl Metric<3> for ManufacturedMetric {
+    fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
+        let s = (self.wave_number * coordinates[0]).sin();
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0 + self.amplitude * s, 0.0],
+            [0.0, 0.0, 1.0 - self.amplitude * s],
+        ]
+    }
+}
+
+fn zero_curvature() -> impl SpatialTensorField {
+    |_: &[f64; 3]| [[0.0_f64; 3]; 3]
+}
+
+fn grid_of(points: usize) -> UniformGrid1d {
+    UniformGrid1d::new(points, DOMAIN_LOWER, DOMAIN_UPPER).expect("valid grid")
+}
+
+fn order(coarse: f64, fine: f64) -> String {
+    if coarse > 0.0 && fine > 0.0
+    {
+        format!("{:.2}", (coarse / fine).log2())
+    }
+    else
+    {
+        "n_a".to_string()
+    }
+}
+
+/// The worst `|gamma_yy - exact|` over the grid against the analytic wave.
+fn wave_metric_error(
+    state: &BssnGridState,
+    grid: &UniformGrid1d,
+    exact: &TransverseTracelessWave,
+) -> f64 {
+    let mut worst = 0.0_f64;
+    for index in 0..grid.points()
+    {
+        let reconstructed = match bssn_to_adm(&state.state_at(index))
+        {
+            Ok(value) => value,
+            Err(_) => return f64::NAN,
+        };
+        let analytic = exact.spatial_metric(grid.coordinate(index));
+        worst = worst.max((reconstructed.spatial_metric[1][1] - analytic[1][1]).abs());
+    }
+    worst
+}
+
+/// The largest strain `|gamma_yy - 1|` present on the grid.
+fn measured_amplitude(state: &BssnGridState, grid: &UniformGrid1d) -> f64 {
+    let mut worst = 0.0_f64;
+    for index in 0..grid.points()
+    {
+        if let Ok(reconstructed) = bssn_to_adm(&state.state_at(index))
+        {
+            worst = worst.max((reconstructed.spatial_metric[1][1] - 1.0).abs());
+        }
+    }
+    worst
+}
+
+fn main() {
+    println!("# experiment: BSSN on a uniform periodic one-dimensional grid (1D3V)");
+    println!("# layer: scirust-relativity Layer 3.4 (established general relativity)");
+    println!("# units: geometric G = c = 1; lengths and times in mass units M");
+    println!("# grid: half-open periodic domain [0, 1), x_n = n dx, dx = 1 / N");
+    println!("# gauge: prescribed alpha = 1, beta^i = 0; gauge is NOT evolved");
+    println!("# determinism: no RNG, no wall clock; identical inputs give identical output");
+    println!(
+        "# NOTE: the pipeline is second-order ACCURATE but the reused nested stencil is\
+         \n#   UNSTABLE; see the courant_study and dissipation sections. Nothing here\
+         \n#   demonstrates strong hyperbolicity, and no such claim is made."
+    );
+
+    // -----------------------------------------------------------------------
+    println!("# oracle A: stationary Minkowski (must be exactly stationary)");
+    println!(
+        "scenario,resolution,grid_spacing,timestep,courant,steps,final_time,\
+         max_state_change,hamiltonian_linf,determinant_linf,trace_free_linf,\
+         connection_linf,status"
+    );
+    for &points in &[16_usize, 32, 64, 128]
+    {
+        let grid = grid_of(points);
+        let system = BssnGridSystem::vacuum(grid);
+        let initial = BssnGridState::minkowski(grid);
+        let courant = 0.25_f64;
+        let step = courant * grid.spacing();
+        let t_end = 1.0_f64;
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, step).expect("Minkowski");
+        let last = samples.last().expect("final sample");
+        let change = last
+            .state
+            .as_slice()
+            .iter()
+            .zip(initial.as_slice())
+            .fold(0.0_f64, |acc, (a, b)| acc.max((a - b).abs()));
+        let constraints =
+            bssn_grid_constraints(&last.state.view(), &AdmSources::VACUUM).expect("constraints");
+        println!(
+            "minkowski,{points},{:.6e},{:.6e},{courant},{},{:.4},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{}",
+            grid.spacing(),
+            step,
+            samples.len() - 1,
+            last.time,
+            change,
+            constraints.hamiltonian.max_abs,
+            constraints.determinant.max_abs,
+            constraints.trace_free.max_abs,
+            constraints.connection.max_abs,
+            if change == 0.0
+            {
+                "exactly_stationary"
+            }
+            else
+            {
+                "drifted"
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# oracle B: manufactured periodic state, conformal Ricci reconstruction");
+    println!(
+        "scenario,resolution,grid_spacing,ricci_mismatch_l1,ricci_mismatch_l2,\
+         ricci_mismatch_linf,conformal_scale,conformal_factor_scale,physical_scale,\
+         observed_spatial_order,status"
+    );
+    let manufactured = ManufacturedMetric {
+        amplitude: 0.01,
+        wave_number: TWO_PI,
+    };
+    let mut previous_ricci: Option<f64> = None;
+    for &points in &[32_usize, 64, 128, 256]
+    {
+        let grid = grid_of(points);
+        let state = BssnGridState::from_adm_fields(grid, &manufactured, &zero_curvature())
+            .expect("manufactured state");
+        let report = bssn_grid_ricci_report(&state.view()).expect("ricci report");
+        let observed = match previous_ricci
+        {
+            Some(previous) => order(previous, report.mismatch.max_abs),
+            None => "n_a".to_string(),
+        };
+        previous_ricci = Some(report.mismatch.max_abs);
+        println!(
+            "manufactured_ricci,{points},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{observed},valid",
+            grid.spacing(),
+            report.mismatch.l1,
+            report.mismatch.l2,
+            report.mismatch.max_abs,
+            report.conformal_scale,
+            report.conformal_factor_scale,
+            report.physical_scale,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# oracle C: linearized transverse-traceless wave, short-time spatial convergence");
+    println!(
+        "scenario,resolution,grid_spacing,timestep,courant,final_time,wave_number,amplitude,\
+         metric_l1,metric_l2,metric_linf,observed_spatial_order,hamiltonian_linf,\
+         momentum_linf,determinant_linf,trace_free_linf,connection_linf,status"
+    );
+    let k = TWO_PI;
+    let t_end = 0.1_f64;
+    let mut previous_wave: Option<f64> = None;
+    for &points in &[16_usize, 32, 64, 128]
+    {
+        let grid = grid_of(points);
+        let courant = 0.25_f64;
+        let steps = (t_end / (courant * grid.spacing())).round() as usize;
+        let step = t_end / steps as f64;
+        let wave = TransverseTracelessWave::new(WAVE_AMPLITUDE, k, 0.0);
+        let initial =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("wave initial data");
+        let system = BssnGridSystem::vacuum(grid);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, step).expect("wave");
+        let last = samples.last().expect("final sample");
+        let exact = TransverseTracelessWave::new(WAVE_AMPLITUDE, k, last.time);
+
+        let mut errors = vec![0.0_f64; grid.points()];
+        // Indexed rather than iterated: the loop walks grid coordinates and the
+        // reconstructed state alongside `errors`, which the index expresses.
+        #[allow(clippy::needless_range_loop)]
+        for index in 0..grid.points()
+        {
+            let reconstructed = bssn_to_adm(&last.state.state_at(index)).expect("adm");
+            let analytic = exact.spatial_metric(grid.coordinate(index));
+            errors[index] = reconstructed.spatial_metric[1][1] - analytic[1][1];
+        }
+        let reduction = scirust_relativity::grid1d::GridReduction::of(&errors);
+        let constraints =
+            bssn_grid_constraints(&last.state.view(), &AdmSources::VACUUM).expect("constraints");
+        let observed = match previous_wave
+        {
+            Some(previous) => order(previous, reduction.max_abs),
+            None => "n_a".to_string(),
+        };
+        previous_wave = Some(reduction.max_abs);
+        let momentum = constraints.momentum[0]
+            .max_abs
+            .max(constraints.momentum[1].max_abs)
+            .max(constraints.momentum[2].max_abs);
+        println!(
+            "linear_wave,{points},{:.6e},{:.6e},{courant},{:.4},{:.6},{:.1e},{:.6e},{:.6e},{:.6e},{observed},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},valid",
+            grid.spacing(),
+            step,
+            last.time,
+            k,
+            WAVE_AMPLITUDE,
+            reduction.l1,
+            reduction.l2,
+            reduction.max_abs,
+            constraints.hamiltonian.max_abs,
+            momentum,
+            constraints.determinant.max_abs,
+            constraints.trace_free.max_abs,
+            constraints.connection.max_abs,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# temporal convergence: measured against a finely-stepped run at the SAME");
+    println!("#   spatial resolution, so the spatial truncation error cancels exactly and");
+    println!("#   what remains is purely the RK4 error of the semidiscrete ODE system.");
+    println!("scenario,resolution,steps,timestep,difference_linf,observed_temporal_order,status");
+    let grid = grid_of(16);
+    let temporal_end = 0.2_f64;
+    let wave = TransverseTracelessWave::new(1.0e-3, k, 0.0);
+    let initial =
+        BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+            .expect("wave initial data");
+    let system = BssnGridSystem::vacuum(grid);
+    let reference = evolve_bssn_grid(&system, &initial, 0.0, temporal_end, temporal_end / 640.0)
+        .expect("reference");
+    let reference_state = reference.last().expect("final").state.clone();
+    let mut previous_temporal: Option<f64> = None;
+    for &steps in &[10_usize, 20, 40, 80]
+    {
+        let step = temporal_end / steps as f64;
+        let samples =
+            evolve_bssn_grid(&system, &initial, 0.0, temporal_end, step).expect("temporal run");
+        let difference = samples
+            .last()
+            .expect("final")
+            .state
+            .as_slice()
+            .iter()
+            .zip(reference_state.as_slice())
+            .fold(0.0_f64, |acc, (a, b)| acc.max((a - b).abs()));
+        let observed = match previous_temporal
+        {
+            Some(previous) => order(previous, difference),
+            None => "n_a".to_string(),
+        };
+        previous_temporal = Some(difference);
+        println!(
+            "temporal_refinement,16,{steps},{:.6e},{difference:.6e},{observed},valid",
+            step
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# courant study: EMPIRICAL characterisation, not a derived CFL bound.");
+    println!("#   The blow-up is NOT governed by the timestep: it persists at every Courant");
+    println!("#   factor and its onset time roughly HALVES as the resolution doubles, which");
+    println!("#   is the signature of an unstable spatial operator, not a CFL violation.");
+    println!("scenario,resolution,courant,timestep,final_time,metric_linf,status,failure_mode");
+    for &points in &[32_usize, 64, 128]
+    {
+        let grid = grid_of(points);
+        let wave = TransverseTracelessWave::new(1.0e-3, k, 0.0);
+        let initial =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("wave initial data");
+        let system = BssnGridSystem::vacuum(grid);
+        for &courant in &[0.1_f64, 0.25, 0.5, 1.0, 2.0]
+        {
+            let step = courant * grid.spacing();
+            match evolve_bssn_grid(&system, &initial, 0.0, 1.0, step)
+            {
+                Ok(samples) =>
+                {
+                    let last = samples.last().expect("final");
+                    let exact = TransverseTracelessWave::new(1.0e-3, k, last.time);
+                    let error = wave_metric_error(&last.state, &grid, &exact);
+                    println!(
+                        "courant_study,{points},{courant},{:.6e},{:.4},{error:.6e},accepted,none",
+                        step, last.time
+                    );
+                },
+                Err(_) =>
+                {
+                    println!(
+                        "courant_study,{points},{courant},{:.6e},n_a,n_a,rejected,non_finite_state",
+                        step
+                    );
+                },
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# dissipation: explicit Kreiss-Oliger, DISABLED BY DEFAULT (sigma = 0).");
+    println!(
+        "#   Q f_i = -(sigma / 16 dx)( f_{{i+2}} - 4 f_{{i+1}} + 6 f_i - 4 f_{{i-1}} + f_{{i-2}} )."
+    );
+    println!("#   This is numerical dissipation on the evolved variables. It is NOT");
+    println!("#   constraint damping. It does not cure the instability -- it delays it, and");
+    println!("#   where it averts the abort it grossly inflates the physical amplitude.");
+    println!(
+        "scenario,resolution,sigma,final_time,metric_linf,measured_amplitude,\
+         exact_amplitude,amplitude_ratio,status"
+    );
+    let dissipation_amplitude = 1.0e-3_f64;
+    for &points in &[64_usize, 128]
+    {
+        let grid = grid_of(points);
+        let wave = TransverseTracelessWave::new(dissipation_amplitude, k, 0.0);
+        let initial =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("wave initial data");
+        for &sigma in &[0.0_f64, 0.05, 0.2, 0.5]
+        {
+            let system = BssnGridSystem::vacuum(grid).with_dissipation(sigma);
+            match evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.25 * grid.spacing())
+            {
+                Ok(samples) =>
+                {
+                    let last = samples.last().expect("final");
+                    let exact = TransverseTracelessWave::new(dissipation_amplitude, k, last.time);
+                    let error = wave_metric_error(&last.state, &grid, &exact);
+                    let amplitude = measured_amplitude(&last.state, &grid);
+                    println!(
+                        "dissipation,{points},{sigma},{:.4},{error:.6e},{amplitude:.6e},{dissipation_amplitude:.6e},{:.4e},accepted",
+                        last.time,
+                        amplitude / dissipation_amplitude
+                    );
+                },
+                Err(_) =>
+                {
+                    println!(
+                        "dissipation,{points},{sigma},n_a,n_a,n_a,{dissipation_amplitude:.6e},n_a,rejected"
+                    );
+                },
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# off-constraint state and explicit projection (projection is opt-in and is");
+    println!("#   NEVER applied during the default free evolution).");
+    println!(
+        "scenario,resolution,amplitude,hamiltonian_before,hamiltonian_after,\
+         determinant_before,determinant_after,trace_before,trace_after,\
+         correction_magnitude,status"
+    );
+    {
+        let grid = grid_of(32);
+        let wave = TransverseTracelessWave::new(1.0e-3, k, 0.0);
+        let mut state =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("wave initial data");
+        let violation = 1.0e-3_f64;
+        for index in 0..grid.points()
+        {
+            let mut local = state.state_at(index);
+            local.mean_curvature += violation * (k * grid.coordinate(index)).cos();
+            state.set_state_at(index, &local);
+        }
+        let before =
+            bssn_grid_constraints(&state.view(), &AdmSources::VACUUM).expect("constraints before");
+        let system = BssnGridSystem::vacuum(grid);
+        let samples = evolve_bssn_grid(&system, &state, 0.0, 0.05, 0.005).expect("evolution");
+        let after = bssn_grid_constraints(
+            &samples.last().expect("final").state.view(),
+            &AdmSources::VACUUM,
+        )
+        .expect("constraints after");
+        println!(
+            "off_constraint,32,{violation:.1e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},0.000000e0,not_repaired",
+            before.hamiltonian.max_abs,
+            after.hamiltonian.max_abs,
+            before.determinant.max_abs,
+            after.determinant.max_abs,
+            before.trace_free.max_abs,
+            after.trace_free.max_abs,
+        );
+    }
+
+    for &epsilon in &[0.01_f64, 0.05, 0.1]
+    {
+        let grid = grid_of(32);
+        let mut state = BssnGridState::minkowski(grid);
+        for index in 0..grid.points()
+        {
+            let mut local = state.state_at(index);
+            for i in 0..3
+            {
+                local.conformal_metric[i][i] *= 1.0 + epsilon;
+                local.conformal_curvature[i][i] += epsilon;
+            }
+            state.set_state_at(index, &local);
+        }
+        let before =
+            bssn_grid_constraints(&state.view(), &AdmSources::VACUUM).expect("constraints before");
+        let determinant_report =
+            project_grid_unit_determinant(&mut state).expect("determinant projection");
+        let trace_report = project_grid_trace_free(&mut state).expect("trace projection");
+        let after =
+            bssn_grid_constraints(&state.view(), &AdmSources::VACUUM).expect("constraints after");
+        println!(
+            "explicit_projection,32,{epsilon},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},projected",
+            before.hamiltonian.max_abs,
+            after.hamiltonian.max_abs,
+            before.determinant.max_abs,
+            after.determinant.max_abs,
+            before.trace_free.max_abs,
+            after.trace_free.max_abs,
+            determinant_report
+                .correction_magnitude
+                .max(trace_report.correction_magnitude),
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    println!("# rejected configurations (typed errors, never silent repair)");
+    println!("scenario,request,status,reason");
+    let too_few = UniformGrid1d::new(2, 0.0, 1.0);
+    println!(
+        "rejected,grid_points_2,{},{}",
+        if too_few.is_err()
+        {
+            "rejected"
+        }
+        else
+        {
+            "accepted"
+        },
+        too_few.map_or_else(|e| e.to_string().replace(',', ";"), |_| "none".to_string())
+    );
+    let bad_domain = UniformGrid1d::new(16, 1.0, 1.0);
+    println!(
+        "rejected,zero_length_domain,{},{}",
+        if bad_domain.is_err()
+        {
+            "rejected"
+        }
+        else
+        {
+            "accepted"
+        },
+        bad_domain.map_or_else(|e| e.to_string().replace(',', ";"), |_| "none".to_string())
+    );
+    {
+        let grid = grid_of(8);
+        let system = BssnGridSystem::vacuum(grid);
+        let singular = BssnGridState::zeroed(grid);
+        let outcome = evolve_bssn_grid(&system, &singular, 0.0, 0.1, 0.01);
+        println!(
+            "rejected,singular_conformal_metric,{},{}",
+            if outcome.is_err()
+            {
+                "rejected"
+            }
+            else
+            {
+                "accepted"
+            },
+            outcome
+                .err()
+                .map_or_else(|| "none".to_string(), |e| e.to_string().replace(',', ";"))
+        );
+        let good = BssnGridState::minkowski(grid);
+        let outcome = evolve_bssn_grid(&system, &good, 0.0, 0.1, -0.01);
+        println!(
+            "rejected,negative_timestep,{},{}",
+            if outcome.is_err()
+            {
+                "rejected"
+            }
+            else
+            {
+                "accepted"
+            },
+            outcome
+                .err()
+                .map_or_else(|| "none".to_string(), |e| e.to_string().replace(',', ";"))
+        );
+    }
+
+    println!("# interpretation: the derivative stack and the pointwise BSSN assembly are");
+    println!("#   second-order accurate -- the conformal Ricci reconstruction converges at");
+    println!("#   order 2 and short-time wave propagation does too, while RK4 retains its");
+    println!("#   fourth order against a fixed spatial operator. Minkowski is exactly");
+    println!("#   stationary. But the evolution is NOT stable: reusing Layer 3.3's nested");
+    println!("#   differences forces every spatial operator onto a 2 dx stencil whose");
+    println!("#   second-difference symbol 2 cos(2 theta) - 2 vanishes at the Nyquist mode,");
+    println!("#   leaving the highest grid frequency in the null space of the principal");
+    println!("#   part. Refining the grid makes it worse, and dissipation does not cure it.");
+    println!("#   No claim of strong hyperbolicity, and no black holes, punctures, live");
+    println!("#   gauge, AMR, waveform extraction, or observational validation appear here.");
+}
