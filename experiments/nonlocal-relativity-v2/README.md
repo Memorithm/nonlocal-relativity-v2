@@ -250,3 +250,12 @@ Layer 3 — Numerical Relativity:
   Homogeneous sector only — it says nothing about ADM's stability for
   inhomogeneous data, and it is not a cosmological model; see
   [`docs/LAYER_3_HOMOGENEOUS_EVOLUTION.md`](../../docs/LAYER_3_HOMOGENEOUS_EVOLUTION.md).
+- `bssn_homogeneous_evolution` — the BSSN formulation core against the ADM
+  evolution path: the ADM and BSSN scale factors against the exact Friedmann
+  solutions, every BSSN algebraic constraint (determinant, trace-free,
+  connection), the conformal Ricci decomposition against the independently
+  computed physical Ricci, deliberate algebraic violations with their explicit
+  projections, and the off-constraint ADM/BSSN `d_t K` difference shown to be
+  exactly `alpha * H`. No spatial grid, so nothing about hyperbolicity or
+  numerical stability is tested or claimed; see
+  [`docs/LAYER_3_BSSN.md`](../../docs/LAYER_3_BSSN.md).

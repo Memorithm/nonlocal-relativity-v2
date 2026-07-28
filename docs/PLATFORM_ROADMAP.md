@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)) and homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)) delivered; a spatial grid and BSSN are next |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), and the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)) delivered; a spatial grid and live gauge are next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -359,9 +359,34 @@ off the constraint surface (`adm_homogeneous` tests +
 **nothing** about ADM's stability for inhomogeneous data, and it is not a
 cosmological model.
 
-A discretized spatial grid — at which point ADM's weak hyperbolicity becomes the
-governing concern and BSSN the natural next design note — is the next Layer 3
-frontier.
+Its third increment — the **BSSN formulation core** (Layer 3.3) — is also
+**delivered** (design & conventions: [`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)). The
+`bssn` module implements the conformal-traceless variable transformation
+(`phi` canonical, `chi` derived; `gammatilde_ij`, `K`, `Atilde_ij`,
+`Gammatilde^i`) and its inverse, the three algebraic constraints reported
+separately, explicit never-silent projections with pre/post residuals and
+idempotence, the conformal Ricci decomposition `R_ij = Rtilde_ij + Rphi_ij`
+(with `Rtilde` reusing the Layer 1 Ricci engine — only `Rphi` is new — and the
+sum cross-checked against the independently computed physical Ricci to the
+nested finite-difference floor, `~7e-7` on a component scale of `1.7e-1`), and
+the local evolution right-hand sides with every additive term exposed.
+
+Deriving it surfaced a second **real reconciliation issue**, found numerically
+before any code was written: the standard BSSN `d_t K` is the
+**constraint-substituted** form (it uses the Hamiltonian constraint to eliminate
+`R`), so ADM/BSSN right-hand-side equivalence is exact only *on the constraint
+surface*. Off it the two differ by **exactly** `alpha * H` — measured difference
+`-0.8942257331` versus `alpha * H = -0.8942257331`, agreeing to `0.000e0`. The
+API reports both the raw and the constraint-corrected difference (`3.87e-1` and
+`5.55e-17` in the experiment), so the residual is visibly accounted for rather
+than tuned away. `d_t phi`, `d_t gammatilde_ij`, and `d_t Atilde_ij` are
+equivalent to ADM unconditionally.
+
+**Implementing BSSN does not, by itself, demonstrate numerical stability** —
+strong hyperbolicity is a property of the full system including gauge and the
+principal part on a discretized domain, none of which exists here. A discretized
+spatial grid, together with the live gauge conditions a practical BSSN evolution
+requires, is the next Layer 3 frontier.
 
 ## What this platform will not do
 
