@@ -30,3 +30,7 @@ harness = false
 [[bench]]
 name = "adm_evolution"
 harness = false
+
+[[bench]]
+name = "adm_homogeneous"
+harness = false
