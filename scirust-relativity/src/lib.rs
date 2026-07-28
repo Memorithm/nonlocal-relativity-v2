@@ -57,7 +57,14 @@
 //!   supplied spatial data (not extracted from an already-known 4-metric, which
 //!   is what [`adm`] does), reusing [`ricci_tensor_from_metric`] and
 //!   [`numerical_christoffel`] at `D = 3` and validated on Minkowski, a static
-//!   Schwarzschild slice, flat FLRW, and deliberate constraint violations.
+//!   Schwarzschild slice, flat FLRW, and deliberate constraint violations;
+//! - homogeneous ADM time evolution ([`adm_homogeneous`]) — Layer 3.2: free
+//!   evolution of spatially homogeneous ADM data with a barotropic perfect
+//!   fluid, integrating the Layer 3.1 right-hand sides through the existing
+//!   [`scirust_sim::simulate`] RK4 (no new integrator), with the Hamiltonian
+//!   constraint monitored as a per-sample diagnostic and validated against the
+//!   exact de Sitter, dust, and radiation solutions. Restricted to the
+//!   homogeneous sector, where ADM's weak hyperbolicity cannot arise.
 //!
 
 //! The crate does not assume that fractional calculus modifies general
@@ -86,6 +93,7 @@
 pub mod action;
 pub mod adm;
 pub mod adm_evolution;
+pub mod adm_homogeneous;
 mod connection;
 mod covariant_transport;
 mod curvature;
