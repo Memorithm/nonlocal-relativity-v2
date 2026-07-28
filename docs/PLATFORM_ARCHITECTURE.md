@@ -220,6 +220,21 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   matter-term sign, corrected from the naive textbook copy after this numerical
   check), and deliberate constraint violations. See
   `docs/LAYER_3_ADM_EVOLUTION.md`.
+- **Homogeneous ADM time evolution (Layer 3.2):** the `adm_homogeneous` module
+  integrates the Layer 3.1 right-hand sides *forward in time*
+  (`evolve_homogeneous`) for spatially homogeneous data with a barotropic
+  perfect fluid (`BarotropicFluid`, `p = w rho`), reusing the existing
+  `scirust_sim::simulate` RK4 through its `System` trait — **no new
+  integrator**. The Hamiltonian constraint is monitored as a per-sample
+  diagnostic (`HomogeneousSample`), never enforced or damped: free evolution.
+  Restricted to the homogeneous sector on purpose — ADM is only weakly
+  hyperbolic, so inhomogeneous grid evolution is unstable, while here all
+  spatial derivatives vanish identically and exact solutions exist. Validated
+  against the exact de Sitter / dust / radiation Friedmann solutions (read from
+  the existing `ExponentialScaleFactor` / `PowerLawScaleFactor`), fourth-order
+  convergence, constraint preservation, and detection of off-constraint initial
+  data. Carries a typed `HomogeneousEvolutionError`. See
+  `docs/LAYER_3_HOMOGENEOUS_EVOLUTION.md`.
 - **Backgrounds:** Minkowski (Cartesian and spherical), Schwarzschild,
   isotropic Schwarzschild, Reissner–Nordström, Kerr, de Sitter, anti-de Sitter,
   spatially flat FLRW, and Painlevé–Gullstrand (a horizon-penetrating
@@ -230,19 +245,20 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 145 across nineteen integration-test files (curvature, geometry,
+- **Tests:** 157 across twenty integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
-  adm_evolution).
+  adm_evolution, adm_homogeneous).
 - **Benchmarks:** `benches/geometry_core.rs`, `benches/ppn.rs`,
-  `benches/action.rs`, `benches/adm.rs`, and `benches/adm_evolution.rs`
-  (`criterion`, `harness = false`) time the hot paths — Christoffel,
-  `invert_metric`, the curvature engine, RK4 transport, world-function / van
-  Vleck shooting, PPN sampling / extrapolation / extraction, the metric-only
-  Ricci scalar / action variation, the ADM decomposition / constraints, and the
-  ADM Hamiltonian / momentum / evolution-RHS evaluators. Wall-clock, so
-  machine-dependent — the library
+  `benches/action.rs`, `benches/adm.rs`, `benches/adm_evolution.rs`, and
+  `benches/adm_homogeneous.rs` (`criterion`, `harness = false`) time the hot
+  paths — Christoffel, `invert_metric`, the curvature engine, RK4 transport,
+  world-function / van Vleck shooting, PPN sampling / extrapolation /
+  extraction, the metric-only Ricci scalar / action variation, the ADM
+  decomposition / constraints, the ADM Hamiltonian / momentum / evolution-RHS
+  evaluators, and the homogeneous evolution's per-step and whole-integration
+  cost. Wall-clock, so machine-dependent — the library
   stays deterministic.
 
 ### 2.5 `scirust-nonlocal-relativity` — hereditary worldline dynamics (Layer 4, experimental)
@@ -282,7 +298,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Twenty-one deterministic experiment binaries, each printing a `#`-prefixed
+Twenty-two deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -293,7 +309,7 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 `covariant_transport`, `flrw_curvature`, `geodesic_deviation`, `exponential_map`,
 `orthonormal_tetrad`, `world_function`, `van_vleck_determinant`) plus the Layer 2
 `linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`,
-and the Layer 3 `adm_constraint_sweep`.
+and the Layer 3 `adm_constraint_sweep` and `adm_homogeneous_evolution`.
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -380,12 +396,13 @@ work):
   *path-triggered* and text-scanned for forbidden markers, but never compiled,
   tested, or run in CI (it is absent from every `-p` list, and the examples job
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
-- **Documentation drift (largely resolved):** 21 experiment binaries on disk;
+- **Documentation drift (largely resolved):** 22 experiment binaries on disk;
   the experiments README now itemises both the six phenomenological binaries and
-  the fifteen established-GR / Layer 3 ones (geometry core plus the Layer 2
+  the sixteen established-GR / Layer 3 ones (geometry core plus the Layer 2
   `linearized_gravity`, `ppn_extraction`, `action_variation`, and
-  `adm_kinematics`, and the Layer 3 `adm_constraint_sweep`). The remaining
-  drift is the paper's reproduction section, which still lists only 3.
+  `adm_kinematics`, and the Layer 3 `adm_constraint_sweep` and
+  `adm_homogeneous_evolution`). The remaining drift is the paper's reproduction
+  section, which still lists only 3.
 - ~~**No performance benchmarks anywhere** in the subgraph — no `benches/`, no
   `criterion`/`iai`/`divan`.~~ **Resolved:** `criterion` wall-clock benches now
   cover the geometry-core hot paths (`scirust-relativity/benches/geometry_core.rs`)
@@ -446,11 +463,15 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   oracles. Its first increment — the **ADM constraint and evolution core**
   (the `adm_evolution` module: the Hamiltonian/momentum constraints and the
   `partial_t gamma_ij` / `partial_t K_ij` evolution right-hand sides, evaluated
-  from independently supplied 3+1 data) — is delivered. No perturbation theory,
-  self-force, or ADM/BSSN *time* evolution yet: these are right-hand-side
-  evaluators at a single point, not a stepper, and no spatial grid exists.
-  `scirust-sim` still lacks the dense output, event detection, and
-  constraint-preserving/projection integration that a real evolution needs.
+  from independently supplied 3+1 data) and its second — **homogeneous ADM time
+  evolution** (the `adm_homogeneous` module: those right-hand sides integrated
+  forward by the existing RK4, with constraint monitoring, validated against the
+  exact Friedmann solutions) — are delivered. Still absent: perturbation theory,
+  self-force, **any spatial grid**, and therefore any inhomogeneous evolution —
+  ADM's weak hyperbolicity makes that unstable, which is exactly why BSSN
+  remains deferred until a grid exists to need it. `scirust-sim` still lacks the
+  dense output, event detection, and constraint-preserving/projection
+  integration that a full evolution code needs.
 - **Layer 4 (Gravitational Memory) — experimental prototype only.** The
   fractional-memory worldline layer exists and is clearly labelled
   phenomenological; standard/Christodoulou memory and detector response are
@@ -500,9 +521,14 @@ Additive, each validated against an oracle, each one PR:
     (`docs/LAYER_3_ADM_EVOLUTION.md`); the **ADM constraint and evolution core**
     (the `adm_evolution` module: Hamiltonian/momentum constraints and the
     `partial_t gamma_ij` / `partial_t K_ij` right-hand sides from independently
-    supplied 3+1 data, not extracted from a known 4-metric) is *done*. Next: a
-    discretized spatial grid and a time integrator to actually evolve
-    `(gamma_ij, K_ij)`, at which point BSSN becomes the natural design note.
+    supplied 3+1 data, not extracted from a known 4-metric) and **homogeneous
+    ADM time evolution** (the `adm_homogeneous` module,
+    `docs/LAYER_3_HOMOGENEOUS_EVOLUTION.md`: those right-hand sides integrated
+    forward by the existing `scirust_sim::simulate` RK4, with the Hamiltonian
+    constraint monitored and validated against the exact de Sitter / dust /
+    radiation solutions) are *done*. Next: a discretized spatial grid, at which
+    point ADM's weak hyperbolicity becomes governing and BSSN the natural design
+    note.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.

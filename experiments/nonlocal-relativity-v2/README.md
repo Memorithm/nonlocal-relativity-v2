@@ -240,3 +240,13 @@ Layer 3 — Numerical Relativity:
   constraint-violating states at several amplitudes, and a rejected singular
   spatial metric; see
   [`docs/LAYER_3_ADM_EVOLUTION.md`](../../docs/LAYER_3_ADM_EVOLUTION.md).
+- `adm_homogeneous_evolution` — those right-hand sides integrated **forward in
+  time** by the platform's existing fixed-step RK4, for spatially homogeneous
+  data with a barotropic perfect fluid: the evolved scale factor against the
+  exact de Sitter, dust, and radiation solutions, the fourth-order convergence
+  ratio (`~2^4 = 16` per step halving), the worst Hamiltonian constraint
+  residual along each trajectory (monitored, never enforced), and initial data
+  seeded deliberately off the constraint surface staying visibly violated.
+  Homogeneous sector only — it says nothing about ADM's stability for
+  inhomogeneous data, and it is not a cosmological model; see
+  [`docs/LAYER_3_HOMOGENEOUS_EVOLUTION.md`](../../docs/LAYER_3_HOMOGENEOUS_EVOLUTION.md).

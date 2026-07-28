@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core delivered ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)); a spatial grid, time integrator, and BSSN are next |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)) and homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)) delivered; a spatial grid and BSSN are next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -331,9 +331,37 @@ a static Schwarzschild slice (whose lapse-Hessian/Ricci-tensor combination must
 cancel exactly for a time-independent solution), flat FLRW (reduces to the first
 Friedmann equation), and deliberate constraint violations with closed-form,
 monotonically scaling residuals (`adm_evolution` tests + `adm_constraint_sweep`
-experiment + `adm_evolution` benches). A discretized spatial grid and a time
-integrator — at which point ADM's weak hyperbolicity will make BSSN the natural
-next design note — are the next Layer 3 frontier.
+experiment + `adm_evolution` benches).
+
+Its second increment — **homogeneous ADM time evolution** (Layer 3.2) — is also
+**delivered** (design & conventions:
+[`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)). The
+`adm_homogeneous` module integrates the Layer 3.1 right-hand sides *forward in
+time* through the platform's existing `scirust_sim::simulate` RK4 (no new
+integrator), for spatially homogeneous data with a barotropic perfect fluid
+`p = w rho`, and monitors the Hamiltonian constraint as a **per-sample
+diagnostic that is never enforced, projected, or damped** — the posture of a
+real free-evolution code. The restriction to the homogeneous sector is
+deliberate and scientific, not a shortcut: ADM is only *weakly hyperbolic*, so
+free evolution of generic inhomogeneous data on a grid is unstable (which is
+precisely why BSSN exists), whereas every field here is position-independent, so
+all spatial derivatives vanish identically, the pathology cannot arise, and
+exact closed-form solutions exist to check against. Validated against the three
+exact Friedmann solutions — de Sitter (`a = exp(H t)`), dust (`a ~ t^(2/3)`),
+and radiation (`a ~ t^(1/2)`), each read from the repository's
+already-validated [`ExponentialScaleFactor`] / [`PowerLawScaleFactor`] rather
+than retyped — recovering fourth-order convergence (the error falls by
+`~2^4 = 16` per step halving, so RK4's order survives the finite-difference
+right-hand sides), constraint preservation at the integration-error floor (down
+to `1.1e-15` for de Sitter), and detection of initial data seeded deliberately
+off the constraint surface (`adm_homogeneous` tests +
+`adm_homogeneous_evolution` experiment + `adm_homogeneous` benches). This says
+**nothing** about ADM's stability for inhomogeneous data, and it is not a
+cosmological model.
+
+A discretized spatial grid — at which point ADM's weak hyperbolicity becomes the
+governing concern and BSSN the natural next design note — is the next Layer 3
+frontier.
 
 ## What this platform will not do
 
