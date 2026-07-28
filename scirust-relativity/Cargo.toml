@@ -34,3 +34,7 @@ harness = false
 [[bench]]
 name = "adm_homogeneous"
 harness = false
+
+[[bench]]
+name = "bssn"
+harness = false
