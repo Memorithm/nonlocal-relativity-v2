@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), and the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)) delivered; a spatial grid and live gauge are next |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last being second-order accurate but **measurably unstable**; a derivative-injecting refactor and live gauge are next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -387,6 +387,39 @@ strong hyperbolicity is a property of the full system including gauge and the
 principal part on a discretized domain, none of which exists here. A discretized
 spatial grid, together with the live gauge conditions a practical BSSN evolution
 requires, is the next Layer 3 frontier.
+
+Its fourth increment — **BSSN on a periodic one-dimensional grid** (Layer 3.4) —
+is **delivered**, and its headline result is **negative**
+(design: [`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)). The
+`grid1d` and `bssn_grid` modules supply a half-open periodic grid, centred
+finite-difference operators, a grid-backed derivative provider, and a
+method-of-lines adapter that integrates through the existing
+`scirust_sim::simulate` RK4. This is the first increment in which BSSN is a
+partial differential equation rather than an algebraic identity. It is a **1D3V
+reduction** — one spatially varying coordinate, full 3x3 tensors — not a
+three-dimensional numerical-relativity solver.
+
+The pipeline is second-order accurate and the measurements are clean: Minkowski
+is *exactly* stationary (`0.000000e0` state change at every resolution); the
+conformal Ricci reconstruction converges at observed order **1.97 / 1.99 /
+2.00** — turning Layer 3.3's unexplained `~1e-6` "finite-difference floor" into
+truncation error with an error model; short-time wave propagation converges at
+**1.96 / 1.99 / 2.00**; and RK4 retains **4.00 / 4.00 / 3.99** against a fixed
+spatial operator.
+
+But the evolution is **not stable**, and that is reported rather than hidden.
+Reusing Layer 3.3's nested finite differences forces every spatial operator onto
+a `2 dx` stencil whose second-difference symbol `2 cos(2 theta) - 2` vanishes at
+the Nyquist mode, leaving the highest grid frequency in the null space of the
+principal part. `N = 32` survives to `t = 1` at every Courant factor from `0.1`
+to `2.0`; `N = 64` and `N = 128` fail at **every** Courant factor, with an onset
+time independent of the timestep that roughly halves as the resolution doubles.
+Explicit Kreiss-Oliger dissipation — implemented, disabled by default — does not
+cure it: at `N = 128` it moves the onset only from `t = 0.50` to `t = 0.60`, and
+at `N = 64` the coefficient that averts the abort inflates the physical wave
+amplitude by `2.3e3`. **Dissipation is not used anywhere to make a result look
+better than it is.** The principled fix — a derivative-injecting entry point in
+`bssn.rs` removing the `2 dx` span — is the recommended next increment.
 
 ## What this platform will not do
 

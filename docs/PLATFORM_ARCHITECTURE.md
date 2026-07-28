@@ -130,6 +130,19 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   a constraint-corrected difference. **Implementing BSSN does not demonstrate
   numerical stability**; there is no spatial grid and no live gauge. See
   `docs/LAYER_3_BSSN.md`.
+- **BSSN on a periodic 1D grid (Layer 3.4):** the `grid1d` module supplies a
+  half-open uniform periodic grid (`UniformGrid1d`, `x_n = x_min + n dx`,
+  `dx = L / N`, Euclidean-remainder wrapping) with centred periodic first and
+  second derivatives and deterministic `GridReduction` norms; the `bssn_grid`
+  module supplies `BssnGridState` (17 structure-of-arrays components per point),
+  grid-backed `GridMetric` / `GridCurvature` providers that drive the *unmodified*
+  Layer 3.3 evaluators, `bssn_grid_rhs`, a `BssnGridSystem` implementing
+  `scirust_sim::System`, `bssn_grid_constraints`, `bssn_grid_ricci_report`,
+  opt-in grid projections, and an opt-in `kreiss_oliger_term` (off by default).
+  Carries a typed `BssnGridError` with time, grid index, field, and category.
+  **The pipeline is second-order accurate but the discretisation is measurably
+  unstable** — see `docs/LAYER_3_BSSN_PERIODIC_1D.md` §13. 1D3V only: one
+  spatially varying coordinate, not a 3D solver.
 - **Backgrounds:** `Minkowski`, `MinkowskiSpherical`, `Schwarzschild`,
   `IsotropicSchwarzschild`, `ReissnerNordstrom`, `Kerr`, `DeSitter`,
   `AntiDeSitter`, and `Flrw<S: ScaleFactor>` (spatially flat cosmology, generic
@@ -261,14 +274,14 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 172 across twenty-one integration-test files (curvature, geometry,
+- **Tests:** 206 across twenty-three integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
-  adm_evolution, adm_homogeneous, bssn).
+  adm_evolution, adm_homogeneous, bssn, grid1d, bssn_grid).
 - **Benchmarks:** `benches/geometry_core.rs`, `benches/ppn.rs`,
   `benches/action.rs`, `benches/adm.rs`, `benches/adm_evolution.rs`,
-  `benches/adm_homogeneous.rs`, and `benches/bssn.rs` (`criterion`,
+  `benches/adm_homogeneous.rs`, `benches/bssn.rs`, and `benches/bssn_grid.rs` (`criterion`,
   `harness = false`) time the hot
   paths — Christoffel, `invert_metric`, the curvature engine, RK4 transport,
   world-function / van Vleck shooting, PPN sampling / extrapolation /
@@ -317,7 +330,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Twenty-three deterministic experiment binaries, each printing a `#`-prefixed
+Twenty-four deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -329,7 +342,7 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 `orthonormal_tetrad`, `world_function`, `van_vleck_determinant`) plus the Layer 2
 `linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`,
 and the Layer 3 `adm_constraint_sweep`, `adm_homogeneous_evolution`, and
-`bssn_homogeneous_evolution`.
+`bssn_homogeneous_evolution`, and `bssn_periodic_1d_evolution`.
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -418,10 +431,11 @@ work):
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
 - **Documentation drift (largely resolved):** 23 experiment binaries on disk;
   the experiments README now itemises both the six phenomenological binaries and
-  the seventeen established-GR / Layer 3 ones (geometry core plus the Layer 2
+  the eighteen established-GR / Layer 3 ones (geometry core plus the Layer 2
   `linearized_gravity`, `ppn_extraction`, `action_variation`, and
   `adm_kinematics`, and the Layer 3 `adm_constraint_sweep`,
-  `adm_homogeneous_evolution`, and `bssn_homogeneous_evolution`). The remaining
+  `adm_homogeneous_evolution`, `bssn_homogeneous_evolution`, and
+  `bssn_periodic_1d_evolution`). The remaining
   drift is the paper's reproduction section, which still lists only 3.
 - ~~**No performance benchmarks anywhere** in the subgraph — no `benches/`, no
   `criterion`/`iai`/`divan`.~~ **Resolved:** `criterion` wall-clock benches now
@@ -491,7 +505,10 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   conformal Ricci decomposition, and local right-hand sides, validated against
   the ADM system) — are delivered. Still absent: perturbation theory,
   self-force, **any spatial grid**, live gauge, and therefore any inhomogeneous
-  evolution. Implementing BSSN does not by itself establish strong
+  evolution, and its fourth — **BSSN on a periodic 1D grid** (the `grid1d` and
+  `bssn_grid` modules: periodic finite differences, a grid-backed derivative
+  provider, and method-of-lines RK4), which is second-order accurate but
+  **measurably unstable** and says so. Implementing BSSN does not by itself establish strong
   hyperbolicity. `scirust-sim` still lacks the dense output, event detection,
   and constraint-preserving/projection integration that a full evolution code
   needs.
@@ -550,8 +567,11 @@ Additive, each validated against an oracle, each one PR:
     forward by the existing `scirust_sim::simulate` RK4, with the Hamiltonian
     constraint monitored and validated against the exact de Sitter / dust /
     radiation solutions) and the **BSSN formulation core** (the `bssn` module,
-    `docs/LAYER_3_BSSN.md`) are *done*. Next: a discretized spatial grid and the
-    live gauge conditions a practical BSSN evolution requires.
+    `docs/LAYER_3_BSSN.md`) and the **periodic 1D BSSN grid**
+    (`grid1d` + `bssn_grid`, `docs/LAYER_3_BSSN_PERIODIC_1D.md`) are *done* — the
+    last with a measured instability traced to the reused `2 dx` stencil. Next: a
+    derivative-injecting entry point in `bssn.rs` to remove that `2 dx` span, then
+    the live gauge conditions a practical BSSN evolution requires.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.
