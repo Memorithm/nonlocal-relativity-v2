@@ -156,7 +156,12 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   `Gammatilde^k Gammatilde_{(ij)k}` — the connection contracts the *last* index,
   not the first — which one dimension could not detect because `Gammatilde^k` is
   nearly zero there. With it fixed the BSSN-form and generic Ricci tensors
-  converge onto each other at order 2 in 2D as they already did in 1D. Carries the platform's first **live gauge**: 1+log slicing
+  converge onto each other at order 2 in 2D as they already did in 1D. Layer 3.6
+  supplies the evidence 3.5 lacked: a genuinely two-dimensional closed-form
+  evolution oracle (the diagonal 1+log gauge wave, converging at order 2.00),
+  long-time bounded evolution at every resolution and Courant factor tested, a
+  deterministic 2D experiment, and 2D benchmarks — see
+  `docs/LAYER_3_BSSN_PERIODIC_2D.md`. Stability remains **measured, not proven**. Carries the platform's first **live gauge**: 1+log slicing
   (`bssn::one_plus_log_lapse_rhs`, `BssnSlicing::OnePlusLog`) with the lapse an
   evolved field (slot 17 of 18) and the covariant lapse Hessian supplied to
   `d_t K` and `d_t Atilde_ij`, validated against the exact `sqrt(2)` gauge speed;
@@ -297,7 +302,7 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 231 across twenty-three integration-test files (curvature, geometry,
+- **Tests:** 235 across twenty-three integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
@@ -353,7 +358,7 @@ bit-for-bit unchanged. Determinism is enforced by `.to_bits()` bit-identity test
 
 ### 2.6 `experiments/nonlocal-relativity-v2`
 
-Twenty-four deterministic experiment binaries, each printing a `#`-prefixed
+Twenty-five deterministic experiment binaries, each printing a `#`-prefixed
 metadata header (units, determinism, provenance commit, scientific-category
 label) then CSV, with finiteness validation and a non-overclaiming
 interpretation. They split by scientific category: the **experimental,
@@ -365,7 +370,8 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 `orthonormal_tetrad`, `world_function`, `van_vleck_determinant`) plus the Layer 2
 `linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`,
 and the Layer 3 `adm_constraint_sweep`, `adm_homogeneous_evolution`, and
-`bssn_homogeneous_evolution`, and `bssn_periodic_1d_evolution`.
+`bssn_homogeneous_evolution`, `bssn_periodic_1d_evolution`, and
+`bssn_periodic_2d_evolution`.
 
 ## 3. Validated mathematics (oracle inventory)
 
@@ -454,7 +460,7 @@ work):
   only covers `scirust-nonlocal-relativity`). An experiment could break silently.
 - **Documentation drift (largely resolved):** 23 experiment binaries on disk;
   the experiments README now itemises both the six phenomenological binaries and
-  the eighteen established-GR / Layer 3 ones (geometry core plus the Layer 2
+  the nineteen established-GR / Layer 3 ones (geometry core plus the Layer 2
   `linearized_gravity`, `ppn_extraction`, `action_variation`, and
   `adm_kinematics`, and the Layer 3 `adm_constraint_sweep`,
   `adm_homogeneous_evolution`, `bssn_homogeneous_evolution`, and

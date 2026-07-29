@@ -1844,6 +1844,16 @@ fn anisotropic_grids_are_rejected() {
         Err(scirust_relativity::bssn_grid::BssnGridError::AnisotropicGrid)
     );
 
+    // And the typed reason survives the integrator path too. `System::derivatives`
+    // cannot return an error, so without an up-front check the caller would be
+    // told "state became non-finite; reduce the step size" -- useless and wrong
+    // advice for a grid whose cells are not square.
+    let system = BssnGridSystem::vacuum(stretched);
+    assert_eq!(
+        evolve_bssn_grid(&system, &state, 0.0, 0.1, 0.01),
+        Err(scirust_relativity::bssn_grid::BssnGridError::AnisotropicGrid)
+    );
+
     // A square grid with the same point count per axis is accepted.
     let square = UniformGrid2d::from_axes([16, 16], [0.0, 0.0], [1.0, 1.0]).expect("valid");
     assert!(square.uniform_spacing().is_some());
@@ -1859,4 +1869,116 @@ fn anisotropic_grids_are_rejected() {
         )
         .is_ok()
     );
+}
+
+// ---------------------------------------------------------------------------
+// Two-dimensional evolution: convergence and stability
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_dimensional_gauge_wave_converges_at_second_order() {
+    // A genuinely two-dimensional closed-form oracle. On flat space with K = 0,
+    // 1+log slicing linearises to `d_t^2 alpha = 2 grad^2 alpha`, and for
+    // `alpha = 1 + A sin(k(x+y))` the Laplacian gives `-2 k^2`, so
+    //
+    //     alpha(t) = 1 + A cos(2 k t) sin(k(x + y))
+    //
+    // exactly. Both axes are exercised, unlike any 1D configuration.
+    //
+    // TWO choices here are load-bearing and were both got wrong on the first
+    // attempt:
+    //
+    //  - `t_end = 1/8` gives `omega t = pi/2`, where a phase error shows up at
+    //    FIRST order as an amplitude error. At `t = 1/4` the oracle sits on an
+    //    extremum of the cosine, where a phase error only shows at second order:
+    //    that sampling time reported a flattering order ~4 and errors two orders
+    //    of magnitude smaller than the truth.
+    //  - `dt` is FIXED rather than tied to `dx`, so refining the grid isolates
+    //    the spatial order instead of refining space and time together.
+    let k = TWO_PI;
+    let amplitude = 1.0e-6_f64;
+    let t_end = 0.125_f64;
+    let step = 1.0 / 1024.0;
+    let mut errors = Vec::new();
+
+    for &points in &[16_usize, 32]
+    {
+        let grid = unit_square(points);
+        let mut initial = BssnGridState::minkowski(grid);
+        for index in 0..grid.total_points()
+        {
+            let p = grid.position(index);
+            initial.set_lapse_at(index, 1.0 + amplitude * (k * (p[0] + p[1])).sin());
+        }
+
+        let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, step).expect("2D gauge wave");
+        let last = samples.last().expect("final sample");
+
+        let mut worst = 0.0_f64;
+        for index in 0..grid.total_points()
+        {
+            let p = grid.position(index);
+            let exact = 1.0 + amplitude * (2.0 * k * last.time).cos() * (k * (p[0] + p[1])).sin();
+            worst = worst.max((last.state.lapse_at(index) - exact).abs());
+        }
+        errors.push(worst);
+    }
+
+    let order = observed_order(errors[0], errors[1]);
+    assert!(
+        (order - 2.0).abs() < 0.15,
+        "2D gauge-wave spatial order {order} from {errors:?}"
+    );
+    // And the residual is well below the perturbation, so the wave is tracked
+    // rather than merely small.
+    assert!(
+        errors.iter().all(|value| *value < amplitude / 50.0),
+        "2D gauge-wave errors are not small against A = {amplitude}: {errors:?}"
+    );
+}
+
+#[test]
+fn two_dimensional_evolution_is_stable_over_long_times() {
+    // The gap this closes: Layer 3.5 shipped a validated 2D right-hand side and
+    // a stationary Minkowski, but never measured that a 2D *evolution* stays
+    // bounded. Layer 3.4 is the cautionary precedent -- an accurate right-hand
+    // side there coexisted with an unstable evolution.
+    let k = TWO_PI;
+    let amplitude = 1.0e-3_f64;
+
+    for &points in &[16_usize, 32]
+    {
+        let grid = unit_square(points);
+        let mut initial = BssnGridState::minkowski(grid);
+        for index in 0..grid.total_points()
+        {
+            let p = grid.position(index);
+            initial.set_lapse_at(index, 1.0 + amplitude * (k * (p[0] + p[1])).sin());
+        }
+
+        let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, 2.0, 0.25 * grid.spacing_along(0))
+            .unwrap_or_else(|error| panic!("2D N = {points} failed to reach t = 2: {error}"));
+
+        // Bounded, and bounded by something near unity rather than merely
+        // finite: the lapse is O(1) and every other field is O(A).
+        let worst = max_abs(samples.last().expect("final").state.as_slice());
+        assert!(
+            worst < 1.01,
+            "2D N = {points} grew to {worst} -- the evolution is not bounded"
+        );
+
+        // The constraints stay at the perturbation's own nonlinear level.
+        let constraints = bssn_grid_constraints(
+            &samples.last().expect("final").state.view(),
+            &AdmSources::VACUUM,
+        )
+        .expect("constraints");
+        assert!(
+            constraints.determinant.max_abs < 1.0e-10,
+            "2D determinant constraint drifted to {}",
+            constraints.determinant.max_abs
+        );
+    }
 }
