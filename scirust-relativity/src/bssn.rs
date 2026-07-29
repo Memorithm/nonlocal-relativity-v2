@@ -964,7 +964,7 @@ fn evolution_rhs_inner<G: Metric<3>>(
     gauge: &BssnGauge,
     sources: &AdmSources,
     settings: &AdmEvolutionSettings,
-    supplied_ricci: Option<&ConformalRicci>,
+    supplied: Option<&BssnSuppliedTerms<'_>>,
 ) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
     if !gauge.lapse.is_finite() || gauge.shift.iter().any(|v| !v.is_finite())
     {
@@ -1011,8 +1011,17 @@ fn evolution_rhs_inner<G: Metric<3>>(
         }
     }
 
+    // The covariant lapse Hessian `D_i D_j alpha`. Exactly zero for a prescribed
+    // constant lapse; supplied by the caller once the lapse is live.
+    let lapse_hessian = match supplied
+    {
+        Some(terms) => covariant_lapse_hessian(&state, terms.derivatives, terms.lapse)?,
+        None => [[0.0_f64; 3]; 3],
+    };
+    let lapse_laplacian = trace_with(&physical_inverse, &lapse_hessian);
+
     // d_t K (the constraint-substituted form; see the module documentation).
-    let mean_curvature_lapse_term = 0.0; // D^i D_i alpha = 0 for a constant lapse.
+    let mean_curvature_lapse_term = -lapse_laplacian;
     let mean_curvature_quadratic_term = alpha * (curvature_squared + trace_k * trace_k / 3.0);
     let mean_curvature_matter_term = 4.0 * PI * alpha * (sources.energy_density + stress_trace);
     let mean_curvature_shift_term = 0.0;
@@ -1022,9 +1031,9 @@ fn evolution_rhs_inner<G: Metric<3>>(
         + mean_curvature_shift_term;
 
     // d_t Atilde_ij.
-    let ricci = match supplied_ricci
+    let ricci = match supplied
     {
-        Some(value) => *value,
+        Some(terms) => *terms.ricci,
         None => conformal_ricci(spatial_metric, coordinates, settings)?,
     };
     let mut ricci_source = [[0.0_f64; 3]; 3];
@@ -1055,7 +1064,9 @@ fn evolution_rhs_inner<G: Metric<3>>(
                 scale * (ricci_source[i][j] - physical[i][j] * ricci_trace / 3.0);
             conformal_curvature_matter_term[i][j] =
                 scale * (matter_source[i][j] - physical[i][j] * matter_trace / 3.0);
-            conformal_curvature_lapse_term[i][j] = 0.0; // constant lapse
+            // -e^{-4 phi} ( D_i D_j alpha )^TF
+            conformal_curvature_lapse_term[i][j] =
+                scale * (-lapse_hessian[i][j] + physical[i][j] * lapse_laplacian / 3.0);
             let mut quadratic = 0.0;
             for k in 0..3
             {
@@ -1338,6 +1349,7 @@ pub struct BssnConnectionRhs {
 pub fn bssn_connection_rhs(
     state: &BssnState,
     derivatives: &BssnSpatialDerivatives,
+    lapse: &BssnLapseDerivatives,
     gauge: &BssnGauge,
     sources: &AdmSources,
 ) -> Result<BssnConnectionRhs, BssnError> {
@@ -1389,10 +1401,14 @@ pub fn bssn_connection_rhs(
         mean_curvature_term[i] = -(4.0 / 3.0) * alpha * trace_gradient;
         conformal_factor_term[i] = 12.0 * alpha * factor_gradient;
 
-        // A prescribed constant lapse has no gradient, so this term is exactly
-        // zero; it is carried explicitly so a later live-gauge increment has a
-        // named place to fill in rather than a silent omission.
-        lapse_term[i] = 0.0;
+        // -2 Atilde^{ij} d_j alpha. Exactly zero for a prescribed constant
+        // lapse, non-zero once the lapse is live.
+        let mut lapse_gradient_contraction = 0.0;
+        for j in 0..3
+        {
+            lapse_gradient_contraction += curvature_up[i][j] * lapse.gradient[j];
+        }
+        lapse_term[i] = -2.0 * lapse_gradient_contraction;
 
         total[i] =
             christoffel_term[i] + mean_curvature_term[i] + conformal_factor_term[i] + lapse_term[i];
@@ -1622,7 +1638,7 @@ pub fn bssn_evolution_rhs_with_ricci<G: Metric<3>>(
     gauge: &BssnGauge,
     sources: &AdmSources,
     settings: &AdmEvolutionSettings,
-    ricci: &ConformalRicci,
+    supplied: &BssnSuppliedTerms<'_>,
 ) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
     evolution_rhs_inner(
         spatial_metric,
@@ -1631,6 +1647,127 @@ pub fn bssn_evolution_rhs_with_ricci<G: Metric<3>>(
         gauge,
         sources,
         settings,
-        Some(ricci),
+        Some(supplied),
     )
+}
+
+/// The precomputed terms a grid supplies to the BSSN evolution equations.
+///
+/// Bundled rather than passed separately because they always travel together:
+/// each is a quantity the grid can compute with compact stencils and the
+/// coordinate-sampled path cannot.
+#[derive(Debug, Clone, Copy)]
+pub struct BssnSuppliedTerms<'a> {
+    /// The conformal Ricci tensor in genuine BSSN form.
+    pub ricci: &'a ConformalRicci,
+    /// The first spatial derivatives of the evolved fields.
+    pub derivatives: &'a BssnSpatialDerivatives,
+    /// The lapse gradient and coordinate Hessian.
+    pub lapse: &'a BssnLapseDerivatives,
+}
+
+// ---------------------------------------------------------------------------
+// Live slicing: 1+log
+// ---------------------------------------------------------------------------
+
+/// The lapse gradient and coordinate Hessian a live slicing must supply.
+///
+/// `hessian` is the **coordinate** second derivative `d_i d_j alpha`; the
+/// covariant `D_i D_j alpha` is formed internally, because doing so needs the
+/// physical Christoffel symbols and a caller should not have to reconstruct
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnLapseDerivatives {
+    /// `d_i alpha`.
+    pub gradient: [f64; 3],
+    /// `d_i d_j alpha`.
+    pub hessian: [[f64; 3]; 3],
+}
+
+impl BssnLapseDerivatives {
+    /// A prescribed constant lapse: no gradient, no curvature.
+    pub const ZERO: Self = Self {
+        gradient: [0.0; 3],
+        hessian: [[0.0; 3]; 3],
+    };
+}
+
+/// The covariant lapse Hessian
+/// `D_i D_j alpha = d_i d_j alpha - Gamma^k_ij d_k alpha`, using the **physical**
+/// Christoffel symbols.
+///
+/// The physical connection follows from the conformal one by the standard
+/// relation
+///
+/// ```text
+/// Gamma^k_ij = Gammatilde^k_ij
+///            + 2 ( delta^k_i d_j phi + delta^k_j d_i phi
+///                  - gammatilde_ij gammatilde^{kl} d_l phi )
+/// ```
+///
+/// so the physical metric is never differenced a second time and the grid's
+/// compact stencils carry through unchanged.
+#[allow(clippy::needless_range_loop)]
+fn covariant_lapse_hessian(
+    state: &BssnState,
+    first: &BssnSpatialDerivatives,
+    lapse: &BssnLapseDerivatives,
+) -> Result<[[f64; 3]; 3], BssnError> {
+    let inverse = state.inverse_conformal_metric()?;
+    let conformal = christoffel_from_derivatives::<3>(&inverse, &first.conformal_metric_gradient);
+
+    // Raise the conformal-factor gradient with the conformal metric.
+    let mut raised_factor_gradient = [0.0_f64; 3];
+    for k in 0..3
+    {
+        let mut value = 0.0;
+        for l in 0..3
+        {
+            value += inverse[k][l] * first.conformal_factor_gradient[l];
+        }
+        raised_factor_gradient[k] = value;
+    }
+
+    let mut hessian = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            let mut correction = 0.0;
+            for k in 0..3
+            {
+                let delta_ki = if k == i { 1.0 } else { 0.0 };
+                let delta_kj = if k == j { 1.0 } else { 0.0 };
+                let physical_christoffel = conformal[k][i][j]
+                    + 2.0
+                        * (delta_ki * first.conformal_factor_gradient[j]
+                            + delta_kj * first.conformal_factor_gradient[i]
+                            - state.conformal_metric[i][j] * raised_factor_gradient[k]);
+                correction += physical_christoffel * lapse.gradient[k];
+            }
+            hessian[i][j] = lapse.hessian[i][j] - correction;
+        }
+    }
+    require_finite_tensor("covariant_lapse_hessian", &hessian)?;
+    Ok(hessian)
+}
+
+/// The 1+log slicing condition with zero shift:
+///
+/// ```text
+/// d_t alpha = -2 alpha K
+/// ```
+///
+/// This is the standard singularity-avoiding slicing. Linearised about flat
+/// space it makes the lapse obey a wave equation with characteristic speed
+/// `sqrt(2)` — *faster* than light, which is legitimate because the lapse is
+/// gauge and carries no physical signal. That speed is a sharp, closed-form
+/// oracle and is what this implementation is validated against.
+///
+/// The shift is **not** evolved: no Gamma-driver, no shift advection. With
+/// `beta^i = 0` the advective term `beta^j d_j alpha` vanishes identically, so
+/// this is the complete equation for the configuration supported here.
+#[must_use]
+pub fn one_plus_log_lapse_rhs(state: &BssnState, gauge: &BssnGauge) -> f64 {
+    -2.0 * gauge.lapse * state.mean_curvature
 }

@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last stable across every resolution tested once `Rtilde_ij` was written in genuine BSSN form; live gauge is next |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last stable across every resolution tested once `Rtilde_ij` was written in genuine BSSN form, and now carrying live 1+log slicing validated against the exact `sqrt(2)` gauge speed; the Gamma-driver shift is next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -426,7 +426,22 @@ resolution from `N = 32` to `N = 256` reaches `t = 4` with the error decreasing
 under refinement, the Courant boundary is a genuine resolution-**independent**
 `C <= 1`, and dissipation becomes a no-op. **Stability here is measured, not
 proven** — strong hyperbolicity is an analytic property of the continuum system
-and nothing here establishes it. Live gauge is the next increment.
+and nothing here establishes it.
+
+The increment closes with the first **live gauge**: 1+log slicing,
+`d_t alpha = -2 alpha K`, with the lapse an evolved field and the three terms
+that were structurally zero under a constant lapse (`-D^i D_i alpha` in
+`d_t K`, the trace-free lapse Hessian in `d_t Atilde_ij`, and
+`-2 Atilde^{ij} d_j alpha` in `d_t Gammatilde^i`) all supplied. It has a sharp
+closed-form oracle: linearised about flat space the lapse obeys a wave equation
+with characteristic speed exactly `sqrt(2)` — superluminal, and legitimately so,
+because the lapse is gauge and carries no signal. Measured against
+`alpha = 1 + A cos(sqrt(2) k t) sin(kx)`, the error converges at order **2.00 /
+2.00** with the amplitude ratio going `0.995309 -> 0.998828 -> 0.999708`.
+Prescribed slicing stays the **default**, so a live gauge is never enabled
+implicitly, and Minkowski is bit-for-bit undisturbed by turning it on. **The
+Gamma-driver shift is not implemented** — `beta^i = 0` throughout — and is the
+next increment.
 
 ## What this platform will not do
 

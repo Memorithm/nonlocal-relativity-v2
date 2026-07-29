@@ -14,7 +14,7 @@ use scirust_relativity::Metric;
 use scirust_relativity::adm_evolution::{AdmSources, SpatialTensorField};
 use scirust_relativity::bssn::bssn_to_adm;
 use scirust_relativity::bssn_grid::{
-    BssnGridState, BssnGridSystem, TransverseTracelessWave, bssn_grid_constraints,
+    BssnGridState, BssnGridSystem, BssnSlicing, TransverseTracelessWave, bssn_grid_constraints,
     bssn_grid_ricci_report, evolve_bssn_grid, project_grid_trace_free,
     project_grid_unit_determinant,
 };
@@ -102,7 +102,8 @@ fn main() {
     println!("# layer: scirust-relativity Layer 3.4 (established general relativity)");
     println!("# units: geometric G = c = 1; lengths and times in mass units M");
     println!("# grid: half-open periodic domain [0, 1), x_n = n dx, dx = 1 / N");
-    println!("# gauge: prescribed alpha = 1, beta^i = 0; gauge is NOT evolved");
+    println!("# gauge: alpha = 1, beta^i = 0 by default (prescribed); the gauge_wave section");
+    println!("#   uses LIVE 1+log slicing. The Gamma-driver shift is not implemented.");
     println!("# determinism: no RNG, no wall clock; identical inputs give identical output");
     println!(
         "# NOTE: Rtilde_ij is written in genuine BSSN form using the EVOLVED Gammatilde^k.\
@@ -297,6 +298,68 @@ fn main() {
         println!(
             "temporal_refinement,16,{steps},{:.6e},{difference:.6e},{observed},valid",
             step
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    println!("# live 1+log slicing: d_t alpha = -2 alpha K, zero shift.");
+    println!("#   Linearised about flat space the lapse obeys a wave equation with");
+    println!("#   characteristic speed sqrt(2) -- faster than light, which is legitimate");
+    println!("#   because the lapse is gauge and carries no physical signal. Standing-wave");
+    println!("#   data alpha = 1 + A sin(kx) with K = 0 evolves as");
+    println!("#   alpha = 1 + A cos(sqrt(2) k t) sin(kx), which is the oracle compared to.");
+    println!("#   The Gamma-driver shift is NOT implemented; beta^i = 0 throughout.");
+    println!(
+        "scenario,resolution,grid_spacing,timestep,final_time,amplitude,\
+         lapse_linf,numerical_amplitude,exact_amplitude,amplitude_ratio,\
+         observed_spatial_order,status"
+    );
+    let gauge_amplitude = 1.0e-6_f64;
+    let gauge_speed = 2.0_f64.sqrt();
+    let gauge_end = 0.25_f64;
+    let mut previous_gauge: Option<f64> = None;
+    for &points in &[32_usize, 64, 128]
+    {
+        let grid = grid_of(points);
+        let mut initial = BssnGridState::minkowski(grid);
+        for index in 0..grid.points()
+        {
+            initial.set_lapse_at(
+                index,
+                1.0 + gauge_amplitude * (k * grid.coordinate(index)).sin(),
+            );
+        }
+        let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+        let step = 0.1 * grid.spacing();
+        let samples =
+            evolve_bssn_grid(&system, &initial, 0.0, gauge_end, step).expect("gauge wave");
+        let last = samples.last().expect("final sample");
+
+        let mut worst = 0.0_f64;
+        let mut numerical = 0.0_f64;
+        for index in 0..grid.points()
+        {
+            let x = grid.coordinate(index);
+            let exact = 1.0 + gauge_amplitude * (gauge_speed * k * last.time).cos() * (k * x).sin();
+            let value = last.state.lapse_at(index);
+            worst = worst.max((value - exact).abs());
+            numerical = numerical.max((value - 1.0).abs());
+        }
+        let predicted = gauge_amplitude * (gauge_speed * k * last.time).cos().abs();
+        let observed = match previous_gauge
+        {
+            Some(previous) => order(previous, worst),
+            None => "n_a".to_string(),
+        };
+        previous_gauge = Some(worst);
+        println!(
+            "gauge_wave,{points},{:.6e},{:.6e},{:.4},{:.1e},{worst:.6e},{numerical:.6e},{predicted:.6e},{:.6},{observed},valid",
+            grid.spacing(),
+            step,
+            last.time,
+            gauge_amplitude,
+            numerical / predicted,
         );
     }
 

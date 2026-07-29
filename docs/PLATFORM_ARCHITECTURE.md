@@ -145,8 +145,13 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   the `d_t Gammatilde^i` equation Layer 3.3 deferred — together these remove the
   mixed second derivatives from the principal part. Using the generic metric
   Ricci instead is measurably unstable; see `docs/LAYER_3_BSSN_PERIODIC_1D.md`
-  §13. Stability is **measured, not proven**. 1D3V only: one spatially varying
-  coordinate, not a 3D solver.
+  §13. Carries the platform's first **live gauge**: 1+log slicing
+  (`bssn::one_plus_log_lapse_rhs`, `BssnSlicing::OnePlusLog`) with the lapse an
+  evolved field (slot 17 of 18) and the covariant lapse Hessian supplied to
+  `d_t K` and `d_t Atilde_ij`, validated against the exact `sqrt(2)` gauge speed;
+  prescribed slicing remains the default. The Gamma-driver shift is **not**
+  implemented. Stability is **measured, not proven**. 1D3V only: one spatially
+  varying coordinate, not a 3D solver.
 - **Backgrounds:** `Minkowski`, `MinkowskiSpherical`, `Schwarzschild`,
   `IsotropicSchwarzschild`, `ReissnerNordstrom`, `Kerr`, `DeSitter`,
   `AntiDeSitter`, and `Flrw<S: ScaleFactor>` (spatially flat cosmology, generic
@@ -278,7 +283,7 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 209 across twenty-three integration-test files (curvature, geometry,
+- **Tests:** 214 across twenty-three integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
@@ -575,8 +580,9 @@ Additive, each validated against an oracle, each one PR:
     `docs/LAYER_3_BSSN.md`) and the **periodic 1D BSSN grid**
     (`grid1d` + `bssn_grid`, `docs/LAYER_3_BSSN_PERIODIC_1D.md`) are *done* — the
     last stable once `Rtilde_ij` was written in genuine BSSN form using the
-    evolved `Gammatilde^k`. Next: the live gauge conditions a practical BSSN
-    evolution requires.
+    evolved `Gammatilde^k`, and now carrying live 1+log slicing. Next: the
+    Gamma-driver shift, the other half of the gauge a practical BSSN evolution
+    requires.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.

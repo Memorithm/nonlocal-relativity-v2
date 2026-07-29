@@ -265,7 +265,8 @@ Layer 3 — Numerical Relativity:
   manufactured periodic state whose conformal Ricci reconstruction converges at
   observed order 1.97/1.99/2.00, a linearized transverse-traceless wave
   converging at 1.96/1.99/2.00, RK4 temporal refinement at 4.00/4.00/3.99, a
-  Courant sweep, a Kreiss-Oliger dissipation sweep, an off-constraint state, and
+  Courant sweep, a live 1+log gauge wave measured against the exact `sqrt(2)`
+  gauge speed, a Kreiss-Oliger dissipation sweep, an off-constraint state, and
   rejected configurations. Stable across every resolution tested, with a genuine
   resolution-independent Courant boundary (`C <= 1` accepted, `C = 2` rejected at
   both `N = 64` and `N = 128`). That required writing `Rtilde_ij` in genuine BSSN

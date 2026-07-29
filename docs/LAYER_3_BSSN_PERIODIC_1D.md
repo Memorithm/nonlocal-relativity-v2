@@ -429,7 +429,74 @@ dissipation is not needed and stays off by default.
 the continuum system. These are measurements on one discretisation of a
 one-dimensional reduction, and they are reported as such.
 
-## 14. Known limitations
+## 14. Live slicing — 1+log
+
+The lapse is now an **evolved field**, stored at every grid point (slot 17 of
+18), driven by
+
+```text
+d_t alpha = -2 alpha K
+```
+
+with zero shift. Enabling it is always explicit: [`BssnSlicing::Prescribed`] is
+the default, under which `d_t alpha = 0` exactly and every earlier result is
+reproduced bit-for-bit.
+
+Turning the lapse on activates three terms that were structurally zero while it
+was constant, all of which are now supplied:
+
+- `-D^i D_i alpha` in `d_t K`;
+- `-e^{-4 phi} ( D_i D_j alpha )^TF` in `d_t Atilde_ij`;
+- `-2 Atilde^{ij} d_j alpha` in `d_t Gammatilde^i`.
+
+The covariant Hessian `D_i D_j alpha = d_i d_j alpha - Gamma^k_ij d_k alpha` uses
+the **physical** Christoffel symbols, obtained from the conformal ones by
+
+```text
+Gamma^k_ij = Gammatilde^k_ij
+           + 2 ( delta^k_i d_j phi + delta^k_j d_i phi
+                 - gammatilde_ij gammatilde^{kl} d_l phi )
+```
+
+so the physical metric is never differenced a second time and the compact grid
+stencils carry through.
+
+### The oracle: gauge speed exactly `sqrt(2)`
+
+Linearised about flat space, `d_t alpha = -2 alpha K` and `d_t K = -D^2 alpha`
+combine to `d_t^2 alpha = 2 d_x^2 alpha` — a wave equation with characteristic
+speed `sqrt(2)`. That is *faster than light*, and legitimately so: the lapse is
+gauge and carries no physical signal.
+
+Standing-wave data `alpha = 1 + A sin(kx)` with `K = 0` therefore evolves as
+`alpha = 1 + A cos(sqrt(2) k t) sin(kx)` — a closed form with no free parameters
+to fit. Measured at `A = 1e-6`, `k = 2 pi`, `t = 0.25`:
+
+| N | `L∞(alpha - exact)` | order | numerical / exact amplitude |
+| --- | --- | --- | --- |
+| 32 | `2.842e-9` | — | `0.995309` |
+| 64 | `7.103e-10` | **2.00** | `0.998828` |
+| 128 | `1.778e-10` | **2.00** | `0.999708` |
+
+Second order in `dx`, with the amplitude ratio converging to `1`. The gauge speed
+is not fitted or asserted — it is the analytic prediction, and the numerics meet
+it.
+
+Minkowski with unit lapse has `K = 0`, so `d_t alpha = -2 alpha K` is *exactly*
+zero and enabling 1+log leaves the vacuum solution bit-for-bit undisturbed.
+
+A non-finite or non-positive lapse is rejected with a located typed error; the
+lapse is never clamped.
+
+### What is not here
+
+**The Gamma-driver shift is not implemented.** `beta^i = 0` throughout, so every
+shift-advection term still vanishes identically. Live *slicing* without a live
+*shift* is only half of the gauge a practical BSSN evolution uses, and the half
+that matters most for black-hole punctures is the missing one. That is the next
+increment.
+
+## 15. Known limitations
 
 Stated plainly, because the gap between this and a numerical-relativity code is
 large:

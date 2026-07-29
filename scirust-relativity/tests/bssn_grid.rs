@@ -8,9 +8,9 @@
 use scirust_relativity::adm_evolution::{AdmEvolutionSettings, AdmSources, SpatialTensorField};
 use scirust_relativity::bssn::{BssnGauge, adm_rhs_from_bssn, bssn_evolution_rhs};
 use scirust_relativity::bssn_grid::{
-    BssnGridState, BssnGridSystem, BssnGridView, COMPONENTS_PER_POINT, TransverseTracelessWave,
-    bssn_grid_constraints, bssn_grid_rhs, bssn_grid_ricci_report, evolve_bssn_grid,
-    grid_conformal_ricci, project_grid_trace_free, project_grid_unit_determinant,
+    BssnGridState, BssnGridSystem, BssnGridView, BssnSlicing, COMPONENTS_PER_POINT,
+    TransverseTracelessWave, bssn_grid_constraints, bssn_grid_rhs, bssn_grid_ricci_report,
+    evolve_bssn_grid, grid_conformal_ricci, project_grid_trace_free, project_grid_unit_determinant,
 };
 use scirust_relativity::grid1d::UniformGrid1d;
 use scirust_relativity::{Metric, ricci_tensor_from_metric};
@@ -1110,7 +1110,9 @@ fn connection_rhs_rejects_an_unvalidated_matter_term() {
     // The matter contribution to d_t Gammatilde^i is not implemented, because
     // this increment has no non-vacuum oracle to validate it against. It must
     // be refused rather than silently ignored or guessed.
-    use scirust_relativity::bssn::{BssnSpatialDerivatives, bssn_connection_rhs};
+    use scirust_relativity::bssn::{
+        BssnLapseDerivatives, BssnSpatialDerivatives, bssn_connection_rhs,
+    };
     let grid = unit_grid(8);
     let state = BssnGridState::minkowski(grid).state_at(0);
     let sources = AdmSources {
@@ -1122,6 +1124,7 @@ fn connection_rhs_rejects_an_unvalidated_matter_term() {
         bssn_connection_rhs(
             &state,
             &BssnSpatialDerivatives::ZERO,
+            &BssnLapseDerivatives::ZERO,
             &BssnGauge::SYNCHRONOUS,
             &sources,
         )
@@ -1132,6 +1135,7 @@ fn connection_rhs_rejects_an_unvalidated_matter_term() {
         bssn_connection_rhs(
             &state,
             &BssnSpatialDerivatives::ZERO,
+            &BssnLapseDerivatives::ZERO,
             &BssnGauge::SYNCHRONOUS,
             &AdmSources::VACUUM,
         )
@@ -1189,4 +1193,193 @@ fn kreiss_oliger_annihilates_constants_and_peaks_at_the_nyquist_mode() {
             "index {index}: {actual} vs {expected}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Live slicing — 1+log
+// ---------------------------------------------------------------------------
+
+#[test]
+fn one_plus_log_reproduces_the_root_two_gauge_speed() {
+    // Linearised about flat space, `d_t alpha = -2 alpha K` together with
+    // `d_t K = -D^2 alpha` gives `d_t^2 alpha = 2 d_x^2 alpha`: a wave equation
+    // with characteristic speed sqrt(2). That speed is faster than light, which
+    // is legitimate -- the lapse is gauge and carries no physical signal.
+    //
+    // Standing-wave data `alpha = 1 + A sin(kx)` with `K = 0` therefore evolves
+    // as `alpha = 1 + A cos(sqrt(2) k t) sin(kx)`, an exact closed form to
+    // compare against.
+    let k = TWO_PI;
+    let amplitude = 1.0e-6_f64;
+    let speed = 2.0_f64.sqrt();
+    let t_end = 0.25_f64;
+    let mut errors = Vec::new();
+
+    for &points in &[32_usize, 64, 128]
+    {
+        let grid = unit_grid(points);
+        let mut initial = BssnGridState::minkowski(grid);
+        for index in 0..grid.points()
+        {
+            initial.set_lapse_at(index, 1.0 + amplitude * (k * grid.coordinate(index)).sin());
+        }
+
+        let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, 0.1 * grid.spacing())
+            .expect("gauge wave evolves");
+        let last = samples.last().expect("final sample");
+
+        let mut worst = 0.0_f64;
+        for index in 0..grid.points()
+        {
+            let x = grid.coordinate(index);
+            let exact = 1.0 + amplitude * (speed * k * last.time).cos() * (k * x).sin();
+            worst = worst.max((last.state.lapse_at(index) - exact).abs());
+        }
+        errors.push(worst);
+    }
+
+    // Second order in dx, against the analytic gauge wave.
+    for window in errors.windows(2)
+    {
+        let order = observed_order(window[0], window[1]);
+        assert!(
+            (order - 2.0).abs() < 0.15,
+            "observed gauge-wave order {order} from {errors:?}"
+        );
+    }
+    // And the residual is far below the perturbation amplitude, so the wave is
+    // genuinely tracked rather than merely small.
+    assert!(
+        errors.iter().all(|value| *value < amplitude / 100.0),
+        "gauge-wave errors are not small against A = {amplitude}: {errors:?}"
+    );
+}
+
+#[test]
+fn prescribed_slicing_is_the_default_and_freezes_the_lapse() {
+    let grid = unit_grid(16);
+    // A live gauge is never enabled implicitly.
+    assert_eq!(
+        BssnGridSystem::vacuum(grid).slicing(),
+        BssnSlicing::Prescribed
+    );
+
+    let k = TWO_PI;
+    let mut initial = BssnGridState::minkowski(grid);
+    for index in 0..grid.points()
+    {
+        initial.set_lapse_at(index, 1.0 + 1.0e-3 * (k * grid.coordinate(index)).sin());
+    }
+
+    let system = BssnGridSystem::vacuum(grid);
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 0.2, 0.02).expect("evolution");
+    let last = samples.last().expect("final sample");
+    for index in 0..grid.points()
+    {
+        // Bit-for-bit frozen: a prescribed lapse has an exactly zero
+        // right-hand side, so RK4 adds exactly zero.
+        assert_eq!(last.state.lapse_at(index), initial.lapse_at(index));
+    }
+}
+
+#[test]
+fn one_plus_log_leaves_minkowski_exactly_stationary() {
+    // Unit lapse with K = 0 gives d_t alpha = -2 alpha K = 0 exactly, so
+    // enabling the live slicing must not disturb the vacuum solution at all.
+    let grid = unit_grid(16);
+    let initial = BssnGridState::minkowski(grid);
+    let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.01).expect("evolution");
+    for sample in &samples
+    {
+        assert_eq!(
+            sample.state.as_slice(),
+            initial.as_slice(),
+            "1+log disturbed Minkowski at t = {}",
+            sample.time
+        );
+    }
+}
+
+#[test]
+fn a_non_positive_or_non_finite_lapse_is_rejected() {
+    let grid = unit_grid(8);
+
+    let mut collapsed = BssnGridState::minkowski(grid);
+    collapsed.set_lapse_at(3, 0.0);
+    match collapsed.validate(0.25)
+    {
+        Err(scirust_relativity::bssn_grid::BssnGridError::InvalidState {
+            time,
+            index,
+            field,
+            ..
+        }) =>
+        {
+            assert_eq!(time, 0.25);
+            assert_eq!(index, 3);
+            assert_eq!(field, "alpha");
+        },
+        other => panic!("expected a located InvalidState, got {other:?}"),
+    }
+
+    let mut infinite = BssnGridState::minkowski(grid);
+    infinite.set_lapse_at(1, f64::NAN);
+    assert!(infinite.validate(0.0).is_err());
+
+    // A valid positive lapse is accepted.
+    let mut fine = BssnGridState::minkowski(grid);
+    fine.set_lapse_at(1, 0.5);
+    assert!(fine.validate(0.0).is_ok());
+}
+
+#[test]
+fn a_live_lapse_gradient_feeds_the_curvature_and_connection_equations() {
+    // Regression guard: with a prescribed constant lapse the D_i D_j alpha term
+    // in d_t K and d_t Atilde, and the -2 Atilde^{ij} d_j alpha term in
+    // d_t Gammatilde^i, are all exactly zero. A live, spatially varying lapse
+    // must make them non-zero -- otherwise the gauge is not actually coupled in.
+    let grid = unit_grid(32);
+    let k = TWO_PI;
+    let mut state = BssnGridState::minkowski(grid);
+    for index in 0..grid.points()
+    {
+        state.set_lapse_at(index, 1.0 + 1.0e-3 * (k * grid.coordinate(index)).sin());
+    }
+
+    let view = state.view();
+    let mut rhs = vec![0.0_f64; COMPONENTS_PER_POINT * grid.points()];
+    bssn_grid_rhs(
+        &view,
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut rhs,
+    )
+    .expect("rhs");
+
+    let points = grid.points();
+    // d_t K picks up -D^2 alpha, which for this data is the only non-zero term.
+    let trace_rhs = max_abs(&rhs[7 * points..8 * points]);
+    assert!(
+        trace_rhs > 1.0e-6,
+        "d_t K is {trace_rhs}, expected non-zero"
+    );
+
+    // Atilde vanishes on this slice, so the connection lapse term does too --
+    // which is a statement about this data, not about the implementation. The
+    // trace-free lapse term in d_t Atilde is likewise traceless and vanishes for
+    // an isotropic Hessian, so d_t K is the sharp probe here.
+    let flat = BssnGridState::minkowski(grid);
+    let mut flat_rhs = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+    bssn_grid_rhs(
+        &flat.view(),
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut flat_rhs,
+    )
+    .expect("rhs");
+    assert_eq!(max_abs(&flat_rhs[7 * points..8 * points]), 0.0);
 }
