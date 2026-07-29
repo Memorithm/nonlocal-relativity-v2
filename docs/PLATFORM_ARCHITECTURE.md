@@ -148,7 +148,13 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   §13. The grid substrate is `D`-dimensional (`UniformGrid<D>`), with per-axis
   periodic neighbours and a four-corner **mixed** second difference that has no
   one-dimensional analogue and is bit-for-bit symmetric in its two axes by
-  construction. Carries the platform's first **live gauge**: 1+log slicing
+  construction. `bssn_grid` is generic over the grid dimension
+  (`BssnGridState<D>`, defaulting to `D = 1`), so two-dimensional evolution
+  reuses every equation unchanged; anisotropic grids are refused, since the
+  Layer 3.3 conversion path differences with a single step. **Open:** with
+  genuinely 2D data the BSSN-form and generic Ricci tensors differ by a residual
+  that saturates near 1% of scale instead of converging — localised entirely to
+  `Rtilde`, measured and pinned by a test rather than explained away. Carries the platform's first **live gauge**: 1+log slicing
   (`bssn::one_plus_log_lapse_rhs`, `BssnSlicing::OnePlusLog`) with the lapse an
   evolved field (slot 17 of 18) and the covariant lapse Hessian supplied to
   `d_t K` and `d_t Atilde_ij`, validated against the exact `sqrt(2)` gauge speed;
@@ -289,7 +295,7 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 226 across twenty-three integration-test files (curvature, geometry,
+- **Tests:** 231 across twenty-three integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,

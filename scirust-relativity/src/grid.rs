@@ -273,6 +273,25 @@ impl<const D: usize> UniformGrid<D> {
         self.points[axis]
     }
 
+    /// The common spacing, when every axis shares one.
+    ///
+    /// Returns `None` for an anisotropic grid. Callers that difference along
+    /// several axes with a single step size need this: a step that lands on grid
+    /// points along one axis lands between them along an axis with a different
+    /// spacing.
+    #[must_use]
+    pub fn uniform_spacing(&self) -> Option<f64> {
+        let first = self.spacing[0];
+        for axis in 1..D
+        {
+            if self.spacing[axis] != first
+            {
+                return None;
+            }
+        }
+        Some(first)
+    }
+
     /// The spacing along `axis`.
     #[must_use]
     pub fn spacing_along(&self, axis: usize) -> f64 {
