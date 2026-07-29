@@ -1490,6 +1490,15 @@ pub fn evolve_bssn_grid<const D: usize>(
         });
     }
     initial.validate(t0)?;
+    // Check the grid's isotropy HERE, not only inside the right-hand side.
+    // `System::derivatives` cannot return an error, so a failure there surfaces
+    // as a non-finite state and the caller is told "reduce the step size" --
+    // advice that is both useless and wrong for a grid whose cells are not
+    // square. A typed error nobody ever sees is not a typed error.
+    if system.grid.uniform_spacing().is_none()
+    {
+        return Err(BssnGridError::AnisotropicGrid);
+    }
 
     let trajectory = simulate(system, initial.as_slice(), t0, t_end, step)
         .map_err(BssnGridError::Integration)?;

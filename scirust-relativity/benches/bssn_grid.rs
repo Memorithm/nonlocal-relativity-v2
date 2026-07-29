@@ -16,7 +16,8 @@ use scirust_relativity::bssn_grid::{
     bssn_grid_constraints, bssn_grid_rhs, evolve_bssn_grid,
 };
 use scirust_relativity::grid::{
-    UniformGrid1d, periodic_first_derivative_all, periodic_second_derivative_all,
+    UniformGrid1d, UniformGrid2d, periodic_first_derivative_all, periodic_mixed_derivative,
+    periodic_second_derivative_all,
 };
 
 const RESOLUTIONS: [usize; 3] = [32, 64, 128];
@@ -237,8 +238,73 @@ impl scirust_relativity::Metric<3> for ManufacturedMetric {
     }
 }
 
+/// The mixed second difference — the stencil with no one-dimensional analogue.
+fn bench_mixed_derivative(c: &mut Criterion) {
+    let mut group = c.benchmark_group("grid_periodic_mixed_derivative_2d");
+    for &points in &[16_usize, 32, 64]
+    {
+        let grid =
+            UniformGrid2d::from_axes([points, points], [0.0, 0.0], [1.0, 1.0]).expect("grid");
+        let samples: Vec<f64> = (0..grid.total_points())
+            .map(|linear| {
+                let p = grid.position(linear);
+                (TWO_PI * p[0]).sin() * (TWO_PI * p[1]).sin()
+            })
+            .collect();
+        group.bench_with_input(BenchmarkId::from_parameter(points), &points, |b, _| {
+            b.iter(|| {
+                let mut total = 0.0_f64;
+                for linear in 0..grid.total_points()
+                {
+                    total += periodic_mixed_derivative(
+                        black_box(&samples),
+                        black_box(&grid),
+                        linear,
+                        0,
+                        1,
+                    )
+                    .expect("mixed");
+                }
+                total
+            });
+        });
+    }
+    group.finish();
+}
+
+/// One complete BSSN right-hand side over a two-dimensional grid.
+///
+/// The point count grows as `N^2`, so this is where the cost of a second
+/// dimension actually shows up.
+fn bench_grid_rhs_2d(c: &mut Criterion) {
+    let mut group = c.benchmark_group("grid_bssn_rhs_2d");
+    for &points in &[8_usize, 16, 32]
+    {
+        let grid =
+            UniformGrid2d::from_axes([points, points], [0.0, 0.0], [1.0, 1.0]).expect("grid");
+        let state = BssnGridState::minkowski(grid);
+        let view = state.view();
+        let mut out = vec![0.0_f64; COMPONENTS_PER_POINT * grid.total_points()];
+        group.bench_with_input(BenchmarkId::from_parameter(points), &points, |b, _| {
+            b.iter(|| {
+                bssn_grid_rhs(
+                    black_box(&view),
+                    black_box(&BssnGauge::SYNCHRONOUS),
+                    black_box(&AdmSources::VACUUM),
+                    0.0,
+                    &mut out,
+                )
+                .expect("rhs")
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
+    bench_mixed_derivative,
+    bench_grid_rhs_2d,
     bench_first_derivative,
     bench_second_derivative,
     bench_conformal_connection,

@@ -274,3 +274,12 @@ Layer 3 — Numerical Relativity:
   form using the evolved `Gammatilde^k`; the generic metric Ricci leaves ADM\'s
   weakly hyperbolic principal part wearing BSSN variables and is unstable. See
   [`docs/LAYER_3_BSSN_PERIODIC_1D.md`](../../docs/LAYER_3_BSSN_PERIODIC_1D.md).
+- `bssn_periodic_2d_evolution` — BSSN on a uniform periodic **two-dimensional**
+  grid. Stationary Minkowski (exactement stationnaire), the conformal Ricci
+  reconstruction with the mixed derivatives genuinely present (order 1.97/1.99),
+  a diagonal 1+log gauge wave against its closed form
+  `alpha = 1 + A cos(2kt) sin(k(x+y))` (order 2.00), long-time bounded evolution
+  at every resolution and Courant factor tested, and rejected configurations.
+  Closes the gap Layer 3.5 left: an accurate right-hand side is not evidence of
+  a working solver. See
+  [`docs/LAYER_3_BSSN_PERIODIC_2D.md`](../../docs/LAYER_3_BSSN_PERIODIC_2D.md).
