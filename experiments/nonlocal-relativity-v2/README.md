@@ -283,3 +283,14 @@ Layer 3 — Numerical Relativity:
   Closes the gap Layer 3.5 left: an accurate right-hand side is not evidence of
   a working solver. See
   [`docs/LAYER_3_BSSN_PERIODIC_2D.md`](../../docs/LAYER_3_BSSN_PERIODIC_2D.md).
+- `bssn_periodic_3d_evolution` — BSSN on a uniform periodic **three-dimensional**
+  grid. Stationary Minkowski (exactly stationary), the conformal Ricci
+  reconstruction with **all three** mixed-derivative pairs present (order
+  1.88/1.97), a body-diagonal 1+log gauge wave against
+  `alpha = 1 + A cos(k sqrt(6) t) sin(k(x+y+z))` (order 1.98), a
+  **transverse-traceless gravitational wave along the body diagonal** whose six
+  independent metric components are all non-zero (order 1.94), bounded evolution
+  at every resolution and Courant factor tested, and rejected configurations —
+  including a longitudinal polarization, which is refused because it is not a
+  solution of the linearized field equations. See
+  [`docs/LAYER_3_BSSN_PERIODIC_3D.md`](../../docs/LAYER_3_BSSN_PERIODIC_3D.md).
