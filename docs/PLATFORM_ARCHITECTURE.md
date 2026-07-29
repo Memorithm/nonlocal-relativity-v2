@@ -151,10 +151,12 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   construction. `bssn_grid` is generic over the grid dimension
   (`BssnGridState<D>`, defaulting to `D = 1`), so two-dimensional evolution
   reuses every equation unchanged; anisotropic grids are refused, since the
-  Layer 3.3 conversion path differences with a single step. **Open:** with
-  genuinely 2D data the BSSN-form and generic Ricci tensors differ by a residual
-  that saturates near 1% of scale instead of converging — localised entirely to
-  `Rtilde`, measured and pinned by a test rather than explained away. Carries the platform's first **live gauge**: 1+log slicing
+  Layer 3.3 conversion path differences with a single step. The second dimension
+  immediately earned its keep: it exposed an index error in
+  `Gammatilde^k Gammatilde_{(ij)k}` — the connection contracts the *last* index,
+  not the first — which one dimension could not detect because `Gammatilde^k` is
+  nearly zero there. With it fixed the BSSN-form and generic Ricci tensors
+  converge onto each other at order 2 in 2D as they already did in 1D. Carries the platform's first **live gauge**: 1+log slicing
   (`bssn::one_plus_log_lapse_rhs`, `BssnSlicing::OnePlusLog`) with the lapse an
   evolved field (slot 17 of 18) and the covariant lapse Hessian supplied to
   `d_t K` and `d_t Atilde_ij`, validated against the exact `sqrt(2)` gauge speed;

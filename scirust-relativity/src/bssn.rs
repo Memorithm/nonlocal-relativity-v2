@@ -1661,12 +1661,18 @@ pub fn conformal_ricci_from_derivatives(
             }
             connection_term *= 0.5;
 
-            // Gammatilde^k Gammatilde_{(ij)k}
+            // Gammatilde^k Gammatilde_{(ij)k}, with `Gammatilde_{abc} = lowered[a][b][c]`.
+            //
+            // `Gammatilde^k` contracts the LAST index, not the first. Writing
+            // `lowered[k][i][j]` here contracts the first instead, which is a
+            // different tensor: it produced a systematic error that saturated
+            // near 1% of the Ricci scale and refused to converge. One dimension
+            // could not see it, because `Gammatilde^k` is nearly zero there.
             let mut product_term = 0.0;
             for k in 0..3
             {
                 product_term +=
-                    state.conformal_connection[k] * (lowered[k][i][j] + lowered[k][j][i]);
+                    state.conformal_connection[k] * (lowered[i][j][k] + lowered[j][i][k]);
             }
             product_term *= 0.5;
 

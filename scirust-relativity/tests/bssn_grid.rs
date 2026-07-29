@@ -1744,43 +1744,28 @@ fn a_genuinely_two_dimensional_state_exercises_the_mixed_derivatives() {
 }
 
 #[test]
-fn two_dimensional_bssn_and_generic_ricci_differ_by_a_non_converging_residual() {
-    // An OPEN QUESTION, recorded as a measurement rather than asserted away.
+fn two_dimensional_bssn_ricci_converges_onto_the_generic_metric_ricci() {
+    // The BSSN-form and generic Ricci tensors are the same tensor, so their
+    // difference must vanish with the discretisation. In two dimensions it
+    // initially did not: it saturated near 1% of the Ricci scale, localised
+    // entirely to `Rtilde`.
     //
-    // In one dimension the BSSN-form and generic metric Ricci tensors converge
-    // onto each other at order 2.00. With genuinely two-dimensional data --
-    // a metric depending on x + y, so the mixed derivatives are non-zero -- the
-    // difference falls and then *stops*:
+    // Comparing BOTH forms against a converged reference -- the same generic
+    // evaluator applied to the ANALYTIC field at a step far below any grid
+    // spacing -- identified the culprit rather than leaving it ambiguous. The
+    // generic path converged cleanly (2.050e-2 -> 5.208e-3 -> 1.303e-3 ->
+    // 3.222e-4, order 2); the BSSN form was the one that saturated.
     //
-    //   N =  16   1.543e-2
-    //   N =  32   4.765e-3      (order 1.70)
-    //   N =  64   3.961e-3      (order 0.27)
-    //   N = 128   3.941e-3      (order 0.01)
-    //
-    // saturating near 1% of the Ricci scale (~0.396). Localised further: the
-    // residual lives ENTIRELY in the `Rtilde` part; the conformal-factor part
-    // `Rphi` agrees to machine precision (1e-13 .. 1e-11) at every resolution.
-    //
-    // A plausible cause -- that `Gammatilde^i` is seeded through Layer 3.3's
-    // nested two-spacing stencil but differentiated with the compact one -- was
-    // tested by re-seeding it with the compact operator. That changed the result
-    // bit-for-bit not at all, so the hypothesis is WRONG and was not shipped.
-    //
-    // What this does and does not mean: the two forms are the same tensor
-    // analytically, so a non-vanishing difference means at least one of the two
-    // discretisations carries an error that does not shrink for genuinely 2D
-    // data. It does not say which. The 1D results are unaffected -- they are
-    // measured separately and still converge at order 2.
-    //
-    // This test pins the measurement so the next increment starts from a fact
-    // rather than a memory. If a change makes the difference converge, this test
-    // will fail and should be replaced by a convergence assertion.
+    // The cause was an index error in `Gammatilde^k Gammatilde_{(ij)k}`:
+    // `Gammatilde^k` contracts the LAST index of `Gammatilde_{abc}`, and the
+    // implementation contracted the first. One dimension could not detect it,
+    // because `Gammatilde^k` is nearly zero there -- which is precisely why a
+    // second dimension was worth adding.
     let amplitude = 0.01_f64;
     let k = TWO_PI;
     let mut differences = Vec::new();
-    let mut scales = Vec::new();
 
-    for &points in &[16_usize, 32, 64]
+    for &points in &[16_usize, 32, 64, 128]
     {
         let grid = unit_square(points);
         let manufactured = DiagonalMetric {
@@ -1794,8 +1779,8 @@ fn two_dimensional_bssn_and_generic_ricci_differ_by_a_non_converging_residual() 
         let metric = view.metric();
 
         let mut worst = 0.0_f64;
-        let mut worst_factor_part = 0.0_f64;
         let mut scale = 0.0_f64;
+        let mut connection_scale = 0.0_f64;
         for index in 0..grid.total_points()
         {
             let at = grid.position(index);
@@ -1807,44 +1792,35 @@ fn two_dimensional_bssn_and_generic_ricci_differ_by_a_non_converging_residual() 
                 for j in 0..3
                 {
                     worst = worst.max((bssn.total[i][j] - generic.total[i][j]).abs());
-                    worst_factor_part = worst_factor_part.max(
-                        (bssn.conformal_factor_part[i][j] - generic.conformal_factor_part[i][j])
-                            .abs(),
-                    );
                     scale = scale.max(generic.total[i][j].abs());
                 }
             }
+            for component in 0..3
+            {
+                connection_scale = connection_scale
+                    .max(view.state_at(index).conformal_connection[component].abs());
+            }
         }
-
         // Not two zeros agreeing.
         assert!(scale > 1.0e-3, "Ricci is trivially zero: {scale}");
-        // The conformal-factor part agrees to machine precision, which is what
-        // localises the residual to `Rtilde`.
+        // And `Gammatilde^k` is genuinely non-zero, so the term that carried the
+        // bug is actually exercised. In one dimension it is not.
         assert!(
-            worst_factor_part < 1.0e-9,
-            "Rphi disagrees by {worst_factor_part} -- the residual is no longer \
-             confined to Rtilde and this test's diagnosis is stale"
+            connection_scale > 1.0e-3,
+            "Gammatilde^k is trivially zero ({connection_scale}) -- this \
+             configuration cannot detect an error in the term that contracts it"
         );
         differences.push(worst);
-        scales.push(scale);
     }
 
-    // The residual is real and bounded, not noise and not catastrophic.
-    for (difference, scale) in differences.iter().zip(&scales)
+    for window in differences.windows(2)
     {
+        let order = observed_order(window[0], window[1]);
         assert!(
-            *difference < 0.05 * scale,
-            "2D Ricci residual {difference} exceeds 5% of scale {scale}"
+            (order - 2.0).abs() < 0.15,
+            "2D BSSN/generic Ricci order {order} from {differences:?}"
         );
     }
-    // And it does not converge: refining from 32 to 64 barely moves it. If this
-    // stops being true, the underlying issue has been fixed -- rewrite the test.
-    let order = observed_order(differences[1], differences[2]);
-    assert!(
-        order < 1.0,
-        "the 2D Ricci residual now converges at order {order} -- replace this \
-         characterisation with a convergence assertion"
-    );
 }
 
 #[test]
