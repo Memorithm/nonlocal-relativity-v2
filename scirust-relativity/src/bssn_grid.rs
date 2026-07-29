@@ -1,19 +1,27 @@
-//! BSSN on a uniform periodic one-dimensional grid (Layer 3.4).
+//! BSSN on a uniform periodic grid in `D` dimensions (Layers 3.4 to 3.7).
 //!
 //! Layer 3.3 delivered the BSSN algebra at a *point*, where every
 //! spatial-derivative term vanished identically because every field was
 //! spatially constant. This module supplies the grid, making BSSN a partial
 //! differential equation for the first time.
 //!
-//! # 1D3V, not 3D
+//! # Dimensionality
 //!
-//! Fields vary only along `x`, but every grid point stores complete
-//! three-dimensional tensors: `gammatilde_ij` and `Atilde_ij` are full symmetric
-//! 3x3 objects and `Gammatilde^i` is a full 3-vector. Derivatives along `y` and
-//! `z` are exactly zero **by construction** — the provider is a function of `x`
-//! alone, so a difference in `y` subtracts a value from itself.
+//! Every grid point stores complete three-dimensional tensors regardless of how
+//! many axes vary: `gammatilde_ij` and `Atilde_ij` are full symmetric 3x3
+//! objects and `Gammatilde^i` is a full 3-vector. On a grid with `D < 3`,
+//! derivatives along the remaining axes are exactly zero **by construction** —
+//! nothing varies along them, so a difference there subtracts a value from
+//! itself. `D` defaults to 1, which keeps the original one-dimensional API.
 //!
-//! This is **not** a general three-dimensional numerical-relativity solver.
+//! All three dimensions are validated: `D = 1` in Layer 3.4, `D = 2` in
+//! Layers 3.5 and 3.6, and `D = 3` in Layer 3.7 — the last against a
+//! transverse-traceless gravitational wave along the body diagonal, whose six
+//! independent metric components are all non-zero while every axis varies.
+//!
+//! This is a **periodic-box solver for weak, smooth fields**. There is no outer
+//! boundary, no puncture, no horizon, no excision, no constraint damping, and no
+//! adaptive refinement, and stability is *measured* rather than proven.
 //!
 //! # How this reuses Layer 3.3
 //!
@@ -236,6 +244,18 @@ pub enum BssnGridError {
         /// The offending value.
         value: f64,
     },
+    /// A transverse-traceless wave was described by a polarization that is not
+    /// one.
+    ///
+    /// Such a configuration is not a solution of the linearized field
+    /// equations, so evolving it would compare the code against something that
+    /// is not an oracle.
+    InvalidPolarization {
+        /// The condition that failed.
+        property: &'static str,
+        /// By how much it failed.
+        residual: f64,
+    },
 }
 
 /// Why a stored field failed validation.
@@ -306,6 +326,10 @@ impl fmt::Display for BssnGridError {
             {
                 write!(f, "parameter '{parameter}' is invalid: {value}")
             },
+            Self::InvalidPolarization { property, residual } => write!(
+                f,
+                "transverse-traceless wave: '{property}' fails by {residual}"
+            ),
         }
     }
 }
@@ -1862,13 +1886,18 @@ fn apply_kreiss_oliger<const D: usize>(
 // Linearized transverse-traceless wave (validation oracle)
 // ---------------------------------------------------------------------------
 
-/// A weak transverse-traceless gravitational wave propagating along `x`.
+/// A weak transverse-traceless plane gravitational wave on a flat background.
 ///
 /// ```text
-/// h_yy = +A sin(k (x - t)),    h_zz = -A sin(k (x - t)),
-/// gamma_ij = diag(1, 1 + h_yy, 1 + h_zz),
-/// K_ij     = -(1/2) d_t gamma_ij      (unit lapse, zero shift)
+/// h_ij     = A P_ij sin(k (n . x - t)),   n . n = 1,
+/// gamma_ij = delta_ij + h_ij,
+/// K_ij     = -(1/2) d_t gamma_ij          (unit lapse, zero shift)
 /// ```
+///
+/// `P_ij` is the dimensionless polarization: symmetric, traceless, and
+/// transverse to the propagation direction `n`. [`Self::new`] builds the
+/// `+`-polarized wave travelling along `x`, `P = diag(0, 1, -1)`, which is the
+/// only case a one-dimensional grid can carry.
 ///
 /// The sign of `K_ij` follows this repository's convention
 /// `K_ij = -1/(2 N) ( d_t gamma_ij - D_i N_j - D_j N_i )`, not a textbook's.
@@ -1882,52 +1911,226 @@ fn apply_kreiss_oliger<const D: usize>(
 pub struct TransverseTracelessWave {
     /// The dimensionless strain amplitude `A`.
     pub amplitude: f64,
-    /// The wave number `k`.
+    /// The wave number `k = |k^i|`, which is also the angular frequency.
     pub wave_number: f64,
     /// The coordinate time at which the fields are evaluated.
     pub time: f64,
+    /// The unit propagation direction `n^i`.
+    direction: [f64; 3],
+    /// The polarization `P_ij`.
+    polarization: [[f64; 3]; 3],
 }
 
+/// The tolerance on the transverse, traceless, and unit-norm conditions.
+///
+/// Generous next to `f64` rounding, because a caller supplying a direction such
+/// as `(1,1,1)/sqrt(3)` accumulates a few units in the last place. Tight enough
+/// that a genuinely longitudinal or trace-carrying polarization -- an `O(1)`
+/// residual, not an `O(1e-16)` one -- is refused.
+const POLARIZATION_TOLERANCE: f64 = 1.0e-12;
+
 impl TransverseTracelessWave {
-    /// Build a wave sampled at coordinate time `time`.
+    /// The `+`-polarized wave travelling along `x`, sampled at time `time`.
+    ///
+    /// `P = diag(0, 1, -1)`, so `h_yy = -h_zz = A sin(k(x - t))`.
     #[must_use]
     pub const fn new(amplitude: f64, wave_number: f64, time: f64) -> Self {
         Self {
             amplitude,
             wave_number,
             time,
+            direction: [1.0, 0.0, 0.0],
+            polarization: [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]],
         }
     }
 
-    /// The phase `k (x - t)`.
+    /// A wave travelling along the body diagonal `(1,1,1)/sqrt(3)`.
+    ///
+    /// `component` is the wave vector's **per-axis** component, so a periodic
+    /// unit box needs an integer multiple of `2 pi`; the wave number is then
+    /// `component sqrt(3)`.
+    ///
+    /// The polarization is `e1 (x) e1 - e2 (x) e2` for the orthonormal pair
+    /// `e1 = (1,-1,0)/sqrt(2)`, `e2 = (1,1,-2)/sqrt(6)`, which makes every one
+    /// of the six independent components of `h_ij` non-zero while all three
+    /// axes vary. No one- or two-dimensional grid can carry this configuration,
+    /// which is the whole reason it exists.
     #[must_use]
-    pub fn phase(&self, x: f64) -> f64 {
-        self.wave_number * (x - self.time)
+    pub fn diagonal(amplitude: f64, component: f64, time: f64) -> Self {
+        let third = 1.0 / 3.0;
+        let two_thirds = 2.0 / 3.0;
+        let root_three = 3.0_f64.sqrt();
+        Self {
+            amplitude,
+            wave_number: component * root_three,
+            time,
+            direction: [1.0 / root_three; 3],
+            polarization: [
+                [third, -two_thirds, third],
+                [-two_thirds, third, third],
+                [third, third, -two_thirds],
+            ],
+        }
     }
 
-    /// The strain `h_yy = A sin(k(x - t))` (and `h_zz = -h_yy`).
-    #[must_use]
-    pub fn strain(&self, x: f64) -> f64 {
-        self.amplitude * self.phase(x).sin()
+    /// A wave with an arbitrary direction and polarization.
+    ///
+    /// `direction` must be a unit vector and `polarization` must be symmetric,
+    /// traceless, and transverse to it. Each condition is checked rather than
+    /// assumed: a polarization that fails any of them is not a solution of the
+    /// linearized field equations, so evolving it would compare the code
+    /// against something that is not an oracle.
+    pub fn plane(
+        amplitude: f64,
+        wave_number: f64,
+        time: f64,
+        direction: [f64; 3],
+        polarization: [[f64; 3]; 3],
+    ) -> Result<Self, BssnGridError> {
+        let mut norm = 0.0_f64;
+        for &component in &direction
+        {
+            if !component.is_finite()
+            {
+                return Err(BssnGridError::InvalidPolarization {
+                    property: "direction is finite",
+                    residual: component,
+                });
+            }
+            norm += component * component;
+        }
+        let unit_residual = norm.sqrt() - 1.0;
+        if unit_residual.abs() > POLARIZATION_TOLERANCE
+        {
+            return Err(BssnGridError::InvalidPolarization {
+                property: "direction is a unit vector",
+                residual: unit_residual,
+            });
+        }
+
+        let mut trace = 0.0_f64;
+        // Tensor-component loops index the same rank-2 array symmetrically;
+        // iterating one axis would obscure the pairing.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                if !polarization[i][j].is_finite()
+                {
+                    return Err(BssnGridError::InvalidPolarization {
+                        property: "polarization is finite",
+                        residual: polarization[i][j],
+                    });
+                }
+                let asymmetry = polarization[i][j] - polarization[j][i];
+                if asymmetry.abs() > POLARIZATION_TOLERANCE
+                {
+                    return Err(BssnGridError::InvalidPolarization {
+                        property: "polarization is symmetric",
+                        residual: asymmetry,
+                    });
+                }
+            }
+            trace += polarization[i][i];
+        }
+        if trace.abs() > POLARIZATION_TOLERANCE
+        {
+            return Err(BssnGridError::InvalidPolarization {
+                property: "polarization is traceless",
+                residual: trace,
+            });
+        }
+
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..3
+        {
+            let mut projection = 0.0_f64;
+            for j in 0..3
+            {
+                projection += polarization[i][j] * direction[j];
+            }
+            if projection.abs() > POLARIZATION_TOLERANCE
+            {
+                return Err(BssnGridError::InvalidPolarization {
+                    property: "polarization is transverse",
+                    residual: projection,
+                });
+            }
+        }
+
+        Ok(Self {
+            amplitude,
+            wave_number,
+            time,
+            direction,
+            polarization,
+        })
     }
 
-    /// The spatial metric `gamma_ij`.
+    /// The unit propagation direction `n^i`.
     #[must_use]
-    pub fn spatial_metric(&self, x: f64) -> [[f64; 3]; 3] {
-        let h = self.strain(x);
-        [[1.0, 0.0, 0.0], [0.0, 1.0 + h, 0.0], [0.0, 0.0, 1.0 - h]]
+    pub const fn direction(&self) -> [f64; 3] {
+        self.direction
+    }
+
+    /// The polarization tensor `P_ij`.
+    #[must_use]
+    pub const fn polarization(&self) -> [[f64; 3]; 3] {
+        self.polarization
+    }
+
+    /// The phase `k (n . x - t)`.
+    #[must_use]
+    pub fn phase(&self, coordinates: &[f64; 3]) -> f64 {
+        let projection = self.direction[0] * coordinates[0]
+            + self.direction[1] * coordinates[1]
+            + self.direction[2] * coordinates[2];
+        self.wave_number * (projection - self.time)
+    }
+
+    /// The scalar strain `A sin(k(n . x - t))`, of which `h_ij` is `P_ij` times.
+    #[must_use]
+    pub fn strain(&self, coordinates: &[f64; 3]) -> f64 {
+        self.amplitude * self.phase(coordinates).sin()
+    }
+
+    /// The spatial metric `gamma_ij = delta_ij + h_ij`.
+    #[must_use]
+    pub fn spatial_metric(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
+        let h = self.strain(coordinates);
+        let mut out = [[0.0_f64; 3]; 3];
+        // Tensor-component loops write a rank-2 array from another; iterating
+        // one of them would obscure the pairing.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                let flat = if i == j { 1.0 } else { 0.0 };
+                out[i][j] = flat + h * self.polarization[i][j];
+            }
+        }
+        out
     }
 
     /// The extrinsic curvature `K_ij = -(1/2) d_t gamma_ij`.
     #[must_use]
-    pub fn extrinsic_curvature(&self, x: f64) -> [[f64; 3]; 3] {
-        // d_t h = -A k cos(k(x - t)), so K_yy = +(A k / 2) cos(k(x - t)).
-        let half_rate = 0.5 * self.amplitude * self.wave_number * self.phase(x).cos();
-        [
-            [0.0, 0.0, 0.0],
-            [0.0, half_rate, 0.0],
-            [0.0, 0.0, -half_rate],
-        ]
+    pub fn extrinsic_curvature(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
+        // d_t h = -A k cos(k(n.x - t)), so K_ij = +(A k / 2) P_ij cos(...).
+        let half_rate = 0.5 * self.amplitude * self.wave_number * self.phase(coordinates).cos();
+        let mut out = [[0.0_f64; 3]; 3];
+        // Tensor-component loops write a rank-2 array from another; iterating
+        // one of them would obscure the pairing.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                out[i][j] = half_rate * self.polarization[i][j];
+            }
+        }
+        out
     }
 
     /// The metric as a coordinate-sampled field.
@@ -1951,7 +2154,7 @@ pub struct WaveMetric<'a> {
 
 impl Metric<3> for WaveMetric<'_> {
     fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
-        self.wave.spatial_metric(coordinates[0])
+        self.wave.spatial_metric(coordinates)
     }
 }
 
@@ -1963,6 +2166,6 @@ pub struct WaveCurvature<'a> {
 
 impl SpatialTensorField for WaveCurvature<'_> {
     fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
-        self.wave.extrinsic_curvature(coordinates[0])
+        self.wave.extrinsic_curvature(coordinates)
     }
 }

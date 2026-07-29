@@ -8,7 +8,7 @@
 use scirust_relativity::adm_evolution::{AdmEvolutionSettings, AdmSources, SpatialTensorField};
 use scirust_relativity::bssn::{BssnGauge, adm_rhs_from_bssn, bssn_evolution_rhs};
 use scirust_relativity::bssn_grid::{
-    BssnGridState, BssnGridSystem, BssnGridView, BssnShiftCondition, BssnSlicing,
+    BssnGridError, BssnGridState, BssnGridSystem, BssnGridView, BssnShiftCondition, BssnSlicing,
     COMPONENTS_PER_POINT, TransverseTracelessWave, bssn_grid_constraints, bssn_grid_rhs,
     bssn_grid_ricci_report, evolve_bssn_grid, grid_conformal_ricci, project_grid_trace_free,
     project_grid_unit_determinant,
@@ -526,11 +526,10 @@ fn oracle_c_short_time_propagation_converges_in_space() {
         let mut worst = 0.0_f64;
         for index in 0..grid.points()
         {
-            let x = grid.coordinate(index);
             let numerical = final_sample.state.state_at(index);
             let reconstructed =
                 scirust_relativity::bssn::bssn_to_adm(&numerical).expect("reconstruct");
-            let analytic = exact.spatial_metric(x);
+            let analytic = exact.spatial_metric(&grid.position(index));
             worst = worst.max((reconstructed.spatial_metric[1][1] - analytic[1][1]).abs());
         }
         errors.push(worst);
@@ -940,7 +939,7 @@ fn wave_evolution_is_stable_at_every_resolution() {
         {
             let reconstructed =
                 scirust_relativity::bssn::bssn_to_adm(&last.state.state_at(index)).expect("adm");
-            let analytic = exact.spatial_metric(grid.coordinate(index));
+            let analytic = exact.spatial_metric(&grid.position(index));
             worst = worst.max((reconstructed.spatial_metric[1][1] - analytic[1][1]).abs());
         }
         errors.push(worst);
@@ -1981,4 +1980,493 @@ fn two_dimensional_evolution_is_stable_over_long_times() {
             constraints.determinant.max_abs
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Three-dimensional evolution: convergence, stability, and the diagonal wave
+// ---------------------------------------------------------------------------
+
+use scirust_relativity::grid::UniformGrid3d;
+
+fn unit_cube(points: usize) -> UniformGrid3d {
+    UniformGrid3d::from_axes([points; 3], [0.0; 3], [1.0; 3]).expect("valid grid")
+}
+
+/// A metric varying along all three axes, with a DIFFERENT phase in every
+/// entry, so any transposition of two stencil axes -- or of an axis index with
+/// a tensor index -- changes the answer.
+///
+/// Every phase is one wavelength across the box. Raising any of them to three
+/// wavelengths drops `N = 8` to 2.67 points per wavelength, below Nyquist,
+/// and the measured order collapses to ~0.95 for reasons that have nothing to
+/// do with the code being tested.
+///
+/// Not a solution of the Einstein equations -- a numerical oracle for the
+/// derivative stack.
+struct TriaxialMetric {
+    amplitude: f64,
+    wave_number: f64,
+}
+
+impl Metric<3> for TriaxialMetric {
+    fn components(&self, c: &[f64; 3]) -> [[f64; 3]; 3] {
+        let k = self.wave_number;
+        let a = self.amplitude;
+        let xx = 1.0 + a * (k * (c[1] + c[2])).sin();
+        let yy = 1.0 + a * (k * (c[2] + c[0])).sin();
+        let zz = 1.0 + a * (k * (c[0] + c[1])).sin();
+        let xy = 0.5 * a * (k * (c[0] + c[1])).cos();
+        let xz = 0.5 * a * (k * (c[0] + c[2])).cos();
+        let yz = 0.5 * a * (k * (c[1] + c[2])).cos();
+        [[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]]
+    }
+}
+
+#[test]
+fn minkowski_is_exactly_stationary_in_three_dimensions() {
+    let grid = unit_cube(8);
+    let initial = BssnGridState::minkowski(grid);
+    let system = BssnGridSystem::vacuum(grid);
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 0.05, 0.01).expect("3D Minkowski");
+    let last = samples.last().expect("final sample");
+
+    // Every right-hand-side term is a difference of equal samples, so this is
+    // exact equality, not a tolerance.
+    for (evolved, start) in last.state.as_slice().iter().zip(initial.as_slice().iter())
+    {
+        assert_eq!(evolved, start, "3D Minkowski drifted");
+    }
+
+    let constraints =
+        bssn_grid_constraints(&last.state.view(), &AdmSources::VACUUM).expect("constraints");
+    assert_eq!(constraints.determinant.max_abs, 0.0);
+    assert_eq!(constraints.hamiltonian.max_abs, 0.0);
+    assert_eq!(constraints.connection.max_abs, 0.0);
+}
+
+#[test]
+fn a_genuinely_three_dimensional_state_exercises_every_mixed_pair() {
+    // Two dimensions can only ever populate `d_x d_y`. The `(0,2)` and `(1,2)`
+    // pairs are reached for the first time here, and they are separate code
+    // paths through the four-corner stencil.
+    let grid = unit_cube(16);
+    let manufactured = TriaxialMetric {
+        amplitude: 0.01,
+        wave_number: TWO_PI,
+    };
+    let state = BssnGridState::from_adm_fields(grid, &manufactured, &zero_curvature())
+        .expect("initial data");
+    let view = state.view();
+
+    let mut worst = [0.0_f64; 3];
+    for index in 0..grid.total_points()
+    {
+        let second = scirust_relativity::bssn_grid::grid_second_derivatives(&view, index);
+        for (slot, (a, b)) in [(0_usize, 1_usize), (0, 2), (1, 2)].into_iter().enumerate()
+        {
+            for i in 0..3
+            {
+                for j in 0..3
+                {
+                    worst[slot] =
+                        worst[slot].max(second.conformal_metric_hessian[a][b][i][j].abs());
+                    // Exactly symmetric in the two stencil axes, which
+                    // `Rtilde_ij` needs: an asymmetric Hessian makes the Ricci
+                    // tensor asymmetric.
+                    assert_eq!(
+                        second.conformal_metric_hessian[a][b][i][j],
+                        second.conformal_metric_hessian[b][a][i][j],
+                        "axes {a},{b} disagree at point {index}"
+                    );
+                }
+            }
+        }
+    }
+    for (slot, (a, b)) in [(0_usize, 1_usize), (0, 2), (1, 2)].into_iter().enumerate()
+    {
+        assert!(
+            worst[slot] > 1.0e-3,
+            "mixed derivative d_{a} d_{b} is trivially zero: {}",
+            worst[slot]
+        );
+    }
+}
+
+#[test]
+fn three_dimensional_bssn_ricci_converges_onto_the_generic_metric_ricci() {
+    // The same measurement that caught the Layer 3.5 index error, now with
+    // `Gammatilde^i` non-zero in all three components rather than one.
+    let mut differences = Vec::new();
+    let mut connection_scale = 0.0_f64;
+
+    for &points in &[8_usize, 16]
+    {
+        let grid = unit_cube(points);
+        let manufactured = TriaxialMetric {
+            amplitude: 0.01,
+            wave_number: TWO_PI,
+        };
+        let state = BssnGridState::from_adm_fields(grid, &manufactured, &zero_curvature())
+            .expect("initial data");
+        let view = state.view();
+        let settings = view.settings();
+        let metric = view.metric();
+
+        let mut worst = 0.0_f64;
+        let mut scale = 0.0_f64;
+        for index in 0..grid.total_points()
+        {
+            let at = grid.position(index);
+            let bssn = grid_conformal_ricci(&view, index).expect("bssn ricci");
+            let generic = scirust_relativity::bssn::conformal_ricci(&metric, &at, &settings)
+                .expect("generic ricci");
+            for i in 0..3
+            {
+                for j in 0..3
+                {
+                    worst = worst.max((bssn.total[i][j] - generic.total[i][j]).abs());
+                    scale = scale.max(generic.total[i][j].abs());
+                }
+            }
+            for component in 0..3
+            {
+                connection_scale = connection_scale
+                    .max(view.state_at(index).conformal_connection[component].abs());
+            }
+        }
+        assert!(scale > 1.0e-3, "Ricci is trivially zero: {scale}");
+        differences.push(worst);
+    }
+
+    // The term that carried the Layer 3.5 bug is genuinely exercised.
+    assert!(
+        connection_scale > 1.0e-2,
+        "Gammatilde^i is trivially zero: {connection_scale}"
+    );
+    let order = observed_order(differences[0], differences[1]);
+    assert!(
+        (order - 2.0).abs() < 0.2,
+        "3D Ricci order {order} from {differences:?}"
+    );
+}
+
+#[test]
+fn three_dimensional_gauge_wave_converges_at_second_order() {
+    // The 2D diagonal gauge wave, extended to the body diagonal. 1+log slicing
+    // linearises to `d_t^2 alpha = 2 grad^2 alpha` on flat space with `K = 0`,
+    // and `grad^2 sin(k(x+y+z)) = -3 k^2`, so
+    //
+    //     alpha(t, x, y, z) = 1 + A cos(k sqrt(6) t) sin(k (x + y + z))
+    //
+    // exactly. All three axes vary, which no 2D configuration can arrange.
+    //
+    // `omega t = pi/4` at the sampling time: away from the extremum of the
+    // cosine, where a phase error would only show at second order. `dt` is
+    // fixed rather than tied to `dx`, so refining isolates the spatial order.
+    let k = TWO_PI;
+    let omega = k * 6.0_f64.sqrt();
+    let amplitude = 1.0e-6_f64;
+    let t_end = std::f64::consts::FRAC_PI_4 / omega;
+    let step = t_end / 6.0;
+    let mut errors = Vec::new();
+
+    for &points in &[8_usize, 16]
+    {
+        let grid = unit_cube(points);
+        let mut initial = BssnGridState::minkowski(grid);
+        for index in 0..grid.total_points()
+        {
+            let p = grid.position(index);
+            initial.set_lapse_at(index, 1.0 + amplitude * (k * (p[0] + p[1] + p[2])).sin());
+        }
+
+        let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, step).expect("3D gauge wave");
+        let last = samples.last().expect("final sample");
+
+        let mut worst = 0.0_f64;
+        for index in 0..grid.total_points()
+        {
+            let p = grid.position(index);
+            let exact =
+                1.0 + amplitude * (omega * last.time).cos() * (k * (p[0] + p[1] + p[2])).sin();
+            worst = worst.max((last.state.lapse_at(index) - exact).abs());
+        }
+        errors.push(worst);
+    }
+
+    let order = observed_order(errors[0], errors[1]);
+    assert!(
+        (order - 2.0).abs() < 0.15,
+        "3D gauge-wave spatial order {order} from {errors:?}"
+    );
+    assert!(
+        errors.iter().all(|value| *value < amplitude / 20.0),
+        "3D gauge-wave errors are not small against A = {amplitude}: {errors:?}"
+    );
+}
+
+#[test]
+fn diagonal_gravitational_wave_converges_at_second_order() {
+    // The gravitational sector, not the gauge sector: this evolves
+    // `gammatilde_ij` and `Atilde_ij` rather than the lapse.
+    //
+    // A wave along the body diagonal has all six independent components of
+    // `h_ij` non-zero while all three axes vary. Neither a 1D nor a 2D grid can
+    // carry that configuration, so this is the first test in the crate to
+    // exercise the gravitational degrees of freedom in full.
+    let amplitude = 1.0e-6_f64;
+    let component = TWO_PI;
+    let omega = component * 3.0_f64.sqrt();
+    let t_end = std::f64::consts::FRAC_PI_4 / omega;
+    let step = t_end / 12.0;
+    let mut errors = Vec::new();
+
+    for &points in &[8_usize, 16]
+    {
+        let grid = unit_cube(points);
+        let wave = TransverseTracelessWave::diagonal(amplitude, component, 0.0);
+        let initial =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("initial data");
+
+        let system = BssnGridSystem::vacuum(grid);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, step).expect("diagonal wave");
+        let last = samples.last().expect("final sample");
+        let exact = TransverseTracelessWave::diagonal(amplitude, component, last.time);
+
+        let mut worst = 0.0_f64;
+        for index in 0..grid.total_points()
+        {
+            let at = grid.position(index);
+            let reconstructed = scirust_relativity::bssn::bssn_to_adm(&last.state.state_at(index))
+                .expect("reconstruct");
+            let analytic = exact.spatial_metric(&at);
+            // Tensor-component loops index two distinct rank-2 arrays together;
+            // iterating one of them would obscure that pairing.
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..3
+            {
+                for j in 0..3
+                {
+                    worst = worst.max((reconstructed.spatial_metric[i][j] - analytic[i][j]).abs());
+                }
+            }
+        }
+        errors.push(worst);
+
+        // The Hamiltonian constraint stays at the `O(A^2)` level the linearized
+        // oracle neglects, rather than growing.
+        let constraints =
+            bssn_grid_constraints(&last.state.view(), &AdmSources::VACUUM).expect("constraints");
+        assert!(
+            constraints.hamiltonian.max_abs < 1.0e-8,
+            "3D wave Hamiltonian constraint grew to {} at N = {points}",
+            constraints.hamiltonian.max_abs
+        );
+    }
+
+    let order = observed_order(errors[0], errors[1]);
+    assert!(
+        (order - 2.0).abs() < 0.15,
+        "diagonal wave spatial order {order} from {errors:?}"
+    );
+}
+
+#[test]
+fn three_dimensional_evolution_is_stable_over_long_times() {
+    // Layer 3.4's cautionary precedent: an accurate right-hand side there
+    // coexisted with an evolution that blew up. The right-hand side converging
+    // at order 2 above is not evidence that this stays bounded.
+    let k = TWO_PI;
+    let amplitude = 1.0e-3_f64;
+    let grid = unit_cube(8);
+
+    let mut initial = BssnGridState::minkowski(grid);
+    for index in 0..grid.total_points()
+    {
+        let p = grid.position(index);
+        initial.set_lapse_at(index, 1.0 + amplitude * (k * (p[0] + p[1] + p[2])).sin());
+    }
+
+    let system = BssnGridSystem::vacuum(grid).with_slicing(BssnSlicing::OnePlusLog);
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.25 * grid.spacing_along(0))
+        .unwrap_or_else(|error| panic!("3D evolution failed to reach t = 1: {error}"));
+
+    // Bounded by something near unity at EVERY sampled time, not merely at the
+    // end: an evolution that blows up and returns would pass a final-time-only
+    // check. The lapse is `O(1)` and every other field is `O(A)`.
+    for sample in &samples
+    {
+        let worst = max_abs(sample.state.as_slice());
+        assert!(
+            worst < 1.01,
+            "3D evolution grew to {worst} at t = {}",
+            sample.time
+        );
+    }
+
+    // The determinant constraint is a truncation effect of the free evolution,
+    // which projects nothing at any stage. The bound is set from a measured
+    // error model, not from the number this run happens to produce:
+    //
+    //  - at `N = 8` the Layer 3.6 experiment measured `3.6e-10` in two
+    //    dimensions; three dimensions at the same resolution reach `4.2e-10`,
+    //    the same per-axis level with one more axis contributing;
+    //  - it FALLS steeply under refinement -- the accompanying 3D experiment
+    //    measures `9.7e-11 -> 3.1e-13` from `N = 8` to `N = 16` at `t = 1/4` --
+    //    which is what separates truncation from an instability, and is the
+    //    property actually being claimed here.
+    //
+    // `1e-9` leaves roughly a factor of two of headroom for platform-dependent
+    // rounding, while still refusing a decade of growth. Eight points per
+    // wavelength is a coarse grid; this is the truncation such a grid carries.
+    //
+    // Every sample is checked, for the same reason as the bound above.
+    for sample in &samples
+    {
+        let constraints =
+            bssn_grid_constraints(&sample.state.view(), &AdmSources::VACUUM).expect("constraints");
+        assert!(
+            constraints.determinant.max_abs < 1.0e-9,
+            "3D determinant constraint drifted to {} at t = {}",
+            constraints.determinant.max_abs,
+            sample.time
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The generalized wave oracle
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_along_x_wave_is_unchanged_by_the_generalization() {
+    // `new` must reproduce the closed form it had before the wave carried a
+    // direction and a polarization, bit for bit -- not merely to a tolerance.
+    // Every one-dimensional measurement in this crate rests on it.
+    let wave = TransverseTracelessWave::new(1.0e-3, TWO_PI, 0.125);
+    for step in 0..64
+    {
+        let x = step as f64 / 64.0;
+        let at = [x, 0.375, -0.75];
+
+        let phase = TWO_PI * (x - 0.125);
+        assert_eq!(wave.phase(&at), phase);
+
+        let h = 1.0e-3 * phase.sin();
+        assert_eq!(wave.strain(&at), h);
+        assert_eq!(
+            wave.spatial_metric(&at),
+            [[1.0, 0.0, 0.0], [0.0, 1.0 + h, 0.0], [0.0, 0.0, 1.0 - h]]
+        );
+
+        let half_rate = 0.5 * 1.0e-3 * TWO_PI * phase.cos();
+        assert_eq!(
+            wave.extrinsic_curvature(&at),
+            [
+                [0.0, 0.0, 0.0],
+                [0.0, half_rate, 0.0],
+                [0.0, 0.0, -half_rate],
+            ]
+        );
+    }
+    // And the transverse coordinates genuinely do not enter.
+    assert_eq!(
+        wave.phase(&[0.25, 0.0, 0.0]),
+        wave.phase(&[0.25, 9.0, -4.0])
+    );
+}
+
+#[test]
+fn the_diagonal_polarization_is_exactly_transverse_and_traceless() {
+    let wave = TransverseTracelessWave::diagonal(1.0e-3, TWO_PI, 0.0);
+    let polarization = wave.polarization();
+    let direction = wave.direction();
+
+    // These hold exactly in binary floating point: 1/3 + 1/3 is 2/3 with no
+    // rounding, so the trace and the projection cancel to zero rather than to
+    // an epsilon.
+    let trace = polarization[0][0] + polarization[1][1] + polarization[2][2];
+    assert_eq!(trace, 0.0, "polarization is not traceless");
+    // Tensor-component loops contract a rank-2 array against a vector and check
+    // it against its own transpose; iterating one axis would obscure both.
+    #[allow(clippy::needless_range_loop)]
+    for i in 0..3
+    {
+        let projection: f64 = (0..3).map(|j| polarization[i][j] * direction[j]).sum();
+        assert_eq!(projection, 0.0, "row {i} is not transverse");
+        for j in 0..3
+        {
+            assert_eq!(polarization[i][j], polarization[j][i]);
+        }
+    }
+
+    // All six independent components are non-zero -- the property that makes
+    // this configuration unreachable in one or two dimensions.
+    for (i, row) in polarization.iter().enumerate()
+    {
+        for (j, value) in row.iter().enumerate()
+        {
+            assert!(value.abs() > 0.1, "P[{i}][{j}] is negligible");
+        }
+    }
+
+    // The wave number is |k|, not the per-axis component.
+    assert!((wave.wave_number - TWO_PI * 3.0_f64.sqrt()).abs() < 1.0e-12);
+}
+
+#[test]
+fn a_polarization_that_is_not_transverse_traceless_is_refused() {
+    let unit_x = [1.0, 0.0, 0.0];
+    let transverse = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0]];
+    assert!(TransverseTracelessWave::plane(1.0e-3, TWO_PI, 0.0, unit_x, transverse).is_ok());
+
+    // Carries a trace.
+    let with_trace = [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    assert!(matches!(
+        TransverseTracelessWave::plane(1.0e-3, TWO_PI, 0.0, unit_x, with_trace),
+        Err(BssnGridError::InvalidPolarization {
+            property: "polarization is traceless",
+            ..
+        })
+    ));
+
+    // Longitudinal: a `P_xx` component along the propagation direction.
+    let longitudinal = [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 0.0]];
+    assert!(matches!(
+        TransverseTracelessWave::plane(1.0e-3, TWO_PI, 0.0, unit_x, longitudinal),
+        Err(BssnGridError::InvalidPolarization {
+            property: "polarization is transverse",
+            ..
+        })
+    ));
+
+    // Asymmetric.
+    let asymmetric = [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]];
+    assert!(matches!(
+        TransverseTracelessWave::plane(1.0e-3, TWO_PI, 0.0, unit_x, asymmetric),
+        Err(BssnGridError::InvalidPolarization {
+            property: "polarization is symmetric",
+            ..
+        })
+    ));
+
+    // Non-unit direction.
+    assert!(matches!(
+        TransverseTracelessWave::plane(1.0e-3, TWO_PI, 0.0, [2.0, 0.0, 0.0], transverse),
+        Err(BssnGridError::InvalidPolarization {
+            property: "direction is a unit vector",
+            ..
+        })
+    ));
+
+    // Non-finite direction.
+    assert!(matches!(
+        TransverseTracelessWave::plane(1.0e-3, TWO_PI, 0.0, [f64::NAN, 0.0, 0.0], transverse),
+        Err(BssnGridError::InvalidPolarization {
+            property: "direction is finite",
+            ..
+        })
+    ));
 }

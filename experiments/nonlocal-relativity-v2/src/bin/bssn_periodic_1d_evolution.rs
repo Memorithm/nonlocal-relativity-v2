@@ -79,7 +79,7 @@ fn wave_metric_error(
             Ok(value) => value,
             Err(_) => return f64::NAN,
         };
-        let analytic = exact.spatial_metric(grid.coordinate(index));
+        let analytic = exact.spatial_metric(&grid.position(index));
         worst = worst.max((reconstructed.spatial_metric[1][1] - analytic[1][1]).abs());
     }
     worst
@@ -227,7 +227,7 @@ fn main() {
         for index in 0..grid.points()
         {
             let reconstructed = bssn_to_adm(&last.state.state_at(index)).expect("adm");
-            let analytic = exact.spatial_metric(grid.coordinate(index));
+            let analytic = exact.spatial_metric(&grid.position(index));
             errors[index] = reconstructed.spatial_metric[1][1] - analytic[1][1];
         }
         let reduction = scirust_relativity::grid::GridReduction::of(&errors);

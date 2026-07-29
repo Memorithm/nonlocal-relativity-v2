@@ -7,7 +7,9 @@
 //! It began as a one-dimensional grid. Generalising it to `D` axes was what a
 //! second spatial dimension required — and it was *all* that a second spatial
 //! dimension required, because [`crate::bssn`] takes complete 3x3 derivative
-//! tensors and never assumes how many of the axes actually vary.
+//! tensors and never assumes how many of the axes actually vary. The third
+//! dimension then needed nothing at all from this module: [`UniformGrid3d`] is
+//! an alias, and the stencils were already written for arbitrary axis pairs.
 //! [`UniformGrid1d`] remains as an alias with its original scalar API intact.
 //!
 //! # Convention
@@ -189,6 +191,9 @@ pub type UniformGrid1d = UniformGrid<1>;
 
 /// A two-dimensional uniform periodic grid.
 pub type UniformGrid2d = UniformGrid<2>;
+
+/// A three-dimensional uniform periodic grid.
+pub type UniformGrid3d = UniformGrid<3>;
 
 impl<const D: usize> UniformGrid<D> {
     /// Build a grid spanning the half-open box `[lower, upper)` with `points`

@@ -161,7 +161,17 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   evolution oracle (the diagonal 1+log gauge wave, converging at order 2.00),
   long-time bounded evolution at every resolution and Courant factor tested, a
   deterministic 2D experiment, and 2D benchmarks — see
-  `docs/LAYER_3_BSSN_PERIODIC_2D.md`. Stability remains **measured, not proven**. Carries the platform's first **live gauge**: 1+log slicing
+  `docs/LAYER_3_BSSN_PERIODIC_2D.md`. Layer 3.7 closes the third axis, which the
+  grid type carried but nothing validated: a body-diagonal gauge wave (order
+  1.98), and — the configuration no lower-dimensional grid can represent — a
+  **transverse-traceless gravitational wave along `(1,1,1)`** whose six
+  independent metric components are all non-zero while all three axes vary
+  (order 1.94). This required generalising `TransverseTracelessWave` from
+  "along `x`" to an arbitrary direction and validated polarization; `new`
+  remains bit-for-bit unchanged and the 1D and 2D experiments reproduce
+  byte-identical output. Unlike 3.5 and 3.6, the third dimension exposed **no
+  defect** — a result, not an omission. See
+  `docs/LAYER_3_BSSN_PERIODIC_3D.md`. Stability remains **measured, not proven**. Carries the platform's first **live gauge**: 1+log slicing
   (`bssn::one_plus_log_lapse_rhs`, `BssnSlicing::OnePlusLog`) with the lapse an
   evolved field (slot 17 of 18) and the covariant lapse Hessian supplied to
   `d_t K` and `d_t Atilde_ij`, validated against the exact `sqrt(2)` gauge speed;
@@ -370,8 +380,8 @@ phenomenological** worldline set (`adaptive_convergence`, `history_retention`,
 `orthonormal_tetrad`, `world_function`, `van_vleck_determinant`) plus the Layer 2
 `linearized_gravity`, `ppn_extraction`, `action_variation`, and `adm_kinematics`,
 and the Layer 3 `adm_constraint_sweep`, `adm_homogeneous_evolution`, and
-`bssn_homogeneous_evolution`, `bssn_periodic_1d_evolution`, and
-`bssn_periodic_2d_evolution`.
+`bssn_homogeneous_evolution`, `bssn_periodic_1d_evolution`,
+`bssn_periodic_2d_evolution`, and `bssn_periodic_3d_evolution`.
 
 ## 3. Validated mathematics (oracle inventory)
 

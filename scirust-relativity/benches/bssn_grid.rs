@@ -16,8 +16,8 @@ use scirust_relativity::bssn_grid::{
     bssn_grid_constraints, bssn_grid_rhs, evolve_bssn_grid,
 };
 use scirust_relativity::grid::{
-    UniformGrid1d, UniformGrid2d, periodic_first_derivative_all, periodic_mixed_derivative,
-    periodic_second_derivative_all,
+    UniformGrid1d, UniformGrid2d, UniformGrid3d, periodic_first_derivative_all,
+    periodic_mixed_derivative, periodic_second_derivative_all,
 };
 
 const RESOLUTIONS: [usize; 3] = [32, 64, 128];
@@ -301,10 +301,60 @@ fn bench_grid_rhs_2d(c: &mut Criterion) {
     group.finish();
 }
 
+/// One complete BSSN right-hand side over a three-dimensional grid.
+///
+/// The point count grows as `N^3` and each point now takes nine mixed second
+/// differences rather than four, so this separates the cost of the extra points
+/// from the cost of the extra stencils.
+fn bench_grid_rhs_3d(c: &mut Criterion) {
+    let mut group = c.benchmark_group("grid_bssn_rhs_3d");
+    for &points in &[4_usize, 8, 16]
+    {
+        let grid = UniformGrid3d::from_axes([points; 3], [0.0; 3], [1.0; 3]).expect("grid");
+        let state = BssnGridState::minkowski(grid);
+        let view = state.view();
+        let mut out = vec![0.0_f64; COMPONENTS_PER_POINT * grid.total_points()];
+        group.bench_with_input(BenchmarkId::from_parameter(points), &points, |b, _| {
+            b.iter(|| {
+                bssn_grid_rhs(
+                    black_box(&view),
+                    black_box(&BssnGauge::SYNCHRONOUS),
+                    black_box(&AdmSources::VACUUM),
+                    0.0,
+                    &mut out,
+                )
+                .expect("rhs")
+            });
+        });
+    }
+    group.finish();
+}
+
+/// Initial data for the body-diagonal gravitational wave.
+///
+/// The polarization has every component non-zero, so the conformal
+/// decomposition does strictly more work than for the along-`x` wave.
+fn bench_diagonal_wave_initial_data(c: &mut Criterion) {
+    let grid = UniformGrid3d::from_axes([8; 3], [0.0; 3], [1.0; 3]).expect("grid");
+    let wave = TransverseTracelessWave::diagonal(1.0e-6, TWO_PI, 0.0);
+    c.bench_function("grid_diagonal_wave_initial_data_n8", |b| {
+        b.iter(|| {
+            BssnGridState::from_adm_fields(
+                black_box(grid),
+                &wave.metric_field(),
+                &wave.curvature_field(),
+            )
+            .expect("initial data")
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_mixed_derivative,
     bench_grid_rhs_2d,
+    bench_grid_rhs_3d,
+    bench_diagonal_wave_initial_data,
     bench_first_derivative,
     bench_second_derivative,
     bench_conformal_connection,

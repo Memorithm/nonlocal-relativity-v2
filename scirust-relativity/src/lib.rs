@@ -76,8 +76,11 @@
 //!   operators validated against `sin(kx)`, a grid-backed derivative provider
 //!   that drives the *unmodified* Layer 3.3 evaluators, and a method-of-lines
 //!   adapter integrating through [`scirust_sim::simulate`] (no new integrator).
-//!   A **1D3V** reduction — one spatially varying coordinate, full 3x3 tensors —
-//!   **not** a three-dimensional numerical-relativity solver. The pipeline is
+//!   Validated in one, two, and three spatial dimensions (Layers 3.4 to 3.7),
+//!   the last against a transverse-traceless gravitational wave propagating
+//!   along the body diagonal. It remains a **periodic-box solver for weak,
+//!   smooth fields** — no outer boundary, puncture, horizon, excision,
+//!   constraint damping, or adaptive refinement. The pipeline is
 //!   second-order accurate (Minkowski exactly stationary; conformal Ricci and
 //!   wave propagation both converging at order 2; RK4 retaining order 4) and
 //!   stable across every resolution tested, with a resolution-independent
