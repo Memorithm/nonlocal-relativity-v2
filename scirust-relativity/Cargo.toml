@@ -38,3 +38,7 @@ harness = false
 [[bench]]
 name = "bssn"
 harness = false
+
+[[bench]]
+name = "bssn_grid"
+harness = false

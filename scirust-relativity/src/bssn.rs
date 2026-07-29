@@ -64,8 +64,8 @@ use crate::adm_evolution::{
     curvature_evolution_rhs, hamiltonian_constraint, metric_evolution_rhs,
 };
 use crate::{
-    Metric, RelativityError, determinant, invert_metric, numerical_christoffel,
-    ricci_tensor_from_metric,
+    Metric, RelativityError, christoffel_from_derivatives, determinant, invert_metric,
+    numerical_christoffel, ricci_tensor_from_metric,
 };
 
 /// A typed failure of a BSSN operation. It never panics.
@@ -929,7 +929,12 @@ pub fn conformal_ricci<G: Metric<3>>(
 /// and for the exact `alpha * H` relation between this `d_t K` and the ADM one.
 // Explicit tensor-index loops read most clearly here (matching the crate's
 // curvature, action, adm, and adm_evolution modules).
-#[allow(clippy::needless_range_loop)]
+/// The BSSN evolution right-hand sides at a point, computing the conformal
+/// Ricci tensor internally from the supplied metric field.
+///
+/// Behaviour is unchanged from Layer 3.3. See
+/// [`bssn_evolution_rhs_with_ricci`] for the variant a grid uses, which supplies
+/// `Rtilde_ij` in genuine BSSN form instead.
 pub fn bssn_evolution_rhs<G: Metric<3>>(
     spatial_metric: &G,
     extrinsic_curvature: &impl SpatialTensorField,
@@ -937,6 +942,29 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
     gauge: &BssnGauge,
     sources: &AdmSources,
     settings: &AdmEvolutionSettings,
+) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
+    evolution_rhs_inner(
+        spatial_metric,
+        extrinsic_curvature,
+        coordinates,
+        gauge,
+        sources,
+        settings,
+        None,
+    )
+}
+
+// Tensor-component loops index several distinct rank-2/3 arrays together;
+// iterating one of them would obscure that pairing.
+#[allow(clippy::needless_range_loop)]
+fn evolution_rhs_inner<G: Metric<3>>(
+    spatial_metric: &G,
+    extrinsic_curvature: &impl SpatialTensorField,
+    coordinates: &[f64; 3],
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+    settings: &AdmEvolutionSettings,
+    supplied: Option<&BssnSuppliedTerms<'_>>,
 ) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
     if !gauge.lapse.is_finite() || gauge.shift.iter().any(|v| !v.is_finite())
     {
@@ -966,12 +994,61 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
 
     // d_t phi. With a spatially constant gauge the shift terms vanish exactly.
     let conformal_factor_lapse_term = -alpha * trace_k / 6.0;
-    let conformal_factor_shift_term = 0.0;
+    // beta^j d_j phi + (1/6) d_j beta^j
+    let (shift_gradient, shift_hessian, shift_first) = match supplied
+    {
+        Some(terms) => (
+            terms.shift.gradient,
+            terms.shift.hessian,
+            Some(terms.derivatives),
+        ),
+        None => ([[0.0_f64; 3]; 3], [[[0.0_f64; 3]; 3]; 3], None),
+    };
+    // The shift Hessian enters only the `Gammatilde^i` equation, which
+    // `bssn_connection_rhs` owns.
+    let _ = shift_hessian;
+    let mut shift_divergence = 0.0;
+    for j in 0..3
+    {
+        shift_divergence += shift_gradient[j][j];
+    }
+    let conformal_factor_shift_term = match shift_first
+    {
+        Some(first) =>
+        {
+            let mut advection = 0.0;
+            for j in 0..3
+            {
+                advection += gauge.shift[j] * first.conformal_factor_gradient[j];
+            }
+            advection + shift_divergence / 6.0
+        },
+        None => 0.0,
+    };
     let conformal_factor = conformal_factor_lapse_term + conformal_factor_shift_term;
 
     // d_t gammatilde_ij.
     let mut conformal_metric_lapse_term = [[0.0_f64; 3]; 3];
-    let conformal_metric_shift_term = [[0.0_f64; 3]; 3];
+    // beta^k d_k gammatilde_ij + gammatilde_ik d_j beta^k + gammatilde_jk d_i beta^k
+    //   - (2/3) gammatilde_ij d_k beta^k
+    let mut conformal_metric_shift_term = [[0.0_f64; 3]; 3];
+    if let Some(first) = shift_first
+    {
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                let mut value = -2.0 / 3.0 * state.conformal_metric[i][j] * shift_divergence;
+                for k in 0..3
+                {
+                    value += gauge.shift[k] * first.conformal_metric_gradient[k][i][j]
+                        + state.conformal_metric[i][k] * shift_gradient[k][j]
+                        + state.conformal_metric[j][k] * shift_gradient[k][i];
+                }
+                conformal_metric_shift_term[i][j] = value;
+            }
+        }
+    }
     let mut conformal_metric_rhs = [[0.0_f64; 3]; 3];
     for i in 0..3
     {
@@ -983,18 +1060,44 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
         }
     }
 
+    // The covariant lapse Hessian `D_i D_j alpha`. Exactly zero for a prescribed
+    // constant lapse; supplied by the caller once the lapse is live.
+    let lapse_hessian = match supplied
+    {
+        Some(terms) => covariant_lapse_hessian(&state, terms.derivatives, terms.lapse)?,
+        None => [[0.0_f64; 3]; 3],
+    };
+    let lapse_laplacian = trace_with(&physical_inverse, &lapse_hessian);
+
     // d_t K (the constraint-substituted form; see the module documentation).
-    let mean_curvature_lapse_term = 0.0; // D^i D_i alpha = 0 for a constant lapse.
+    let mean_curvature_lapse_term = -lapse_laplacian;
     let mean_curvature_quadratic_term = alpha * (curvature_squared + trace_k * trace_k / 3.0);
     let mean_curvature_matter_term = 4.0 * PI * alpha * (sources.energy_density + stress_trace);
-    let mean_curvature_shift_term = 0.0;
+    // beta^j d_j K
+    let mean_curvature_shift_term = match shift_first
+    {
+        Some(first) =>
+        {
+            let mut value = 0.0;
+            for j in 0..3
+            {
+                value += gauge.shift[j] * first.mean_curvature_gradient[j];
+            }
+            value
+        },
+        None => 0.0,
+    };
     let mean_curvature = mean_curvature_lapse_term
         + mean_curvature_quadratic_term
         + mean_curvature_matter_term
         + mean_curvature_shift_term;
 
     // d_t Atilde_ij.
-    let ricci = conformal_ricci(spatial_metric, coordinates, settings)?;
+    let ricci = match supplied
+    {
+        Some(terms) => *terms.ricci,
+        None => conformal_ricci(spatial_metric, coordinates, settings)?,
+    };
     let mut ricci_source = [[0.0_f64; 3]; 3];
     let mut matter_source = [[0.0_f64; 3]; 3];
     for i in 0..3
@@ -1012,7 +1115,26 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
     let mut conformal_curvature_ricci_term = [[0.0_f64; 3]; 3];
     let mut conformal_curvature_matter_term = [[0.0_f64; 3]; 3];
     let mut conformal_curvature_quadratic_term = [[0.0_f64; 3]; 3];
-    let conformal_curvature_shift_term = [[0.0_f64; 3]; 3];
+    // beta^k d_k Atilde_ij + Atilde_ik d_j beta^k + Atilde_jk d_i beta^k
+    //   - (2/3) Atilde_ij d_k beta^k
+    let mut conformal_curvature_shift_term = [[0.0_f64; 3]; 3];
+    if let Some(first) = shift_first
+    {
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                let mut value = -2.0 / 3.0 * state.conformal_curvature[i][j] * shift_divergence;
+                for k in 0..3
+                {
+                    value += gauge.shift[k] * first.conformal_curvature_gradient[k][i][j]
+                        + state.conformal_curvature[i][k] * shift_gradient[k][j]
+                        + state.conformal_curvature[j][k] * shift_gradient[k][i];
+                }
+                conformal_curvature_shift_term[i][j] = value;
+            }
+        }
+    }
     let mut conformal_curvature_rhs = [[0.0_f64; 3]; 3];
     for i in 0..3
     {
@@ -1023,7 +1145,9 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
                 scale * (ricci_source[i][j] - physical[i][j] * ricci_trace / 3.0);
             conformal_curvature_matter_term[i][j] =
                 scale * (matter_source[i][j] - physical[i][j] * matter_trace / 3.0);
-            conformal_curvature_lapse_term[i][j] = 0.0; // constant lapse
+            // -e^{-4 phi} ( D_i D_j alpha )^TF
+            conformal_curvature_lapse_term[i][j] =
+                scale * (-lapse_hessian[i][j] + physical[i][j] * lapse_laplacian / 3.0);
             let mut quadratic = 0.0;
             for k in 0..3
             {
@@ -1045,8 +1169,12 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
     // the spatially constant fields and prescribed constant gauge this
     // increment supports. It is therefore exactly zero here -- carried so the
     // state and its rates stay complete, and exercised structurally (the
-    // connection constraint) rather than dynamically. A later grid increment
-    // supplies the non-vanishing derivative terms.
+    // connection constraint) rather than dynamically.
+    //
+    // A grid, where those gradients are non-zero, must NOT use this value:
+    // freezing `Gammatilde^i` while `gammatilde_ij` evolves reduces BSSN back to
+    // a weakly hyperbolic ADM-like system. `bssn_connection_rhs` supplies the
+    // full equation from caller-provided gradients; `crate::bssn_grid` uses it.
     let conformal_connection = [0.0_f64; 3];
 
     require_finite_tensor("conformal_metric_rhs", &conformal_metric_rhs)?;
@@ -1210,4 +1338,626 @@ pub fn adm_bssn_equivalence<G: Metric<3>>(
         hamiltonian_residual: hamiltonian.signed_residual,
         lapse: gauge.lapse,
     })
+}
+
+// ---------------------------------------------------------------------------
+// The conformal connection evolution equation
+// ---------------------------------------------------------------------------
+
+/// The spatial gradients a grid must supply to evolve `Gammatilde^i`.
+///
+/// Layer 3.3 evaluates every derivative internally from coordinate-sampled
+/// fields, which is why it could only report `d_t Gammatilde^i = 0` for the
+/// spatially constant data it supported. A grid has these gradients already, so
+/// it supplies them directly rather than being differenced a second time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnSpatialDerivatives {
+    /// `d_i phi`.
+    pub conformal_factor_gradient: [f64; 3],
+    /// `d_i K`.
+    pub mean_curvature_gradient: [f64; 3],
+    /// `d_k gammatilde_ij`, indexed `[k][i][j]`.
+    pub conformal_metric_gradient: [[[f64; 3]; 3]; 3],
+    /// `d_k Atilde_ij`, indexed `[k][i][j]`.
+    pub conformal_curvature_gradient: [[[f64; 3]; 3]; 3],
+}
+
+impl BssnSpatialDerivatives {
+    /// All gradients zero — the spatially homogeneous case Layer 3.3 supported.
+    pub const ZERO: Self = Self {
+        conformal_factor_gradient: [0.0; 3],
+        mean_curvature_gradient: [0.0; 3],
+        conformal_metric_gradient: [[[0.0; 3]; 3]; 3],
+        conformal_curvature_gradient: [[[0.0; 3]; 3]; 3],
+    };
+}
+
+/// The decomposed right-hand side of the `Gammatilde^i` evolution equation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnConnectionRhs {
+    /// The total right-hand side.
+    pub total: [f64; 3],
+    /// The `2 alpha Gammatilde^i_jk Atilde^jk` contribution.
+    pub christoffel_term: [f64; 3],
+    /// The `-(4/3) alpha gammatilde^{ij} d_j K` contribution.
+    pub mean_curvature_term: [f64; 3],
+    /// The `12 alpha Atilde^{ij} d_j phi` contribution.
+    pub conformal_factor_term: [f64; 3],
+    /// The `-2 Atilde^{ij} d_j alpha` contribution (zero for a constant lapse).
+    pub lapse_term: [f64; 3],
+    /// The shift advection and shift-gradient contribution (zero for zero shift).
+    pub shift_term: [f64; 3],
+    /// The conformal Christoffel symbols used, exposed for cross-checking.
+    pub conformal_christoffel: [[[f64; 3]; 3]; 3],
+}
+
+/// The evolution right-hand side of the conformal connection functions
+/// `Gammatilde^i`.
+///
+/// # Derivation, not transcription
+///
+/// `Gammatilde^i` is *defined* by `Gammatilde^i = gammatilde^{jk}
+/// Gammatilde^i_{jk} = -d_j gammatilde^{ij}`, so differentiating the definition
+/// in time gives, for a constant lapse and zero shift,
+///
+/// ```text
+/// d_t gammatilde_ij  = -2 alpha Atilde_ij
+/// d_t gammatilde^{ij} = +2 alpha Atilde^{ij}
+/// d_t Gammatilde^i    = -d_j ( 2 alpha Atilde^{ij} ) = -2 alpha d_j Atilde^{ij}
+/// ```
+///
+/// Substituting the momentum constraint for `d_j Atilde^{ij}` gives the form
+/// implemented here:
+///
+/// ```text
+/// d_t Gammatilde^i = -2 Atilde^{ij} d_j alpha
+///     + 2 alpha ( Gammatilde^i_{jk} Atilde^{jk}
+///                 + 6 Atilde^{ij} d_j phi
+///                 - (2/3) gammatilde^{ij} d_j K )
+/// ```
+///
+/// **This is constraint-substituted**, exactly as the `d_t K` equation is (see
+/// the module documentation). The two forms agree *on the momentum-constraint
+/// surface* and differ off it by the momentum constraint itself. The
+/// substituted form is the one that makes BSSN strongly hyperbolic, which is
+/// the entire reason BSSN exists, so it is the form used — and the fact that it
+/// is substituted is stated rather than glossed.
+///
+/// # Matter
+///
+/// The matter contribution is **not** implemented. Deriving it requires fixing a
+/// convention for the momentum density that this increment has no vacuum-free
+/// oracle to validate against, and shipping an unvalidated formula would be
+/// worse than refusing. A non-zero momentum density is therefore rejected with a
+/// typed error rather than silently ignored or silently guessed.
+// Tensor-component loops index several distinct arrays together by index.
+#[allow(clippy::needless_range_loop)]
+pub fn bssn_connection_rhs(
+    state: &BssnState,
+    derivatives: &BssnSpatialDerivatives,
+    second: &BssnSecondDerivatives,
+    lapse: &BssnLapseDerivatives,
+    shift: &BssnShiftDerivatives,
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+) -> Result<BssnConnectionRhs, BssnError> {
+    if !gauge.lapse.is_finite() || gauge.shift.iter().any(|value| !value.is_finite())
+    {
+        return Err(BssnError::NonFiniteState { quantity: "gauge" });
+    }
+    if sources.momentum_density.iter().any(|value| *value != 0.0)
+    {
+        return Err(BssnError::UnavailableDerivative {
+            quantity: "connection_matter_term",
+        });
+    }
+
+    let alpha = gauge.lapse;
+    let inverse = state.inverse_conformal_metric()?;
+    let curvature_up = raise_both(&inverse, &state.conformal_curvature);
+
+    // One implementation of the Christoffel formula in the crate: this reuses
+    // the algebraic core that `numerical_christoffel` also calls.
+    let christoffel =
+        christoffel_from_derivatives::<3>(&inverse, &derivatives.conformal_metric_gradient);
+
+    let mut christoffel_term = [0.0_f64; 3];
+    let mut mean_curvature_term = [0.0_f64; 3];
+    let mut conformal_factor_term = [0.0_f64; 3];
+    let mut lapse_term = [0.0_f64; 3];
+    let mut shift_term = [0.0_f64; 3];
+    let mut total = [0.0_f64; 3];
+
+    for i in 0..3
+    {
+        let mut contracted = 0.0;
+        for j in 0..3
+        {
+            for k in 0..3
+            {
+                contracted += christoffel[i][j][k] * curvature_up[j][k];
+            }
+        }
+        christoffel_term[i] = 2.0 * alpha * contracted;
+
+        let mut trace_gradient = 0.0;
+        let mut factor_gradient = 0.0;
+        for j in 0..3
+        {
+            trace_gradient += inverse[i][j] * derivatives.mean_curvature_gradient[j];
+            factor_gradient += curvature_up[i][j] * derivatives.conformal_factor_gradient[j];
+        }
+        mean_curvature_term[i] = -(4.0 / 3.0) * alpha * trace_gradient;
+        conformal_factor_term[i] = 12.0 * alpha * factor_gradient;
+
+        // -2 Atilde^{ij} d_j alpha. Exactly zero for a prescribed constant
+        // lapse, non-zero once the lapse is live.
+        let mut lapse_gradient_contraction = 0.0;
+        for j in 0..3
+        {
+            lapse_gradient_contraction += curvature_up[i][j] * lapse.gradient[j];
+        }
+        lapse_term[i] = -2.0 * lapse_gradient_contraction;
+
+        // Shift terms:
+        //   beta^j d_j Gammatilde^i - Gammatilde^j d_j beta^i
+        //   + (2/3) Gammatilde^i d_j beta^j
+        //   + (1/3) gammatilde^{li} d_l d_j beta^j + gammatilde^{lj} d_j d_l beta^i
+        let mut divergence = 0.0;
+        for j in 0..3
+        {
+            divergence += shift.gradient[j][j];
+        }
+        let mut shift_contribution = 2.0 / 3.0 * state.conformal_connection[i] * divergence;
+        for j in 0..3
+        {
+            shift_contribution += gauge.shift[j] * second.conformal_connection_gradient[i][j]
+                - state.conformal_connection[j] * shift.gradient[i][j];
+        }
+        for l in 0..3
+        {
+            let mut divergence_gradient = 0.0;
+            for j in 0..3
+            {
+                divergence_gradient += shift.hessian[j][l][j];
+            }
+            shift_contribution += inverse[l][i] * divergence_gradient / 3.0;
+            for j in 0..3
+            {
+                shift_contribution += inverse[l][j] * shift.hessian[i][j][l];
+            }
+        }
+        shift_term[i] = shift_contribution;
+
+        total[i] = christoffel_term[i]
+            + mean_curvature_term[i]
+            + conformal_factor_term[i]
+            + lapse_term[i]
+            + shift_term[i];
+
+        if !total[i].is_finite()
+        {
+            return Err(BssnError::NonFiniteState {
+                quantity: "connection_rhs",
+            });
+        }
+    }
+
+    Ok(BssnConnectionRhs {
+        total,
+        christoffel_term,
+        mean_curvature_term,
+        conformal_factor_term,
+        lapse_term,
+        shift_term,
+        conformal_christoffel: christoffel,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The conformal Ricci tensor in genuine BSSN form
+// ---------------------------------------------------------------------------
+
+/// The second spatial derivatives the BSSN-form conformal Ricci tensor needs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnSecondDerivatives {
+    /// `d_i d_j phi`.
+    pub conformal_factor_hessian: [[f64; 3]; 3],
+    /// `d_k d_l gammatilde_ij`, indexed `[k][l][i][j]`.
+    pub conformal_metric_hessian: [[[[f64; 3]; 3]; 3]; 3],
+    /// `d_j Gammatilde^i`, indexed `[i][j]`.
+    pub conformal_connection_gradient: [[f64; 3]; 3],
+}
+
+/// The conformal Ricci tensor written in **BSSN form**, using the
+/// independently evolved `Gammatilde^k`.
+///
+/// # Why this is not the same as differentiating the metric
+///
+/// [`conformal_ricci`] obtains `Rtilde_ij` from [`ricci_tensor_from_metric`] —
+/// the generic Ricci tensor of `gammatilde_ij`. That is *correct* as a tensor
+/// identity, and it is why the two agree on the constraint surface. But it is
+/// **not the BSSN system**.
+///
+/// The BSSN form is
+///
+/// ```text
+/// Rtilde_ij = -1/2 gammatilde^{lm} d_l d_m gammatilde_ij
+///           + gammatilde_{k(i} d_{j)} Gammatilde^k
+///           + Gammatilde^k Gammatilde_{(ij)k}
+///           + gammatilde^{lm} ( 2 Gammatilde^k_{l(i} Gammatilde_{j)km}
+///                             + Gammatilde^k_{im} Gammatilde_{klj} )
+/// ```
+///
+/// where `Gammatilde_{kij} = gammatilde_{kl} Gammatilde^l_{ij}` and
+/// `X_{(ij)} = 1/2 (X_ij + X_ji)`.
+///
+/// The second term carries the **evolved** `Gammatilde^k`, and it is exactly
+/// what removes the mixed second derivatives `d_i d_k gammatilde_jl` from the
+/// principal part, leaving only the manifestly elliptic
+/// `-1/2 gammatilde^{lm} d_l d_m`. That substitution is the entire reason BSSN
+/// exists: it is what turns the weakly hyperbolic ADM system into a strongly
+/// hyperbolic one.
+///
+/// Computing `Rtilde_ij` generically from the metric instead puts those mixed
+/// derivatives back and leaves a system with ADM's principal part wearing BSSN
+/// variables. Evolving `Gammatilde^i` does not help if the Ricci tensor never
+/// reads it.
+///
+/// Being an evolved variable rather than a derived one, `Gammatilde^k` can drift
+/// from `-d_j gammatilde^{kj}`; that drift is the connection constraint, which
+/// is monitored and never enforced.
+// Tensor-component loops index several distinct arrays together by index.
+#[allow(clippy::needless_range_loop)]
+pub fn conformal_ricci_from_derivatives(
+    state: &BssnState,
+    first: &BssnSpatialDerivatives,
+    second: &BssnSecondDerivatives,
+) -> Result<ConformalRicci, BssnError> {
+    let inverse = state.inverse_conformal_metric()?;
+    let christoffel = christoffel_from_derivatives::<3>(&inverse, &first.conformal_metric_gradient);
+
+    // Fully covariant connection Gammatilde_{kij} = gammatilde_{kl} Gammatilde^l_{ij}.
+    let mut lowered = [[[0.0_f64; 3]; 3]; 3];
+    for k in 0..3
+    {
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                let mut value = 0.0;
+                for l in 0..3
+                {
+                    value += state.conformal_metric[k][l] * christoffel[l][i][j];
+                }
+                lowered[k][i][j] = value;
+            }
+        }
+    }
+
+    let mut conformal = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            // -1/2 gammatilde^{lm} d_l d_m gammatilde_ij : the principal part,
+            // and the only second-derivative term that survives.
+            let mut laplacian = 0.0;
+            for l in 0..3
+            {
+                for m in 0..3
+                {
+                    laplacian += inverse[l][m] * second.conformal_metric_hessian[l][m][i][j];
+                }
+            }
+
+            // gammatilde_{k(i} d_{j)} Gammatilde^k, using the EVOLVED connection.
+            let mut connection_term = 0.0;
+            for k in 0..3
+            {
+                connection_term += state.conformal_metric[k][i]
+                    * second.conformal_connection_gradient[k][j]
+                    + state.conformal_metric[k][j] * second.conformal_connection_gradient[k][i];
+            }
+            connection_term *= 0.5;
+
+            // Gammatilde^k Gammatilde_{(ij)k}
+            let mut product_term = 0.0;
+            for k in 0..3
+            {
+                product_term +=
+                    state.conformal_connection[k] * (lowered[k][i][j] + lowered[k][j][i]);
+            }
+            product_term *= 0.5;
+
+            // gammatilde^{lm} ( 2 Gammatilde^k_{l(i} Gammatilde_{j)km}
+            //                 + Gammatilde^k_{im} Gammatilde_{klj} )
+            let mut quadratic = 0.0;
+            for l in 0..3
+            {
+                for m in 0..3
+                {
+                    let mut bracket = 0.0;
+                    for k in 0..3
+                    {
+                        bracket += christoffel[k][l][i] * lowered[j][k][m]
+                            + christoffel[k][l][j] * lowered[i][k][m]
+                            + christoffel[k][i][m] * lowered[k][l][j];
+                    }
+                    quadratic += inverse[l][m] * bracket;
+                }
+            }
+
+            conformal[i][j] = -0.5 * laplacian + connection_term + product_term + quadratic;
+        }
+    }
+    require_finite_tensor("bssn_conformal_ricci", &conformal)?;
+
+    // The conformal-factor part, from the supplied gradients rather than a
+    // second differencing of the metric.
+    let mut covariant_hessian = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            let mut value = second.conformal_factor_hessian[i][j];
+            for k in 0..3
+            {
+                value -= christoffel[k][i][j] * first.conformal_factor_gradient[k];
+            }
+            covariant_hessian[i][j] = value;
+        }
+    }
+    let hessian_trace = trace_with(&inverse, &covariant_hessian);
+    let mut gradient_norm = 0.0;
+    for k in 0..3
+    {
+        for l in 0..3
+        {
+            gradient_norm += inverse[k][l]
+                * first.conformal_factor_gradient[k]
+                * first.conformal_factor_gradient[l];
+        }
+    }
+
+    let mut conformal_factor_part = [[0.0_f64; 3]; 3];
+    let mut total = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            conformal_factor_part[i][j] = -2.0 * covariant_hessian[i][j]
+                - 2.0 * state.conformal_metric[i][j] * hessian_trace
+                + 4.0 * first.conformal_factor_gradient[i] * first.conformal_factor_gradient[j]
+                - 4.0 * state.conformal_metric[i][j] * gradient_norm;
+            total[i][j] = conformal[i][j] + conformal_factor_part[i][j];
+        }
+    }
+    require_finite_tensor("bssn_conformal_factor_ricci", &conformal_factor_part)?;
+
+    Ok(ConformalRicci {
+        conformal,
+        conformal_factor_part,
+        total,
+    })
+}
+
+/// The BSSN evolution right-hand sides at a point, with the conformal Ricci
+/// tensor **supplied by the caller**.
+///
+/// A grid computes `Rtilde_ij` in genuine BSSN form from the evolved
+/// `Gammatilde^k` (see [`conformal_ricci_from_derivatives`]), which is a
+/// different discrete operator from the generic metric Ricci that
+/// [`bssn_evolution_rhs`] would compute internally — and the difference is
+/// precisely what makes the system strongly rather than weakly hyperbolic.
+///
+/// Everything downstream of the Ricci tensor is shared with
+/// [`bssn_evolution_rhs`]: there is one implementation of the BSSN evolution
+/// equations, differing only in where `Rtilde_ij` comes from.
+pub fn bssn_evolution_rhs_with_ricci<G: Metric<3>>(
+    spatial_metric: &G,
+    extrinsic_curvature: &impl SpatialTensorField,
+    coordinates: &[f64; 3],
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+    settings: &AdmEvolutionSettings,
+    supplied: &BssnSuppliedTerms<'_>,
+) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
+    evolution_rhs_inner(
+        spatial_metric,
+        extrinsic_curvature,
+        coordinates,
+        gauge,
+        sources,
+        settings,
+        Some(supplied),
+    )
+}
+
+/// The shift gradients a live or prescribed shift must supply.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnShiftDerivatives {
+    /// `d_j beta^i`, indexed `[i][j]`.
+    pub gradient: [[f64; 3]; 3],
+    /// `d_j d_k beta^i`, indexed `[i][j][k]`.
+    pub hessian: [[[f64; 3]; 3]; 3],
+}
+
+impl BssnShiftDerivatives {
+    /// A zero or spatially constant shift: no gradient, no curvature.
+    pub const ZERO: Self = Self {
+        gradient: [[0.0; 3]; 3],
+        hessian: [[[0.0; 3]; 3]; 3],
+    };
+}
+
+/// The precomputed terms a grid supplies to the BSSN evolution equations.
+///
+/// Bundled rather than passed separately because they always travel together:
+/// each is a quantity the grid can compute with compact stencils and the
+/// coordinate-sampled path cannot.
+#[derive(Debug, Clone, Copy)]
+pub struct BssnSuppliedTerms<'a> {
+    /// The conformal Ricci tensor in genuine BSSN form.
+    pub ricci: &'a ConformalRicci,
+    /// The first spatial derivatives of the evolved fields.
+    pub derivatives: &'a BssnSpatialDerivatives,
+    /// The lapse gradient and coordinate Hessian.
+    pub lapse: &'a BssnLapseDerivatives,
+    /// The shift gradient and coordinate Hessian.
+    pub shift: &'a BssnShiftDerivatives,
+}
+
+// ---------------------------------------------------------------------------
+// Live slicing: 1+log
+// ---------------------------------------------------------------------------
+
+/// The lapse gradient and coordinate Hessian a live slicing must supply.
+///
+/// `hessian` is the **coordinate** second derivative `d_i d_j alpha`; the
+/// covariant `D_i D_j alpha` is formed internally, because doing so needs the
+/// physical Christoffel symbols and a caller should not have to reconstruct
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnLapseDerivatives {
+    /// `d_i alpha`.
+    pub gradient: [f64; 3],
+    /// `d_i d_j alpha`.
+    pub hessian: [[f64; 3]; 3],
+}
+
+impl BssnLapseDerivatives {
+    /// A prescribed constant lapse: no gradient, no curvature.
+    pub const ZERO: Self = Self {
+        gradient: [0.0; 3],
+        hessian: [[0.0; 3]; 3],
+    };
+}
+
+/// The covariant lapse Hessian
+/// `D_i D_j alpha = d_i d_j alpha - Gamma^k_ij d_k alpha`, using the **physical**
+/// Christoffel symbols.
+///
+/// The physical connection follows from the conformal one by the standard
+/// relation
+///
+/// ```text
+/// Gamma^k_ij = Gammatilde^k_ij
+///            + 2 ( delta^k_i d_j phi + delta^k_j d_i phi
+///                  - gammatilde_ij gammatilde^{kl} d_l phi )
+/// ```
+///
+/// so the physical metric is never differenced a second time and the grid's
+/// compact stencils carry through unchanged.
+#[allow(clippy::needless_range_loop)]
+fn covariant_lapse_hessian(
+    state: &BssnState,
+    first: &BssnSpatialDerivatives,
+    lapse: &BssnLapseDerivatives,
+) -> Result<[[f64; 3]; 3], BssnError> {
+    let inverse = state.inverse_conformal_metric()?;
+    let conformal = christoffel_from_derivatives::<3>(&inverse, &first.conformal_metric_gradient);
+
+    // Raise the conformal-factor gradient with the conformal metric.
+    let mut raised_factor_gradient = [0.0_f64; 3];
+    for k in 0..3
+    {
+        let mut value = 0.0;
+        for l in 0..3
+        {
+            value += inverse[k][l] * first.conformal_factor_gradient[l];
+        }
+        raised_factor_gradient[k] = value;
+    }
+
+    let mut hessian = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            let mut correction = 0.0;
+            for k in 0..3
+            {
+                let delta_ki = if k == i { 1.0 } else { 0.0 };
+                let delta_kj = if k == j { 1.0 } else { 0.0 };
+                let physical_christoffel = conformal[k][i][j]
+                    + 2.0
+                        * (delta_ki * first.conformal_factor_gradient[j]
+                            + delta_kj * first.conformal_factor_gradient[i]
+                            - state.conformal_metric[i][j] * raised_factor_gradient[k]);
+                correction += physical_christoffel * lapse.gradient[k];
+            }
+            hessian[i][j] = lapse.hessian[i][j] - correction;
+        }
+    }
+    require_finite_tensor("covariant_lapse_hessian", &hessian)?;
+    Ok(hessian)
+}
+
+/// The 1+log slicing condition with zero shift:
+///
+/// ```text
+/// d_t alpha = -2 alpha K
+/// ```
+///
+/// This is the standard singularity-avoiding slicing. Linearised about flat
+/// space it makes the lapse obey a wave equation with characteristic speed
+/// `sqrt(2)` — *faster* than light, which is legitimate because the lapse is
+/// gauge and carries no physical signal. That speed is a sharp, closed-form
+/// oracle and is what this implementation is validated against.
+///
+/// The shift is **not** evolved: no Gamma-driver, no shift advection. With
+/// `beta^i = 0` the advective term `beta^j d_j alpha` vanishes identically, so
+/// this is the complete equation for the configuration supported here.
+#[must_use]
+pub fn one_plus_log_lapse_rhs(state: &BssnState, gauge: &BssnGauge) -> f64 {
+    -2.0 * gauge.lapse * state.mean_curvature
+}
+
+// ---------------------------------------------------------------------------
+// The Gamma-driver shift
+// ---------------------------------------------------------------------------
+
+/// The hyperbolic Gamma-driver shift condition, in its standard first-order form:
+///
+/// ```text
+/// d_t beta^i = (3/4) B^i
+/// d_t B^i    = d_t Gammatilde^i - eta B^i
+/// ```
+///
+/// Together with 1+log slicing this is the "moving puncture" gauge. The `3/4`
+/// sets the shift's characteristic speed to `1` — exactly the speed of light —
+/// which is why that coefficient is not free.
+///
+/// `eta` is a damping rate with dimensions of inverse length; it suppresses the
+/// long-wavelength drift the undamped driver would otherwise develop. A negative
+/// `eta` would *amplify* that drift, so it is rejected.
+///
+/// The `d_t Gammatilde^i` passed in must be the **full** connection right-hand
+/// side, shift terms included: the driver is defined to chase whatever
+/// `Gammatilde^i` actually does, and feeding it a partial rate would make the
+/// shift chase a quantity nothing else evolves.
+pub fn gamma_driver_rhs(
+    connection_rate: &[f64; 3],
+    driver: &[f64; 3],
+    eta: f64,
+) -> Result<([f64; 3], [f64; 3]), BssnError> {
+    if !eta.is_finite() || eta < 0.0
+    {
+        return Err(BssnError::InvalidConformalVariable(eta));
+    }
+    let mut shift_rate = [0.0_f64; 3];
+    let mut driver_rate = [0.0_f64; 3];
+    for i in 0..3
+    {
+        shift_rate[i] = 0.75 * driver[i];
+        driver_rate[i] = connection_rate[i] - eta * driver[i];
+        if !shift_rate[i].is_finite() || !driver_rate[i].is_finite()
+        {
+            return Err(BssnError::NonFiniteState {
+                quantity: "gamma_driver",
+            });
+        }
+    }
+    Ok((shift_rate, driver_rate))
 }

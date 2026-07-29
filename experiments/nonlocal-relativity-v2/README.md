@@ -259,3 +259,18 @@ Layer 3 — Numerical Relativity:
   exactly `alpha * H`. No spatial grid, so nothing about hyperbolicity or
   numerical stability is tested or claimed; see
   [`docs/LAYER_3_BSSN.md`](../../docs/LAYER_3_BSSN.md).
+- `bssn_periodic_1d_evolution` — BSSN on a uniform periodic one-dimensional grid
+  (**1D3V**: one spatially varying coordinate, full 3x3 tensors — not a 3D
+  solver). Stationary Minkowski (exactly stationary at every resolution), a
+  manufactured periodic state whose conformal Ricci reconstruction converges at
+  observed order 1.97/1.99/2.00, a linearized transverse-traceless wave
+  converging at 1.96/1.99/2.00, RK4 temporal refinement at 4.00/4.00/3.99, a
+  Courant sweep, a live 1+log gauge wave measured against the exact `sqrt(2)`
+  gauge speed, an exact constant-shift advection identity and a Gamma-driver
+  closed-form check, a Kreiss-Oliger dissipation sweep, an off-constraint state, and
+  rejected configurations. Stable across every resolution tested, with a genuine
+  resolution-independent Courant boundary (`C <= 1` accepted, `C = 2` rejected at
+  both `N = 64` and `N = 128`). That required writing `Rtilde_ij` in genuine BSSN
+  form using the evolved `Gammatilde^k`; the generic metric Ricci leaves ADM\'s
+  weakly hyperbolic principal part wearing BSSN variables and is unstable. See
+  [`docs/LAYER_3_BSSN_PERIODIC_1D.md`](../../docs/LAYER_3_BSSN_PERIODIC_1D.md).

@@ -70,7 +70,29 @@
 //!   explicit projections, the conformal Ricci decomposition (cross-checked
 //!   against [`ricci_tensor_from_metric`]), and the local evolution right-hand
 //!   sides, validated against the Layer 3.1 ADM system. Implementing BSSN does
-//!   **not** by itself demonstrate numerical stability.
+//!   **not** by itself demonstrate numerical stability;
+//! - BSSN on a periodic one-dimensional grid ([`grid1d`], [`bssn_grid`]) —
+//!   Layer 3.4: a half-open uniform periodic grid, centred finite-difference
+//!   operators validated against `sin(kx)`, a grid-backed derivative provider
+//!   that drives the *unmodified* Layer 3.3 evaluators, and a method-of-lines
+//!   adapter integrating through [`scirust_sim::simulate`] (no new integrator).
+//!   A **1D3V** reduction — one spatially varying coordinate, full 3x3 tensors —
+//!   **not** a three-dimensional numerical-relativity solver. The pipeline is
+//!   second-order accurate (Minkowski exactly stationary; conformal Ricci and
+//!   wave propagation both converging at order 2; RK4 retaining order 4) and
+//!   stable across every resolution tested, with a resolution-independent
+//!   Courant boundary. Stability required writing `Rtilde_ij` in **genuine BSSN
+//!   form** — carrying the evolved `Gammatilde^k`, which removes the mixed
+//!   second derivatives from the principal part — and supplying the
+//!   `d_t Gammatilde^i` equation Layer 3.3 deferred. Using the generic metric
+//!   Ricci instead leaves ADM's weakly hyperbolic principal part wearing BSSN
+//!   variables, and is measurably unstable. Carries the platform's first **live
+//!   gauge**: 1+log slicing (`d_t alpha = -2 alpha K`, validated against the
+//!   exact `sqrt(2)` gauge speed) and the Gamma-driver shift (validated by an
+//!   exact constant-shift advection identity and a closed-form decay), together
+//!   the moving-puncture gauge. Prescribed slicing and shift remain the
+//!   defaults. Only weak-field tested, and stability here is **measured, not
+//!   proven**.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -100,6 +122,7 @@ pub mod adm;
 pub mod adm_evolution;
 pub mod adm_homogeneous;
 pub mod bssn;
+pub mod bssn_grid;
 mod connection;
 mod covariant_transport;
 mod curvature;
@@ -109,6 +132,7 @@ mod exponential_map;
 mod flrw;
 mod geodesic;
 mod geodesic_deviation;
+pub mod grid1d;
 mod isotropic_schwarzschild;
 mod kerr;
 mod linearized;
@@ -124,7 +148,7 @@ mod static_spherical;
 mod synge;
 mod tetrad;
 
-pub use connection::{Connection, numerical_christoffel};
+pub use connection::{Connection, christoffel_from_derivatives, numerical_christoffel};
 pub use covariant_transport::{
     transport_covariant_tensor_along_polyline, transport_covariant_tensor_along_segment,
     transport_covector_along_polyline, transport_covector_along_segment,
