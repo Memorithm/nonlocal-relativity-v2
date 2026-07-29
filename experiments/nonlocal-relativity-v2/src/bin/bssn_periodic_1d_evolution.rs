@@ -19,7 +19,7 @@ use scirust_relativity::bssn_grid::{
     TransverseTracelessWave, bssn_grid_constraints, bssn_grid_rhs, bssn_grid_ricci_report,
     evolve_bssn_grid, project_grid_trace_free, project_grid_unit_determinant,
 };
-use scirust_relativity::grid1d::UniformGrid1d;
+use scirust_relativity::grid::UniformGrid1d;
 
 const TWO_PI: f64 = std::f64::consts::TAU;
 const DOMAIN_LOWER: f64 = 0.0;
@@ -230,7 +230,7 @@ fn main() {
             let analytic = exact.spatial_metric(grid.coordinate(index));
             errors[index] = reconstructed.spatial_metric[1][1] - analytic[1][1];
         }
-        let reduction = scirust_relativity::grid1d::GridReduction::of(&errors);
+        let reduction = scirust_relativity::grid::GridReduction::of(&errors);
         let constraints =
             bssn_grid_constraints(&last.state.view(), &AdmSources::VACUUM).expect("constraints");
         let observed = match previous_wave
@@ -376,7 +376,7 @@ fn main() {
     println!("#     beta = beta0 + (3/4)(B0/eta)(1 - exp(-eta t)) -- a closed form.");
     println!("scenario,resolution,parameter,residual,scale,relative,status");
     {
-        use scirust_relativity::grid1d::periodic_first_derivative;
+        use scirust_relativity::grid::periodic_first_derivative;
         let grid = grid_of(64);
         let points = grid.points();
         let wave = TransverseTracelessWave::new(1.0e-3, k, 0.0);

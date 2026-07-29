@@ -15,7 +15,7 @@ use scirust_relativity::bssn_grid::{
     BssnGridState, BssnGridSystem, COMPONENTS_PER_POINT, TransverseTracelessWave,
     bssn_grid_constraints, bssn_grid_rhs, evolve_bssn_grid,
 };
-use scirust_relativity::grid1d::{
+use scirust_relativity::grid::{
     UniformGrid1d, periodic_first_derivative_all, periodic_second_derivative_all,
 };
 

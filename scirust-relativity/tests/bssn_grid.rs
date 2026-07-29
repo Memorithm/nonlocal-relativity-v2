@@ -13,7 +13,7 @@ use scirust_relativity::bssn_grid::{
     bssn_grid_ricci_report, evolve_bssn_grid, grid_conformal_ricci, project_grid_trace_free,
     project_grid_unit_determinant,
 };
-use scirust_relativity::grid1d::UniformGrid1d;
+use scirust_relativity::grid::UniformGrid1d;
 use scirust_relativity::{Metric, ricci_tensor_from_metric};
 
 const TWO_PI: f64 = std::f64::consts::TAU;
@@ -1410,7 +1410,7 @@ fn a_constant_shift_is_exactly_pure_advection() {
     //
     // A sign error in any one of the seventeen advection terms would show up
     // here immediately.
-    use scirust_relativity::grid1d::periodic_first_derivative;
+    use scirust_relativity::grid::periodic_first_derivative;
 
     let grid = unit_grid(64);
     let points = grid.points();
@@ -1582,4 +1582,281 @@ fn shift_conditions_default_to_prescribed_and_reject_negative_damping() {
     let nan = BssnGridSystem::vacuum(grid)
         .with_shift_condition(BssnShiftCondition::GammaDriver { eta: f64::NAN });
     assert!(evolve_bssn_grid(&nan, &initial, 0.0, 0.1, 0.01).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Two spatial dimensions
+// ---------------------------------------------------------------------------
+
+use scirust_relativity::grid::UniformGrid2d;
+
+fn unit_square(points: usize) -> UniformGrid2d {
+    UniformGrid2d::from_axes([points, points], [0.0, 0.0], [1.0, 1.0]).expect("valid grid")
+}
+
+/// A metric varying along `x` **and** `y`, so the mixed second derivatives are
+/// genuinely non-zero. Not a solution of the Einstein equations.
+struct DiagonalMetric {
+    amplitude: f64,
+    wave_number: f64,
+}
+
+impl Metric<3> for DiagonalMetric {
+    fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
+        let s = (self.wave_number * (coordinates[0] + coordinates[1])).sin();
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0 + self.amplitude * s, 0.0],
+            [0.0, 0.0, 1.0 - self.amplitude * s],
+        ]
+    }
+}
+
+#[test]
+fn minkowski_is_exactly_stationary_in_two_dimensions() {
+    let grid = unit_square(16);
+    let initial = BssnGridState::minkowski(grid);
+    initial.validate(0.0).expect("valid");
+    assert_eq!(
+        initial.as_slice().len(),
+        COMPONENTS_PER_POINT * grid.total_points()
+    );
+
+    let system = BssnGridSystem::vacuum(grid)
+        .with_slicing(BssnSlicing::OnePlusLog)
+        .with_shift_condition(BssnShiftCondition::GammaDriver { eta: 1.0 });
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.01).expect("evolution");
+    for sample in &samples
+    {
+        assert_eq!(
+            sample.state.as_slice(),
+            initial.as_slice(),
+            "2D Minkowski drifted at t = {}",
+            sample.time
+        );
+    }
+
+    let constraints =
+        bssn_grid_constraints(&initial.view(), &AdmSources::VACUUM).expect("constraints");
+    assert_eq!(constraints.hamiltonian.max_abs, 0.0);
+    assert_eq!(constraints.connection.max_abs, 0.0);
+}
+
+#[test]
+fn a_field_varying_only_along_x_reproduces_the_one_dimensional_right_hand_side() {
+    // The sharpest available check on the whole two-dimensional machinery: a
+    // state with no y-dependence, laid out on a 2D grid, must produce exactly
+    // the right-hand side the already-validated 1D path produces. Every
+    // y-derivative and every mixed derivative is then structurally zero, so any
+    // discrepancy is an indexing or bookkeeping error in the generalisation
+    // rather than a physics difference.
+    let points = 16_usize;
+    let line = unit_grid(points);
+    let square = unit_square(points);
+    let wave = TransverseTracelessWave::new(1.0e-3, TWO_PI, 0.0);
+
+    let one_d = BssnGridState::from_adm_fields(line, &wave.metric_field(), &wave.curvature_field())
+        .expect("1D initial data");
+    let two_d =
+        BssnGridState::from_adm_fields(square, &wave.metric_field(), &wave.curvature_field())
+            .expect("2D initial data");
+
+    let mut rhs_1d = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+    bssn_grid_rhs(
+        &one_d.view(),
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut rhs_1d,
+    )
+    .expect("1D rhs");
+
+    let mut rhs_2d = vec![0.0_f64; COMPONENTS_PER_POINT * square.total_points()];
+    bssn_grid_rhs(
+        &two_d.view(),
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut rhs_2d,
+    )
+    .expect("2D rhs");
+
+    // Compare row y = 0 of the 2D result against the whole 1D result. Axis 0
+    // varies fastest, so that row is the first `points` entries of each slot.
+    let mut worst = 0.0_f64;
+    let mut scale = 0.0_f64;
+    for slot in 0..COMPONENTS_PER_POINT
+    {
+        for x in 0..points
+        {
+            let a = rhs_1d[slot * points + x];
+            let b = rhs_2d[slot * square.total_points() + square.linear_index(&[x, 0])];
+            worst = worst.max((a - b).abs());
+            scale = scale.max(a.abs());
+        }
+    }
+    assert!(scale > 1.0e-6, "the 1D right-hand side is trivially zero");
+    // Bit-for-bit: the two paths perform the same arithmetic on the same
+    // samples, so this is exact equality, not a tolerance.
+    assert_eq!(worst, 0.0, "2D and 1D right-hand sides differ by {worst}");
+}
+
+#[test]
+fn a_genuinely_two_dimensional_state_exercises_the_mixed_derivatives() {
+    // A metric depending on x + y has non-zero d_x d_y, which no
+    // one-dimensional configuration can produce. This is the term BSSN's
+    // principal-part restructuring exists to control, so it is the whole point
+    // of a second dimension.
+    let grid = unit_square(32);
+    let manufactured = DiagonalMetric {
+        amplitude: 0.01,
+        wave_number: TWO_PI,
+    };
+    let state = BssnGridState::from_adm_fields(grid, &manufactured, &zero_curvature())
+        .expect("initial data");
+    let view = state.view();
+
+    let mut worst_mixed = 0.0_f64;
+    for index in 0..grid.total_points()
+    {
+        let second = scirust_relativity::bssn_grid::grid_second_derivatives(&view, index);
+        // The off-diagonal Hessian entries must be genuinely populated...
+        for (i, j) in [(1_usize, 1_usize), (2, 2)]
+        {
+            worst_mixed = worst_mixed.max(second.conformal_metric_hessian[0][1][i][j].abs());
+        }
+        // ...and exactly symmetric in their two axes, which Rtilde_ij needs.
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                assert_eq!(
+                    second.conformal_metric_hessian[0][1][i][j],
+                    second.conformal_metric_hessian[1][0][i][j]
+                );
+            }
+        }
+    }
+    assert!(
+        worst_mixed > 1.0e-3,
+        "mixed derivatives are trivially zero: {worst_mixed}"
+    );
+}
+
+#[test]
+fn two_dimensional_bssn_ricci_converges_onto_the_generic_metric_ricci() {
+    // The BSSN-form and generic Ricci tensors are the same tensor, so their
+    // difference must vanish with the discretisation. In two dimensions it
+    // initially did not: it saturated near 1% of the Ricci scale, localised
+    // entirely to `Rtilde`.
+    //
+    // Comparing BOTH forms against a converged reference -- the same generic
+    // evaluator applied to the ANALYTIC field at a step far below any grid
+    // spacing -- identified the culprit rather than leaving it ambiguous. The
+    // generic path converged cleanly (2.050e-2 -> 5.208e-3 -> 1.303e-3 ->
+    // 3.222e-4, order 2); the BSSN form was the one that saturated.
+    //
+    // The cause was an index error in `Gammatilde^k Gammatilde_{(ij)k}`:
+    // `Gammatilde^k` contracts the LAST index of `Gammatilde_{abc}`, and the
+    // implementation contracted the first. One dimension could not detect it,
+    // because `Gammatilde^k` is nearly zero there -- which is precisely why a
+    // second dimension was worth adding.
+    let amplitude = 0.01_f64;
+    let k = TWO_PI;
+    let mut differences = Vec::new();
+
+    for &points in &[16_usize, 32, 64, 128]
+    {
+        let grid = unit_square(points);
+        let manufactured = DiagonalMetric {
+            amplitude,
+            wave_number: k,
+        };
+        let state = BssnGridState::from_adm_fields(grid, &manufactured, &zero_curvature())
+            .expect("initial data");
+        let view = state.view();
+        let settings = view.settings();
+        let metric = view.metric();
+
+        let mut worst = 0.0_f64;
+        let mut scale = 0.0_f64;
+        let mut connection_scale = 0.0_f64;
+        for index in 0..grid.total_points()
+        {
+            let at = grid.position(index);
+            let bssn = grid_conformal_ricci(&view, index).expect("bssn ricci");
+            let generic = scirust_relativity::bssn::conformal_ricci(&metric, &at, &settings)
+                .expect("generic ricci");
+            for i in 0..3
+            {
+                for j in 0..3
+                {
+                    worst = worst.max((bssn.total[i][j] - generic.total[i][j]).abs());
+                    scale = scale.max(generic.total[i][j].abs());
+                }
+            }
+            for component in 0..3
+            {
+                connection_scale = connection_scale
+                    .max(view.state_at(index).conformal_connection[component].abs());
+            }
+        }
+        // Not two zeros agreeing.
+        assert!(scale > 1.0e-3, "Ricci is trivially zero: {scale}");
+        // And `Gammatilde^k` is genuinely non-zero, so the term that carried the
+        // bug is actually exercised. In one dimension it is not.
+        assert!(
+            connection_scale > 1.0e-3,
+            "Gammatilde^k is trivially zero ({connection_scale}) -- this \
+             configuration cannot detect an error in the term that contracts it"
+        );
+        differences.push(worst);
+    }
+
+    for window in differences.windows(2)
+    {
+        let order = observed_order(window[0], window[1]);
+        assert!(
+            (order - 2.0).abs() < 0.15,
+            "2D BSSN/generic Ricci order {order} from {differences:?}"
+        );
+    }
+}
+
+#[test]
+fn anisotropic_grids_are_rejected() {
+    // The Layer 3.3 conversion path differences with a single step, which can
+    // only land on grid points along every axis if they share a spacing.
+    // Refused rather than silently sampled off-grid.
+    let stretched = UniformGrid2d::from_axes([16, 8], [0.0, 0.0], [1.0, 1.0]).expect("valid grid");
+    assert!(stretched.uniform_spacing().is_none());
+
+    let state = BssnGridState::minkowski(stretched);
+    let mut out = vec![0.0_f64; COMPONENTS_PER_POINT * stretched.total_points()];
+    assert_eq!(
+        bssn_grid_rhs(
+            &state.view(),
+            &BssnGauge::SYNCHRONOUS,
+            &AdmSources::VACUUM,
+            0.0,
+            &mut out
+        ),
+        Err(scirust_relativity::bssn_grid::BssnGridError::AnisotropicGrid)
+    );
+
+    // A square grid with the same point count per axis is accepted.
+    let square = UniformGrid2d::from_axes([16, 16], [0.0, 0.0], [1.0, 1.0]).expect("valid");
+    assert!(square.uniform_spacing().is_some());
+    let ok = BssnGridState::minkowski(square);
+    let mut out = vec![0.0_f64; COMPONENTS_PER_POINT * square.total_points()];
+    assert!(
+        bssn_grid_rhs(
+            &ok.view(),
+            &BssnGauge::SYNCHRONOUS,
+            &AdmSources::VACUUM,
+            0.0,
+            &mut out
+        )
+        .is_ok()
+    );
 }

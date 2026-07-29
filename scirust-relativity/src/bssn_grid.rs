@@ -99,7 +99,7 @@
 //! use scirust_relativity::bssn_grid::{
 //!     BssnGridState, BssnGridSystem, bssn_grid_constraints, evolve_bssn_grid,
 //! };
-//! use scirust_relativity::grid1d::UniformGrid1d;
+//! use scirust_relativity::grid::UniformGrid1d;
 //!
 //! let grid = UniformGrid1d::new(16, 0.0, 1.0).expect("valid grid");
 //! let system = BssnGridSystem::vacuum(grid);
@@ -135,7 +135,7 @@ use crate::bssn::{
     conformal_ricci_from_derivatives, gamma_driver_rhs, one_plus_log_lapse_rhs, project_trace_free,
     project_unit_determinant,
 };
-use crate::grid1d::{Grid1dError, GridReduction, UniformGrid1d};
+use crate::grid::{GridError, GridReduction, UniformGrid, periodic_mixed_derivative};
 
 /// Evolved scalar component arrays per grid point.
 pub const COMPONENTS_PER_POINT: usize = 24;
@@ -171,7 +171,7 @@ const SYMMETRIC_PAIRS: [(usize, usize); 6] = [(0, 0), (0, 1), (0, 2), (1, 1), (1
 #[derive(Debug, Clone, PartialEq)]
 pub enum BssnGridError {
     /// The grid itself is invalid.
-    Grid(Grid1dError),
+    Grid(GridError),
     /// The flat state length does not match `17 N`.
     FlatStateLength {
         /// The length `17 N` the grid requires.
@@ -221,6 +221,14 @@ pub enum BssnGridError {
     },
     /// The integrator rejected the run or stopped on a non-finite state.
     Integration(SimError),
+    /// The grid's axes do not share a spacing.
+    ///
+    /// The Layer 3.3 conversion path differences the supplied fields with a
+    /// single step, so a step that lands on grid points along one axis would
+    /// land between them along an axis with a different spacing. Square cells
+    /// are required, and an anisotropic grid is refused rather than silently
+    /// sampled off-grid.
+    AnisotropicGrid,
     /// A requested evolution parameter is invalid.
     InvalidRequest {
         /// Which parameter.
@@ -289,6 +297,10 @@ impl fmt::Display for BssnGridError {
             {
                 write!(f, "point {index}: projection failed: {source}")
             },
+            Self::AnisotropicGrid => write!(
+                f,
+                "the BSSN grid requires square cells: every axis must share a spacing"
+            ),
             Self::Integration(error) => write!(f, "integration failed: {error}"),
             Self::InvalidRequest { parameter, value } =>
             {
@@ -300,8 +312,8 @@ impl fmt::Display for BssnGridError {
 
 impl std::error::Error for BssnGridError {}
 
-impl From<Grid1dError> for BssnGridError {
-    fn from(error: Grid1dError) -> Self {
+impl From<GridError> for BssnGridError {
+    fn from(error: GridError) -> Self {
         Self::Grid(error)
     }
 }
@@ -363,15 +375,15 @@ fn state_into_flat(flat: &mut [f64], points: usize, index: usize, state: &BssnSt
 /// Constructing one allocates nothing: the flat method-of-lines array *is* the
 /// storage, so the right-hand-side path never copies the grid.
 #[derive(Debug, Clone, Copy)]
-pub struct BssnGridView<'a> {
-    grid: UniformGrid1d,
+pub struct BssnGridView<'a, const D: usize = 1> {
+    grid: UniformGrid<D>,
     components: &'a [f64],
 }
 
-impl<'a> BssnGridView<'a> {
+impl<'a, const D: usize> BssnGridView<'a, D> {
     /// Borrow `components` as a grid state, checking only the length.
-    pub fn new(grid: UniformGrid1d, components: &'a [f64]) -> Result<Self, BssnGridError> {
-        let expected = COMPONENTS_PER_POINT * grid.points();
+    pub fn new(grid: UniformGrid<D>, components: &'a [f64]) -> Result<Self, BssnGridError> {
+        let expected = COMPONENTS_PER_POINT * grid.total_points();
         if components.len() != expected
         {
             return Err(BssnGridError::FlatStateLength {
@@ -384,7 +396,7 @@ impl<'a> BssnGridView<'a> {
 
     /// The underlying grid.
     #[must_use]
-    pub const fn grid(&self) -> &UniformGrid1d {
+    pub const fn grid(&self) -> &UniformGrid<D> {
         &self.grid
     }
 
@@ -399,15 +411,15 @@ impl<'a> BssnGridView<'a> {
     pub fn state_at(&self, index: usize) -> BssnState {
         state_from_flat(
             self.components,
-            self.grid.points(),
-            self.grid.wrap_usize(index),
+            self.grid.total_points(),
+            index % self.grid.total_points(),
         )
     }
 
     /// The stored lapse at `index`.
     #[must_use]
     pub fn lapse_at(&self, index: usize) -> f64 {
-        self.components[SLOT_LAPSE * self.grid.points() + self.grid.wrap_usize(index)]
+        self.components[SLOT_LAPSE * self.grid.total_points() + index % self.grid.total_points()]
     }
 
     /// The prescribed-or-evolved gauge at `index` (zero shift throughout).
@@ -423,19 +435,27 @@ impl<'a> BssnGridView<'a> {
     /// stencils on the stored lapse array.
     #[must_use]
     pub fn lapse_derivatives_at(&self, index: usize) -> BssnLapseDerivatives {
+        let mut gradient = [0.0_f64; 3];
         let mut hessian = [[0.0_f64; 3]; 3];
-        hessian[0][0] = component_curvature(self, SLOT_LAPSE, index);
-        BssnLapseDerivatives {
-            gradient: [component_gradient(self, SLOT_LAPSE, index), 0.0, 0.0],
-            hessian,
+        // Indexed rather than iterated: the loops walk tensor axes and index
+        // several distinct arrays together, which the index expresses.
+        #[allow(clippy::needless_range_loop)]
+        for axis in 0..D.min(3)
+        {
+            gradient[axis] = component_gradient(self, SLOT_LAPSE, index, axis);
+            for other in 0..D.min(3)
+            {
+                hessian[axis][other] = component_curvature(self, SLOT_LAPSE, index, axis, other);
+            }
         }
+        BssnLapseDerivatives { gradient, hessian }
     }
 
     /// The stored shift at `index`.
     #[must_use]
     pub fn shift_at(&self, index: usize) -> [f64; 3] {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         [
             self.components[SLOT_SHIFT * points + wrapped],
             self.components[(SLOT_SHIFT + 1) * points + wrapped],
@@ -446,8 +466,8 @@ impl<'a> BssnGridView<'a> {
     /// The stored Gamma-driver auxiliary `B^i` at `index`.
     #[must_use]
     pub fn driver_at(&self, index: usize) -> [f64; 3] {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         [
             self.components[SLOT_DRIVER * points + wrapped],
             self.components[(SLOT_DRIVER + 1) * points + wrapped],
@@ -461,10 +481,19 @@ impl<'a> BssnGridView<'a> {
     pub fn shift_derivatives_at(&self, index: usize) -> BssnShiftDerivatives {
         let mut gradient = [[0.0_f64; 3]; 3];
         let mut hessian = [[[0.0_f64; 3]; 3]; 3];
+        #[allow(clippy::needless_range_loop)]
         for component in 0..3
         {
-            gradient[component][0] = component_gradient(self, SLOT_SHIFT + component, index);
-            hessian[component][0][0] = component_curvature(self, SLOT_SHIFT + component, index);
+            for axis in 0..D.min(3)
+            {
+                gradient[component][axis] =
+                    component_gradient(self, SLOT_SHIFT + component, index, axis);
+                for other in 0..D.min(3)
+                {
+                    hessian[component][axis][other] =
+                        component_curvature(self, SLOT_SHIFT + component, index, axis, other);
+                }
+            }
         }
         BssnShiftDerivatives { gradient, hessian }
     }
@@ -476,48 +505,50 @@ impl<'a> BssnGridView<'a> {
     #[must_use]
     pub fn settings(&self) -> AdmEvolutionSettings {
         AdmEvolutionSettings {
-            spatial_step: self.grid.spacing(),
-            metric_step: self.grid.spacing(),
+            // Square cells are required (see `BssnGridError::AnisotropicGrid`),
+            // so any axis's spacing is the common one.
+            spatial_step: self.grid.spacing_along(0),
+            metric_step: self.grid.spacing_along(0),
         }
     }
 
     /// The metric field backed by this grid.
     #[must_use]
-    pub const fn metric(&self) -> GridMetric<'_, 'a> {
+    pub const fn metric(&self) -> GridMetric<'_, 'a, D> {
         GridMetric { view: self }
     }
 
     /// The extrinsic-curvature field backed by this grid.
     #[must_use]
-    pub const fn curvature(&self) -> GridCurvature<'_, 'a> {
+    pub const fn curvature(&self) -> GridCurvature<'_, 'a, D> {
         GridCurvature { view: self }
     }
 }
 
 /// An owned BSSN grid state.
 #[derive(Debug, Clone, PartialEq)]
-pub struct BssnGridState {
-    grid: UniformGrid1d,
+pub struct BssnGridState<const D: usize = 1> {
+    grid: UniformGrid<D>,
     components: Vec<f64>,
 }
 
-impl BssnGridState {
+impl<const D: usize> BssnGridState<D> {
     /// Allocate a zeroed state on `grid`.
     ///
     /// A zeroed state is *not* physically valid (its conformal metric is
     /// singular); use [`Self::minkowski`] or [`Self::from_adm_fields`] to build
     /// usable initial data.
     #[must_use]
-    pub fn zeroed(grid: UniformGrid1d) -> Self {
+    pub fn zeroed(grid: UniformGrid<D>) -> Self {
         Self {
-            components: vec![0.0; COMPONENTS_PER_POINT * grid.points()],
+            components: vec![0.0; COMPONENTS_PER_POINT * grid.total_points()],
             grid,
         }
     }
 
     /// Adopt an existing flat array as a grid state.
-    pub fn from_flat(grid: UniformGrid1d, components: Vec<f64>) -> Result<Self, BssnGridError> {
-        let expected = COMPONENTS_PER_POINT * grid.points();
+    pub fn from_flat(grid: UniformGrid<D>, components: Vec<f64>) -> Result<Self, BssnGridError> {
+        let expected = COMPONENTS_PER_POINT * grid.total_points();
         if components.len() != expected
         {
             return Err(BssnGridError::FlatStateLength {
@@ -530,7 +561,7 @@ impl BssnGridState {
 
     /// Stationary Minkowski: identity conformal metric, everything else zero.
     #[must_use]
-    pub fn minkowski(grid: UniformGrid1d) -> Self {
+    pub fn minkowski(grid: UniformGrid<D>) -> Self {
         let mut state = Self::zeroed(grid);
         let identity = BssnState {
             conformal_factor: 0.0,
@@ -539,7 +570,7 @@ impl BssnGridState {
             conformal_curvature: [[0.0; 3]; 3],
             conformal_connection: [0.0; 3],
         };
-        for index in 0..state.grid.points()
+        for index in 0..state.grid.total_points()
         {
             state.set_state_at(index, &identity);
             state.set_lapse_at(index, 1.0);
@@ -558,18 +589,22 @@ impl BssnGridState {
     /// whole multiples of `dx`, so an analytic field and its grid restriction
     /// give identical results.
     pub fn from_adm_fields<G: Metric<3>>(
-        grid: UniformGrid1d,
+        grid: UniformGrid<D>,
         spatial_metric: &G,
         extrinsic_curvature: &impl SpatialTensorField,
     ) -> Result<Self, BssnGridError> {
+        if grid.uniform_spacing().is_none()
+        {
+            return Err(BssnGridError::AnisotropicGrid);
+        }
         let settings = AdmEvolutionSettings {
-            spatial_step: grid.spacing(),
-            metric_step: grid.spacing(),
+            spatial_step: grid.spacing_along(0),
+            metric_step: grid.spacing_along(0),
         };
         let mut state = Self::zeroed(grid);
-        for index in 0..grid.points()
+        for index in 0..grid.total_points()
         {
-            let at = [grid.coordinate(index), 0.0, 0.0];
+            let at = grid.position(index);
             let local = adm_to_bssn(spatial_metric, extrinsic_curvature, &at, &settings).map_err(
                 |source| BssnGridError::Pointwise {
                     time: 0.0,
@@ -583,12 +618,13 @@ impl BssnGridState {
             // gauge every earlier increment used.
             state.set_lapse_at(index, 1.0);
         }
+
         Ok(state)
     }
 
     /// The underlying grid.
     #[must_use]
-    pub const fn grid(&self) -> &UniformGrid1d {
+    pub const fn grid(&self) -> &UniformGrid<D> {
         &self.grid
     }
 
@@ -605,7 +641,7 @@ impl BssnGridState {
 
     /// Borrow as a read-only view.
     #[must_use]
-    pub fn view(&self) -> BssnGridView<'_> {
+    pub fn view(&self) -> BssnGridView<'_, D> {
         BssnGridView {
             grid: self.grid,
             components: &self.components,
@@ -617,22 +653,22 @@ impl BssnGridState {
     pub fn state_at(&self, index: usize) -> BssnState {
         state_from_flat(
             &self.components,
-            self.grid.points(),
-            self.grid.wrap_usize(index),
+            self.grid.total_points(),
+            index % self.grid.total_points(),
         )
     }
 
     /// The stored lapse at `index`.
     #[must_use]
     pub fn lapse_at(&self, index: usize) -> f64 {
-        self.components[SLOT_LAPSE * self.grid.points() + self.grid.wrap_usize(index)]
+        self.components[SLOT_LAPSE * self.grid.total_points() + index % self.grid.total_points()]
     }
 
     /// The stored shift at `index`.
     #[must_use]
     pub fn shift_at(&self, index: usize) -> [f64; 3] {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         [
             self.components[SLOT_SHIFT * points + wrapped],
             self.components[(SLOT_SHIFT + 1) * points + wrapped],
@@ -642,8 +678,8 @@ impl BssnGridState {
 
     /// Overwrite the stored shift at `index`.
     pub fn set_shift_at(&mut self, index: usize, shift: &[f64; 3]) {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         // Indexed rather than iterated: the loop walks tensor components and
         // their storage slots together, which the index expresses.
         #[allow(clippy::needless_range_loop)]
@@ -656,8 +692,8 @@ impl BssnGridState {
     /// The stored Gamma-driver auxiliary `B^i` at `index`.
     #[must_use]
     pub fn driver_at(&self, index: usize) -> [f64; 3] {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         [
             self.components[SLOT_DRIVER * points + wrapped],
             self.components[(SLOT_DRIVER + 1) * points + wrapped],
@@ -667,8 +703,8 @@ impl BssnGridState {
 
     /// Overwrite the stored Gamma-driver auxiliary at `index`.
     pub fn set_driver_at(&mut self, index: usize, driver: &[f64; 3]) {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         // Indexed rather than iterated: the loop walks tensor components and
         // their storage slots together, which the index expresses.
         #[allow(clippy::needless_range_loop)]
@@ -680,15 +716,15 @@ impl BssnGridState {
 
     /// Overwrite the stored lapse at `index`.
     pub fn set_lapse_at(&mut self, index: usize, lapse: f64) {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         self.components[SLOT_LAPSE * points + wrapped] = lapse;
     }
 
     /// Store `state` at `index`.
     pub fn set_state_at(&mut self, index: usize, state: &BssnState) {
-        let points = self.grid.points();
-        let wrapped = self.grid.wrap_usize(index);
+        let points = self.grid.total_points();
+        let wrapped = index % self.grid.total_points();
         state_into_flat(&mut self.components, points, wrapped, state);
     }
 
@@ -697,7 +733,7 @@ impl BssnGridState {
     ///
     /// Nothing is clamped, replaced, or repaired.
     pub fn validate(&self, time: f64) -> Result<(), BssnGridError> {
-        for index in 0..self.grid.points()
+        for index in 0..self.grid.total_points()
         {
             let state = self.state_at(index);
             let fail = |field: &'static str, value: f64, category: StateFailure| {
@@ -823,13 +859,13 @@ impl BssnGridState {
 /// A reconstruction failure emits `NaN` rather than a silent substitute, so the
 /// downstream evaluator fails loudly instead of returning a wrong number.
 #[derive(Debug, Clone, Copy)]
-pub struct GridMetric<'v, 'a> {
-    view: &'v BssnGridView<'a>,
+pub struct GridMetric<'v, 'a, const D: usize> {
+    view: &'v BssnGridView<'a, D>,
 }
 
-impl Metric<3> for GridMetric<'_, '_> {
+impl<const D: usize> Metric<3> for GridMetric<'_, '_, D> {
     fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
-        let index = self.view.grid.nearest_index(coordinates[0]);
+        let index = self.view.grid.nearest_index(coordinates);
         match bssn_to_adm(&self.view.state_at(index))
         {
             Ok(adm) => adm.spatial_metric,
@@ -842,13 +878,13 @@ impl Metric<3> for GridMetric<'_, '_> {
 ///
 /// Same nearest-point contract and same loud-failure policy as [`GridMetric`].
 #[derive(Debug, Clone, Copy)]
-pub struct GridCurvature<'v, 'a> {
-    view: &'v BssnGridView<'a>,
+pub struct GridCurvature<'v, 'a, const D: usize> {
+    view: &'v BssnGridView<'a, D>,
 }
 
-impl SpatialTensorField for GridCurvature<'_, '_> {
+impl<const D: usize> SpatialTensorField for GridCurvature<'_, '_, D> {
     fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
-        let index = self.view.grid.nearest_index(coordinates[0]);
+        let index = self.view.grid.nearest_index(coordinates);
         match bssn_to_adm(&self.view.state_at(index))
         {
             Ok(adm) => adm.extrinsic_curvature,
@@ -866,12 +902,17 @@ impl SpatialTensorField for GridCurvature<'_, '_> {
 /// Compact: it samples `i-1` and `i+1` only, so the stencil is one grid spacing
 /// wide. This is what makes the connection evolution well-behaved where the
 /// nested coordinate-sampled path is not.
-fn component_gradient(view: &BssnGridView<'_>, slot: usize, index: usize) -> f64 {
-    let points = view.grid.points();
+fn component_gradient<const D: usize>(
+    view: &BssnGridView<'_, D>,
+    slot: usize,
+    index: usize,
+    axis: usize,
+) -> f64 {
+    let points = view.grid.total_points();
     let base = slot * points;
-    let left = view.components[base + view.grid.offset(index, -1)];
-    let right = view.components[base + view.grid.offset(index, 1)];
-    (right - left) / (2.0 * view.grid.spacing())
+    let left = view.components[base + view.grid.neighbour(index, axis, -1)];
+    let right = view.components[base + view.grid.neighbour(index, axis, 1)];
+    (right - left) / (2.0 * view.grid.spacing_along(axis))
 }
 
 /// The spatial gradients at `index`, taken with compact stencils on the stored
@@ -881,78 +922,122 @@ fn component_gradient(view: &BssnGridView<'_>, slot: usize, index: usize) -> f64
 /// exactly zero because the grid has no extent in those directions — a
 /// structural fact, not an approximation.
 #[must_use]
-pub fn grid_spatial_derivatives(view: &BssnGridView<'_>, index: usize) -> BssnSpatialDerivatives {
-    let mut conformal_metric_gradient = [[[0.0_f64; 3]; 3]; 3];
-    for (slot, &(i, j)) in SYMMETRIC_PAIRS.iter().enumerate()
-    {
-        let value = component_gradient(view, SLOT_CONFORMAL_METRIC + slot, index);
-        conformal_metric_gradient[0][i][j] = value;
-        conformal_metric_gradient[0][j][i] = value;
-    }
+/// The centred periodic second difference of one component array at `index`,
+/// along `first` then `second`.
+///
+/// Delegates to the shared grid stencil, so the diagonal is the compact
+/// three-point difference and the off-diagonal is the four-corner one — and the
+/// latter is bit-for-bit symmetric in its two axes, which `Rtilde_ij` needs.
+fn component_curvature<const D: usize>(
+    view: &BssnGridView<'_, D>,
+    slot: usize,
+    index: usize,
+    first: usize,
+    second: usize,
+) -> f64 {
+    let points = view.grid.total_points();
+    let base = slot * points;
+    periodic_mixed_derivative(
+        &view.components[base..base + points],
+        &view.grid,
+        index,
+        first,
+        second,
+    )
+    .unwrap_or(f64::NAN)
+}
 
+/// The first spatial derivatives at `index`, taken with compact stencils.
+///
+/// Axes beyond the grid's dimensionality stay exactly zero: nothing varies along
+/// them, so their derivatives are structurally zero rather than approximately so.
+#[must_use]
+pub fn grid_spatial_derivatives<const D: usize>(
+    view: &BssnGridView<'_, D>,
+    index: usize,
+) -> BssnSpatialDerivatives {
+    let axes = D.min(3);
+    let mut conformal_metric_gradient = [[[0.0_f64; 3]; 3]; 3];
     let mut conformal_curvature_gradient = [[[0.0_f64; 3]; 3]; 3];
     for (slot, &(i, j)) in SYMMETRIC_PAIRS.iter().enumerate()
     {
-        let value = component_gradient(view, SLOT_CONFORMAL_CURVATURE + slot, index);
-        conformal_curvature_gradient[0][i][j] = value;
-        conformal_curvature_gradient[0][j][i] = value;
+        for axis in 0..axes
+        {
+            let metric = component_gradient(view, SLOT_CONFORMAL_METRIC + slot, index, axis);
+            let curvature = component_gradient(view, SLOT_CONFORMAL_CURVATURE + slot, index, axis);
+            conformal_metric_gradient[axis][i][j] = metric;
+            conformal_metric_gradient[axis][j][i] = metric;
+            conformal_curvature_gradient[axis][i][j] = curvature;
+            conformal_curvature_gradient[axis][j][i] = curvature;
+        }
+    }
+
+    let mut conformal_factor_gradient = [0.0_f64; 3];
+    let mut mean_curvature_gradient = [0.0_f64; 3];
+    #[allow(clippy::needless_range_loop)]
+    for axis in 0..axes
+    {
+        conformal_factor_gradient[axis] =
+            component_gradient(view, SLOT_CONFORMAL_FACTOR, index, axis);
+        mean_curvature_gradient[axis] = component_gradient(view, SLOT_MEAN_CURVATURE, index, axis);
     }
 
     BssnSpatialDerivatives {
-        conformal_curvature_gradient,
-        conformal_factor_gradient: [
-            component_gradient(view, SLOT_CONFORMAL_FACTOR, index),
-            0.0,
-            0.0,
-        ],
-        mean_curvature_gradient: [
-            component_gradient(view, SLOT_MEAN_CURVATURE, index),
-            0.0,
-            0.0,
-        ],
+        conformal_factor_gradient,
+        mean_curvature_gradient,
         conformal_metric_gradient,
+        conformal_curvature_gradient,
     }
-}
-
-/// The centred periodic second difference of one component array at `index`.
-///
-/// Compact: `f_{i+1} - 2 f_i + f_{i-1}` over `dx^2`. Its Fourier symbol
-/// `2 cos(theta) - 2` is maximal at the Nyquist mode rather than vanishing
-/// there, unlike the `2 dx`-spaced difference the coordinate-sampled path
-/// produces.
-fn component_curvature(view: &BssnGridView<'_>, slot: usize, index: usize) -> f64 {
-    let points = view.grid.points();
-    let base = slot * points;
-    let centre = view.components[base + view.grid.wrap_usize(index)];
-    let left = view.components[base + view.grid.offset(index, -1)];
-    let right = view.components[base + view.grid.offset(index, 1)];
-    (right - 2.0 * centre + left) / (view.grid.spacing() * view.grid.spacing())
 }
 
 /// The second spatial derivatives at `index`, taken with compact stencils.
 ///
-/// **1D3V**: only the `xx` entries can be non-zero.
+/// Axes beyond the grid's dimensionality stay exactly zero: nothing varies along
+/// them, so their derivatives are structurally zero rather than approximately so.
 #[must_use]
-pub fn grid_second_derivatives(view: &BssnGridView<'_>, index: usize) -> BssnSecondDerivatives {
+pub fn grid_second_derivatives<const D: usize>(
+    view: &BssnGridView<'_, D>,
+    index: usize,
+) -> BssnSecondDerivatives {
+    let axes = D.min(3);
     let mut conformal_metric_hessian = [[[[0.0_f64; 3]; 3]; 3]; 3];
+    // Indexed rather than iterated: tensor axes indexing distinct arrays.
+    #[allow(clippy::needless_range_loop)]
     for (slot, &(i, j)) in SYMMETRIC_PAIRS.iter().enumerate()
     {
-        let value = component_curvature(view, SLOT_CONFORMAL_METRIC + slot, index);
-        conformal_metric_hessian[0][0][i][j] = value;
-        conformal_metric_hessian[0][0][j][i] = value;
+        for first in 0..axes
+        {
+            for second in 0..axes
+            {
+                let value =
+                    component_curvature(view, SLOT_CONFORMAL_METRIC + slot, index, first, second);
+                conformal_metric_hessian[first][second][i][j] = value;
+                conformal_metric_hessian[first][second][j][i] = value;
+            }
+        }
     }
 
     let mut conformal_factor_hessian = [[0.0_f64; 3]; 3];
-    conformal_factor_hessian[0][0] = component_curvature(view, SLOT_CONFORMAL_FACTOR, index);
+    // Indexed rather than iterated: tensor axes indexing distinct arrays.
+    #[allow(clippy::needless_range_loop)]
+    for first in 0..axes
+    {
+        for second in 0..axes
+        {
+            conformal_factor_hessian[first][second] =
+                component_curvature(view, SLOT_CONFORMAL_FACTOR, index, first, second);
+        }
+    }
 
     let mut conformal_connection_gradient = [[0.0_f64; 3]; 3];
-    // Indexed rather than iterated: the loop walks tensor components and the
-    // matching storage slots together, which the index expresses.
     #[allow(clippy::needless_range_loop)]
     for component in 0..3
     {
-        conformal_connection_gradient[component][0] =
-            component_gradient(view, SLOT_CONFORMAL_CONNECTION + component, index);
+        for axis in 0..axes
+        {
+            conformal_connection_gradient[component][axis] =
+                component_gradient(view, SLOT_CONFORMAL_CONNECTION + component, index, axis);
+        }
     }
 
     BssnSecondDerivatives {
@@ -966,8 +1051,8 @@ pub fn grid_second_derivatives(view: &BssnGridView<'_>, index: usize) -> BssnSec
 ///
 /// Uses the **evolved** `Gammatilde^i` and compact stencils, so the principal
 /// part is the manifestly elliptic `-1/2 gammatilde^{lm} d_l d_m`.
-pub fn grid_conformal_ricci(
-    view: &BssnGridView<'_>,
+pub fn grid_conformal_ricci<const D: usize>(
+    view: &BssnGridView<'_, D>,
     index: usize,
 ) -> Result<ConformalRicci, BssnGridError> {
     let first = grid_spatial_derivatives(view, index);
@@ -983,8 +1068,8 @@ pub fn grid_conformal_ricci(
 }
 
 /// Evaluate the conformal connection right-hand side at one grid point.
-pub fn grid_connection_rhs(
-    view: &BssnGridView<'_>,
+pub fn grid_connection_rhs<const D: usize>(
+    view: &BssnGridView<'_, D>,
     index: usize,
     gauge: &BssnGauge,
     sources: &AdmSources,
@@ -1014,8 +1099,8 @@ pub fn grid_connection_rhs(
 ///
 /// Points are visited in ascending index order. Nothing is allocated per point:
 /// the input is borrowed and the output is written in place.
-pub fn bssn_grid_rhs(
-    view: &BssnGridView<'_>,
+pub fn bssn_grid_rhs<const D: usize>(
+    view: &BssnGridView<'_, D>,
     gauge: &BssnGauge,
     sources: &AdmSources,
     time: f64,
@@ -1038,8 +1123,8 @@ pub fn bssn_grid_rhs(
 /// argument's; `gauge` supplies only the shift, which is zero throughout this
 /// increment.
 #[allow(clippy::too_many_arguments)]
-pub fn bssn_grid_rhs_with_gauge(
-    view: &BssnGridView<'_>,
+pub fn bssn_grid_rhs_with_gauge<const D: usize>(
+    view: &BssnGridView<'_, D>,
     // Both the lapse and the shift are stored fields, so the per-point gauge is
     // read from the state. This argument survives only for matter sources that
     // are gauge-dependent, and for symmetry with the other entry points.
@@ -1050,7 +1135,7 @@ pub fn bssn_grid_rhs_with_gauge(
     time: f64,
     out: &mut [f64],
 ) -> Result<(), BssnGridError> {
-    let points = view.grid.points();
+    let points = view.grid.total_points();
     let expected = COMPONENTS_PER_POINT * points;
     if out.len() != expected
     {
@@ -1060,13 +1145,21 @@ pub fn bssn_grid_rhs_with_gauge(
         });
     }
 
+    // Square cells: the Layer 3.3 conversion path differences with a single
+    // step, which can only land on grid points along every axis if they share a
+    // spacing. Refused rather than silently sampled off-grid.
+    if view.grid.uniform_spacing().is_none()
+    {
+        return Err(BssnGridError::AnisotropicGrid);
+    }
+
     let settings = view.settings();
     let metric = view.metric();
     let curvature = view.curvature();
 
     for index in 0..points
     {
-        let at = [view.grid.coordinate(index), 0.0, 0.0];
+        let at = view.grid.position(index);
         // The conformal Ricci comes from the genuine BSSN form -- the evolved
         // Gammatilde^k with compact stencils -- not from a generic metric Ricci.
         // That substitution is what removes the mixed second derivatives from
@@ -1210,8 +1303,8 @@ pub enum BssnShiftCondition {
 /// Implements [`System`] so that time integration reuses `scirust_sim`'s
 /// existing fixed-step RK4. **No integrator is written here.**
 #[derive(Debug, Clone, Copy)]
-pub struct BssnGridSystem {
-    grid: UniformGrid1d,
+pub struct BssnGridSystem<const D: usize = 1> {
+    grid: UniformGrid<D>,
     gauge: BssnGauge,
     sources: AdmSources,
     dissipation: f64,
@@ -1219,10 +1312,10 @@ pub struct BssnGridSystem {
     shift_condition: BssnShiftCondition,
 }
 
-impl BssnGridSystem {
+impl<const D: usize> BssnGridSystem<D> {
     /// Build a system on `grid` with a prescribed `gauge` and matter `sources`.
     #[must_use]
-    pub const fn new(grid: UniformGrid1d, gauge: BssnGauge, sources: AdmSources) -> Self {
+    pub const fn new(grid: UniformGrid<D>, gauge: BssnGauge, sources: AdmSources) -> Self {
         Self {
             grid,
             gauge,
@@ -1286,13 +1379,13 @@ impl BssnGridSystem {
     /// Vacuum with the synchronous gauge (`alpha = 1`, `beta^i = 0`) — the
     /// default validation configuration.
     #[must_use]
-    pub fn vacuum(grid: UniformGrid1d) -> Self {
+    pub fn vacuum(grid: UniformGrid<D>) -> Self {
         Self::new(grid, BssnGauge::SYNCHRONOUS, AdmSources::VACUUM)
     }
 
     /// The grid.
     #[must_use]
-    pub const fn grid(&self) -> &UniformGrid1d {
+    pub const fn grid(&self) -> &UniformGrid<D> {
         &self.grid
     }
 
@@ -1327,9 +1420,9 @@ impl BssnGridSystem {
     }
 }
 
-impl System for BssnGridSystem {
+impl<const D: usize> System for BssnGridSystem<D> {
     fn dim(&self) -> usize {
-        COMPONENTS_PER_POINT * self.grid.points()
+        COMPONENTS_PER_POINT * self.grid.total_points()
     }
 
     fn derivatives(&self, time: f64, state: &[f64], derivative: &mut [f64]) {
@@ -1350,24 +1443,24 @@ impl System for BssnGridSystem {
 
 /// One sample of an evolution.
 #[derive(Debug, Clone, PartialEq)]
-pub struct BssnGridSample {
+pub struct BssnGridSample<const D: usize = 1> {
     /// The coordinate time.
     pub time: f64,
     /// The grid state at that time.
-    pub state: BssnGridState,
+    pub state: BssnGridState<D>,
 }
 
 /// Integrate a BSSN grid state from `t0` to `t_end` with fixed step `step`.
 ///
 /// Reuses `scirust_sim::simulate` (fixed-step RK4). Free evolution: no
 /// constraint is enforced, damped, or projected at any stage.
-pub fn evolve_bssn_grid(
-    system: &BssnGridSystem,
-    initial: &BssnGridState,
+pub fn evolve_bssn_grid<const D: usize>(
+    system: &BssnGridSystem<D>,
+    initial: &BssnGridState<D>,
     t0: f64,
     t_end: f64,
     step: f64,
-) -> Result<Vec<BssnGridSample>, BssnGridError> {
+) -> Result<Vec<BssnGridSample<D>>, BssnGridError> {
     if !step.is_finite() || step <= 0.0
     {
         return Err(BssnGridError::InvalidRequest {
@@ -1392,7 +1485,7 @@ pub fn evolve_bssn_grid(
     if initial.grid != system.grid
     {
         return Err(BssnGridError::FlatStateLength {
-            expected: COMPONENTS_PER_POINT * system.grid.points(),
+            expected: COMPONENTS_PER_POINT * system.grid.total_points(),
             actual: initial.components.len(),
         });
     }
@@ -1437,11 +1530,11 @@ pub struct BssnGridConstraints {
 /// The BSSN algebraic constraints are read from the stored state; the ADM
 /// physical constraints are evaluated from the reconstructed fields through the
 /// Layer 3.1 evaluators, so no constraint formula is duplicated.
-pub fn bssn_grid_constraints(
-    view: &BssnGridView<'_>,
+pub fn bssn_grid_constraints<const D: usize>(
+    view: &BssnGridView<'_, D>,
     sources: &AdmSources,
 ) -> Result<BssnGridConstraints, BssnGridError> {
-    let points = view.grid.points();
+    let points = view.grid.total_points();
     let settings = view.settings();
     let metric = view.metric();
     let curvature = view.curvature();
@@ -1458,7 +1551,7 @@ pub fn bssn_grid_constraints(
 
     for index in 0..points
     {
-        let at = [view.grid.coordinate(index), 0.0, 0.0];
+        let at = view.grid.position(index);
 
         // The algebraic constraints are properties of the **stored** state, so
         // they must be read from it. Re-converting the reconstructed ADM pair
@@ -1545,10 +1638,10 @@ pub struct RicciDecompositionReport {
 ///
 /// The scales are reported alongside the mismatch so that agreement cannot be
 /// claimed on the strength of both sides being near zero.
-pub fn bssn_grid_ricci_report(
-    view: &BssnGridView<'_>,
+pub fn bssn_grid_ricci_report<const D: usize>(
+    view: &BssnGridView<'_, D>,
 ) -> Result<RicciDecompositionReport, BssnGridError> {
-    let points = view.grid.points();
+    let points = view.grid.total_points();
     let settings = view.settings();
     let metric = view.metric();
 
@@ -1562,7 +1655,7 @@ pub fn bssn_grid_ricci_report(
     #[allow(clippy::needless_range_loop)]
     for index in 0..points
     {
-        let at = [view.grid.coordinate(index), 0.0, 0.0];
+        let at = view.grid.position(index);
         let decomposition = conformal_ricci(&metric, &at, &settings).map_err(|source| {
             BssnGridError::Pointwise {
                 time: 0.0,
@@ -1655,11 +1748,11 @@ fn accumulate(report: &mut Option<GridProjectionReport>, projection: &BssnProjec
 ///
 /// **Explicit and opt-in.** Never invoked by [`evolve_bssn_grid`], and never
 /// applied between RK4 stages.
-pub fn project_grid_unit_determinant(
-    state: &mut BssnGridState,
+pub fn project_grid_unit_determinant<const D: usize>(
+    state: &mut BssnGridState<D>,
 ) -> Result<GridProjectionReport, BssnGridError> {
     let mut report = None;
-    for index in 0..state.grid.points()
+    for index in 0..state.grid.total_points()
     {
         let mut local = state.state_at(index);
         let projection = project_unit_determinant(&mut local)
@@ -1668,7 +1761,7 @@ pub fn project_grid_unit_determinant(
         accumulate(&mut report, &projection);
     }
     report.ok_or(BssnGridError::FlatStateLength {
-        expected: COMPONENTS_PER_POINT * state.grid.points(),
+        expected: COMPONENTS_PER_POINT * state.grid.total_points(),
         actual: 0,
     })
 }
@@ -1677,11 +1770,11 @@ pub fn project_grid_unit_determinant(
 ///
 /// **Explicit and opt-in.** Never invoked by [`evolve_bssn_grid`], and never
 /// applied between RK4 stages.
-pub fn project_grid_trace_free(
-    state: &mut BssnGridState,
+pub fn project_grid_trace_free<const D: usize>(
+    state: &mut BssnGridState<D>,
 ) -> Result<GridProjectionReport, BssnGridError> {
     let mut report = None;
-    for index in 0..state.grid.points()
+    for index in 0..state.grid.total_points()
     {
         let mut local = state.state_at(index);
         let projection = project_trace_free(&mut local)
@@ -1690,7 +1783,7 @@ pub fn project_grid_trace_free(
         accumulate(&mut report, &projection);
     }
     report.ok_or(BssnGridError::FlatStateLength {
-        expected: COMPONENTS_PER_POINT * state.grid.points(),
+        expected: COMPONENTS_PER_POINT * state.grid.total_points(),
         actual: 0,
     })
 }
@@ -1715,17 +1808,36 @@ pub fn project_grid_trace_free(
 /// constraint damping — it neither targets nor reduces the constraint residuals
 /// by construction, and any effect it has on them is indirect.
 #[must_use]
-pub fn kreiss_oliger_term(grid: &UniformGrid1d, samples: &[f64], index: usize, sigma: f64) -> f64 {
-    let bracket = samples[grid.offset(index, 2)] - 4.0 * samples[grid.offset(index, 1)]
-        + 6.0 * samples[grid.wrap_usize(index)]
-        - 4.0 * samples[grid.offset(index, -1)]
-        + samples[grid.offset(index, -2)];
-    -sigma * bracket / (16.0 * grid.spacing())
+pub fn kreiss_oliger_term<const D: usize>(
+    grid: &UniformGrid<D>,
+    samples: &[f64],
+    index: usize,
+    sigma: f64,
+) -> f64 {
+    let mut total = 0.0_f64;
+    // One bracket per axis: in more than one dimension the operator is the sum
+    // of the per-axis fourth differences, so no direction is left undamped.
+    for axis in 0..D
+    {
+        let forward_two = samples[grid.neighbour(index, axis, 2)];
+        let forward_one = samples[grid.neighbour(index, axis, 1)];
+        let centre = samples[index % grid.total_points()];
+        let back_one = samples[grid.neighbour(index, axis, -1)];
+        let back_two = samples[grid.neighbour(index, axis, -2)];
+        let bracket = forward_two - 4.0 * forward_one + 6.0 * centre - 4.0 * back_one + back_two;
+        total += -sigma * bracket / (16.0 * grid.spacing_along(axis));
+    }
+    total
 }
 
 /// Add Kreiss-Oliger dissipation to every evolved component of `out`.
-fn apply_kreiss_oliger(grid: &UniformGrid1d, state: &[f64], sigma: f64, out: &mut [f64]) {
-    let points = grid.points();
+fn apply_kreiss_oliger<const D: usize>(
+    grid: &UniformGrid<D>,
+    state: &[f64],
+    sigma: f64,
+    out: &mut [f64],
+) {
+    let points = grid.total_points();
     for component in 0..COMPONENTS_PER_POINT
     {
         let base = component * points;

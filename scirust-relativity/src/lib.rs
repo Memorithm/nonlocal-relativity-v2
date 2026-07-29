@@ -71,7 +71,7 @@
 //!   against [`ricci_tensor_from_metric`]), and the local evolution right-hand
 //!   sides, validated against the Layer 3.1 ADM system. Implementing BSSN does
 //!   **not** by itself demonstrate numerical stability;
-//! - BSSN on a periodic one-dimensional grid ([`grid1d`], [`bssn_grid`]) —
+//! - BSSN on a periodic grid ([`grid`], [`bssn_grid`]) —
 //!   Layer 3.4: a half-open uniform periodic grid, centred finite-difference
 //!   operators validated against `sin(kx)`, a grid-backed derivative provider
 //!   that drives the *unmodified* Layer 3.3 evaluators, and a method-of-lines
@@ -132,7 +132,7 @@ mod exponential_map;
 mod flrw;
 mod geodesic;
 mod geodesic_deviation;
-pub mod grid1d;
+pub mod grid;
 mod isotropic_schwarzschild;
 mod kerr;
 mod linearized;
