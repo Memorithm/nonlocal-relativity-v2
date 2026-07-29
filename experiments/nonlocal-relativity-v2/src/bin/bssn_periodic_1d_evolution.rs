@@ -12,11 +12,12 @@
 
 use scirust_relativity::Metric;
 use scirust_relativity::adm_evolution::{AdmSources, SpatialTensorField};
+use scirust_relativity::bssn::BssnGauge;
 use scirust_relativity::bssn::bssn_to_adm;
 use scirust_relativity::bssn_grid::{
-    BssnGridState, BssnGridSystem, BssnSlicing, TransverseTracelessWave, bssn_grid_constraints,
-    bssn_grid_ricci_report, evolve_bssn_grid, project_grid_trace_free,
-    project_grid_unit_determinant,
+    BssnGridState, BssnGridSystem, BssnShiftCondition, BssnSlicing, COMPONENTS_PER_POINT,
+    TransverseTracelessWave, bssn_grid_constraints, bssn_grid_rhs, bssn_grid_ricci_report,
+    evolve_bssn_grid, project_grid_trace_free, project_grid_unit_determinant,
 };
 use scirust_relativity::grid1d::UniformGrid1d;
 
@@ -103,7 +104,7 @@ fn main() {
     println!("# units: geometric G = c = 1; lengths and times in mass units M");
     println!("# grid: half-open periodic domain [0, 1), x_n = n dx, dx = 1 / N");
     println!("# gauge: alpha = 1, beta^i = 0 by default (prescribed); the gauge_wave section");
-    println!("#   uses LIVE 1+log slicing. The Gamma-driver shift is not implemented.");
+    println!("#   uses LIVE 1+log slicing and the shift sections use the Gamma-driver.");
     println!("# determinism: no RNG, no wall clock; identical inputs give identical output");
     println!(
         "# NOTE: Rtilde_ij is written in genuine BSSN form using the EVOLVED Gammatilde^k.\
@@ -360,6 +361,102 @@ fn main() {
             last.time,
             gauge_amplitude,
             numerical / predicted,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    println!("# shift terms and the Gamma-driver.");
+    println!("#   constant_shift: for a SPATIALLY CONSTANT shift every d(beta) term vanishes,");
+    println!("#     so the difference between the shifted and unshifted right-hand sides must");
+    println!("#     equal v * d_x(field) exactly. Both sides use the same compact stencil, so");
+    println!("#     this holds to ROUNDING -- a sharp check on every advection term at once.");
+    println!("#   gamma_driver: on flat space with a constant shift, d_t Gammatilde^i is zero");
+    println!("#     and the driver decouples into B = B0 exp(-eta t),");
+    println!("#     beta = beta0 + (3/4)(B0/eta)(1 - exp(-eta t)) -- a closed form.");
+    println!("scenario,resolution,parameter,residual,scale,relative,status");
+    {
+        use scirust_relativity::grid1d::periodic_first_derivative;
+        let grid = grid_of(64);
+        let points = grid.points();
+        let wave = TransverseTracelessWave::new(1.0e-3, k, 0.0);
+        let base =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("initial data");
+        for &velocity in &[0.1_f64, 0.3, 0.7]
+        {
+            let mut unshifted = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+            bssn_grid_rhs(
+                &base.view(),
+                &BssnGauge::SYNCHRONOUS,
+                &AdmSources::VACUUM,
+                0.0,
+                &mut unshifted,
+            )
+            .expect("rhs");
+            let mut drifting = base.clone();
+            for index in 0..points
+            {
+                drifting.set_shift_at(index, &[velocity, 0.0, 0.0]);
+            }
+            let mut shifted = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+            bssn_grid_rhs(
+                &drifting.view(),
+                &BssnGauge::SYNCHRONOUS,
+                &AdmSources::VACUUM,
+                0.0,
+                &mut shifted,
+            )
+            .expect("rhs");
+
+            let mut worst = 0.0_f64;
+            let mut scale = 0.0_f64;
+            for slot in 0..17
+            {
+                let field: Vec<f64> = (0..points)
+                    .map(|index| base.as_slice()[slot * points + index])
+                    .collect();
+                for index in 0..points
+                {
+                    let gradient = periodic_first_derivative(&field, &grid, index).expect("d1");
+                    let difference =
+                        shifted[slot * points + index] - unshifted[slot * points + index];
+                    worst = worst.max((difference - velocity * gradient).abs());
+                    scale = scale.max((velocity * gradient).abs());
+                }
+            }
+            println!(
+                "constant_shift,64,{velocity},{worst:.6e},{scale:.6e},{:.6e},exact_to_rounding",
+                worst / scale
+            );
+        }
+    }
+
+    for &eta in &[1.0_f64, 2.0, 4.0]
+    {
+        let grid = grid_of(16);
+        let initial_driver = 0.4_f64;
+        let mut initial = BssnGridState::minkowski(grid);
+        for index in 0..grid.points()
+        {
+            initial.set_driver_at(index, &[initial_driver, 0.0, 0.0]);
+        }
+        let system = BssnGridSystem::vacuum(grid)
+            .with_shift_condition(BssnShiftCondition::GammaDriver { eta });
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.005).expect("driver evolves");
+        let last = samples.last().expect("final sample");
+        let expected_driver = initial_driver * (-eta * last.time).exp();
+        let expected_shift = 0.75 * (initial_driver / eta) * (1.0 - (-eta * last.time).exp());
+        let mut worst = 0.0_f64;
+        for index in 0..grid.points()
+        {
+            worst = worst.max((last.state.driver_at(index)[0] - expected_driver).abs());
+            worst = worst.max((last.state.shift_at(index)[0] - expected_shift).abs());
+        }
+        println!(
+            "gamma_driver,16,{eta},{worst:.6e},{:.6e},{:.6e},matches_closed_form",
+            expected_shift.abs().max(expected_driver.abs()),
+            worst / expected_shift.abs().max(expected_driver.abs())
         );
     }
 

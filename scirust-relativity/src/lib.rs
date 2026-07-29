@@ -87,10 +87,12 @@
 //!   `d_t Gammatilde^i` equation Layer 3.3 deferred. Using the generic metric
 //!   Ricci instead leaves ADM's weakly hyperbolic principal part wearing BSSN
 //!   variables, and is measurably unstable. Carries the platform's first **live
-//!   gauge** — 1+log slicing, `d_t alpha = -2 alpha K`, validated against the
-//!   exact `sqrt(2)` gauge speed — with prescribed slicing still the default and
-//!   the Gamma-driver shift **not** implemented. Stability here is **measured,
-//!   not proven**.
+//!   gauge**: 1+log slicing (`d_t alpha = -2 alpha K`, validated against the
+//!   exact `sqrt(2)` gauge speed) and the Gamma-driver shift (validated by an
+//!   exact constant-shift advection identity and a closed-form decay), together
+//!   the moving-puncture gauge. Prescribed slicing and shift remain the
+//!   defaults. Only weak-field tested, and stability here is **measured, not
+//!   proven**.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as

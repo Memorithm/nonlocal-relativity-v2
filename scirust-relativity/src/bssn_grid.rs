@@ -129,15 +129,16 @@ use crate::adm_evolution::{
 };
 use crate::bssn::{
     BssnConnectionRhs, BssnError, BssnGauge, BssnLapseDerivatives, BssnProjection,
-    BssnSecondDerivatives, BssnSpatialDerivatives, BssnState, BssnSuppliedTerms, ConformalRicci,
-    adm_to_bssn, bssn_algebraic_constraints, bssn_connection_rhs, bssn_evolution_rhs_with_ricci,
-    bssn_to_adm, conformal_ricci, conformal_ricci_from_derivatives, one_plus_log_lapse_rhs,
-    project_trace_free, project_unit_determinant,
+    BssnSecondDerivatives, BssnShiftDerivatives, BssnSpatialDerivatives, BssnState,
+    BssnSuppliedTerms, ConformalRicci, adm_to_bssn, bssn_algebraic_constraints,
+    bssn_connection_rhs, bssn_evolution_rhs_with_ricci, bssn_to_adm, conformal_ricci,
+    conformal_ricci_from_derivatives, gamma_driver_rhs, one_plus_log_lapse_rhs, project_trace_free,
+    project_unit_determinant,
 };
 use crate::grid1d::{Grid1dError, GridReduction, UniformGrid1d};
 
 /// Evolved scalar component arrays per grid point.
-pub const COMPONENTS_PER_POINT: usize = 18;
+pub const COMPONENTS_PER_POINT: usize = 24;
 
 /// Slot of `phi` in the flat layout.
 pub const SLOT_CONFORMAL_FACTOR: usize = 0;
@@ -155,6 +156,13 @@ pub const SLOT_CONFORMAL_CONNECTION: usize = 14;
 /// simply one whose right-hand side is zero, which keeps the state layout
 /// independent of the slicing choice.
 pub const SLOT_LAPSE: usize = 17;
+/// First slot of the shift `beta^i` (three components).
+pub const SLOT_SHIFT: usize = 18;
+/// First slot of the Gamma-driver auxiliary `B^i` (three components).
+///
+/// Stored whether or not the driver is active, so the state layout does not
+/// depend on the gauge choice.
+pub const SLOT_DRIVER: usize = 21;
 
 /// The independent components of a symmetric 3x3 tensor, in storage order.
 const SYMMETRIC_PAIRS: [(usize, usize); 6] = [(0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2)];
@@ -423,6 +431,44 @@ impl<'a> BssnGridView<'a> {
         }
     }
 
+    /// The stored shift at `index`.
+    #[must_use]
+    pub fn shift_at(&self, index: usize) -> [f64; 3] {
+        let points = self.grid.points();
+        let wrapped = self.grid.wrap_usize(index);
+        [
+            self.components[SLOT_SHIFT * points + wrapped],
+            self.components[(SLOT_SHIFT + 1) * points + wrapped],
+            self.components[(SLOT_SHIFT + 2) * points + wrapped],
+        ]
+    }
+
+    /// The stored Gamma-driver auxiliary `B^i` at `index`.
+    #[must_use]
+    pub fn driver_at(&self, index: usize) -> [f64; 3] {
+        let points = self.grid.points();
+        let wrapped = self.grid.wrap_usize(index);
+        [
+            self.components[SLOT_DRIVER * points + wrapped],
+            self.components[(SLOT_DRIVER + 1) * points + wrapped],
+            self.components[(SLOT_DRIVER + 2) * points + wrapped],
+        ]
+    }
+
+    /// The shift gradient and coordinate Hessian at `index`, from compact
+    /// stencils. **1D3V**: only `x` derivatives can be non-zero.
+    #[must_use]
+    pub fn shift_derivatives_at(&self, index: usize) -> BssnShiftDerivatives {
+        let mut gradient = [[0.0_f64; 3]; 3];
+        let mut hessian = [[[0.0_f64; 3]; 3]; 3];
+        for component in 0..3
+        {
+            gradient[component][0] = component_gradient(self, SLOT_SHIFT + component, index);
+            hessian[component][0][0] = component_curvature(self, SLOT_SHIFT + component, index);
+        }
+        BssnShiftDerivatives { gradient, hessian }
+    }
+
     /// The finite-difference settings this grid requires.
     ///
     /// Both steps equal `dx` so that every internally differenced sample lands
@@ -580,6 +626,56 @@ impl BssnGridState {
     #[must_use]
     pub fn lapse_at(&self, index: usize) -> f64 {
         self.components[SLOT_LAPSE * self.grid.points() + self.grid.wrap_usize(index)]
+    }
+
+    /// The stored shift at `index`.
+    #[must_use]
+    pub fn shift_at(&self, index: usize) -> [f64; 3] {
+        let points = self.grid.points();
+        let wrapped = self.grid.wrap_usize(index);
+        [
+            self.components[SLOT_SHIFT * points + wrapped],
+            self.components[(SLOT_SHIFT + 1) * points + wrapped],
+            self.components[(SLOT_SHIFT + 2) * points + wrapped],
+        ]
+    }
+
+    /// Overwrite the stored shift at `index`.
+    pub fn set_shift_at(&mut self, index: usize, shift: &[f64; 3]) {
+        let points = self.grid.points();
+        let wrapped = self.grid.wrap_usize(index);
+        // Indexed rather than iterated: the loop walks tensor components and
+        // their storage slots together, which the index expresses.
+        #[allow(clippy::needless_range_loop)]
+        for component in 0..3
+        {
+            self.components[(SLOT_SHIFT + component) * points + wrapped] = shift[component];
+        }
+    }
+
+    /// The stored Gamma-driver auxiliary `B^i` at `index`.
+    #[must_use]
+    pub fn driver_at(&self, index: usize) -> [f64; 3] {
+        let points = self.grid.points();
+        let wrapped = self.grid.wrap_usize(index);
+        [
+            self.components[SLOT_DRIVER * points + wrapped],
+            self.components[(SLOT_DRIVER + 1) * points + wrapped],
+            self.components[(SLOT_DRIVER + 2) * points + wrapped],
+        ]
+    }
+
+    /// Overwrite the stored Gamma-driver auxiliary at `index`.
+    pub fn set_driver_at(&mut self, index: usize, driver: &[f64; 3]) {
+        let points = self.grid.points();
+        let wrapped = self.grid.wrap_usize(index);
+        // Indexed rather than iterated: the loop walks tensor components and
+        // their storage slots together, which the index expresses.
+        #[allow(clippy::needless_range_loop)]
+        for component in 0..3
+        {
+            self.components[(SLOT_DRIVER + component) * points + wrapped] = driver[component];
+        }
     }
 
     /// Overwrite the stored lapse at `index`.
@@ -794,7 +890,16 @@ pub fn grid_spatial_derivatives(view: &BssnGridView<'_>, index: usize) -> BssnSp
         conformal_metric_gradient[0][j][i] = value;
     }
 
+    let mut conformal_curvature_gradient = [[[0.0_f64; 3]; 3]; 3];
+    for (slot, &(i, j)) in SYMMETRIC_PAIRS.iter().enumerate()
+    {
+        let value = component_gradient(view, SLOT_CONFORMAL_CURVATURE + slot, index);
+        conformal_curvature_gradient[0][i][j] = value;
+        conformal_curvature_gradient[0][j][i] = value;
+    }
+
     BssnSpatialDerivatives {
+        conformal_curvature_gradient,
         conformal_factor_gradient: [
             component_gradient(view, SLOT_CONFORMAL_FACTOR, index),
             0.0,
@@ -885,15 +990,24 @@ pub fn grid_connection_rhs(
     sources: &AdmSources,
 ) -> Result<BssnConnectionRhs, BssnGridError> {
     let derivatives = grid_spatial_derivatives(view, index);
+    let second = grid_second_derivatives(view, index);
     let lapse = view.lapse_derivatives_at(index);
-    bssn_connection_rhs(&view.state_at(index), &derivatives, &lapse, gauge, sources).map_err(
-        |source| BssnGridError::Pointwise {
-            time: 0.0,
-            index,
-            stage: "bssn_connection_rhs",
-            source,
-        },
+    let shift = view.shift_derivatives_at(index);
+    bssn_connection_rhs(
+        &view.state_at(index),
+        &derivatives,
+        &second,
+        &lapse,
+        &shift,
+        gauge,
+        sources,
     )
+    .map_err(|source| BssnGridError::Pointwise {
+        time: 0.0,
+        index,
+        stage: "bssn_connection_rhs",
+        source,
+    })
 }
 
 /// Evaluate the BSSN right-hand side over the whole grid into `out`.
@@ -907,7 +1021,15 @@ pub fn bssn_grid_rhs(
     time: f64,
     out: &mut [f64],
 ) -> Result<(), BssnGridError> {
-    bssn_grid_rhs_with_slicing(view, gauge, sources, BssnSlicing::Prescribed, time, out)
+    bssn_grid_rhs_with_gauge(
+        view,
+        gauge,
+        sources,
+        BssnSlicing::Prescribed,
+        BssnShiftCondition::Prescribed,
+        time,
+        out,
+    )
 }
 
 /// Evaluate the BSSN right-hand side with an explicit slicing condition.
@@ -915,11 +1037,16 @@ pub fn bssn_grid_rhs(
 /// The lapse used at each point is the **stored** one, not the `gauge`
 /// argument's; `gauge` supplies only the shift, which is zero throughout this
 /// increment.
-pub fn bssn_grid_rhs_with_slicing(
+#[allow(clippy::too_many_arguments)]
+pub fn bssn_grid_rhs_with_gauge(
     view: &BssnGridView<'_>,
-    gauge: &BssnGauge,
+    // Both the lapse and the shift are stored fields, so the per-point gauge is
+    // read from the state. This argument survives only for matter sources that
+    // are gauge-dependent, and for symmetry with the other entry points.
+    _gauge: &BssnGauge,
     sources: &AdmSources,
     slicing: BssnSlicing,
+    shift_condition: BssnShiftCondition,
     time: f64,
     out: &mut [f64],
 ) -> Result<(), BssnGridError> {
@@ -949,10 +1076,11 @@ pub fn bssn_grid_rhs_with_slicing(
         // comes from the caller and is zero throughout this increment.
         let local_gauge = BssnGauge {
             lapse: view.lapse_at(index),
-            shift: gauge.shift,
+            shift: view.shift_at(index),
         };
         let first = grid_spatial_derivatives(view, index);
         let lapse_derivatives = view.lapse_derivatives_at(index);
+        let shift_derivatives = view.shift_derivatives_at(index);
         let (_, rhs) = bssn_evolution_rhs_with_ricci(
             &metric,
             &curvature,
@@ -964,6 +1092,7 @@ pub fn bssn_grid_rhs_with_slicing(
                 ricci: &ricci,
                 derivatives: &first,
                 lapse: &lapse_derivatives,
+                shift: &shift_derivatives,
             },
         )
         .map_err(|source| BssnGridError::Pointwise {
@@ -994,11 +1123,47 @@ pub fn bssn_grid_rhs_with_slicing(
 
         // The slicing condition. `Prescribed` keeps the lapse fixed, so its
         // right-hand side is exactly zero.
+        let local_state = view.state_at(index);
         out[SLOT_LAPSE * points + index] = match slicing
         {
             BssnSlicing::Prescribed => 0.0,
-            BssnSlicing::OnePlusLog => one_plus_log_lapse_rhs(&view.state_at(index), &local_gauge),
+            BssnSlicing::OnePlusLog =>
+            {
+                // With a non-zero shift the slicing picks up its advection term.
+                let mut rate = one_plus_log_lapse_rhs(&local_state, &local_gauge);
+                for j in 0..3
+                {
+                    rate += local_gauge.shift[j] * lapse_derivatives.gradient[j];
+                }
+                rate
+            },
         };
+
+        // The shift condition. `Prescribed` freezes both beta^i and B^i, so
+        // their right-hand sides are exactly zero.
+        let (shift_rate, driver_rate) = match shift_condition
+        {
+            BssnShiftCondition::Prescribed => ([0.0_f64; 3], [0.0_f64; 3]),
+            BssnShiftCondition::GammaDriver { eta } =>
+            {
+                // The driver chases the FULL connection rate, shift terms
+                // included: feeding it a partial rate would make the shift chase
+                // a quantity nothing else evolves.
+                gamma_driver_rhs(&connection.total, &view.driver_at(index), eta).map_err(
+                    |source| BssnGridError::Pointwise {
+                        time,
+                        index,
+                        stage: "gamma_driver_rhs",
+                        source,
+                    },
+                )?
+            },
+        };
+        for component in 0..3
+        {
+            out[(SLOT_SHIFT + component) * points + index] = shift_rate[component];
+            out[(SLOT_DRIVER + component) * points + index] = driver_rate[component];
+        }
     }
     Ok(())
 }
@@ -1022,6 +1187,24 @@ pub enum BssnSlicing {
     OnePlusLog,
 }
 
+/// Which condition drives the shift.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum BssnShiftCondition {
+    /// The shift is **prescribed**: `d_t beta^i = 0` and `d_t B^i = 0`, so
+    /// `beta^i` keeps whatever the initial data gave it. With `beta^i = 0` this
+    /// reproduces every earlier increment exactly; with a spatially constant
+    /// non-zero `beta^i` it is a pure coordinate drift, which is a sharp test of
+    /// the advection terms. The default.
+    #[default]
+    Prescribed,
+    /// The hyperbolic Gamma-driver:
+    /// `d_t beta^i = (3/4) B^i`, `d_t B^i = d_t Gammatilde^i - eta B^i`.
+    GammaDriver {
+        /// The damping rate `eta >= 0`.
+        eta: f64,
+    },
+}
+
 /// The semidiscrete BSSN system `dY/dt = F(t, Y)` on a periodic grid.
 ///
 /// Implements [`System`] so that time integration reuses `scirust_sim`'s
@@ -1033,6 +1216,7 @@ pub struct BssnGridSystem {
     sources: AdmSources,
     dissipation: f64,
     slicing: BssnSlicing,
+    shift_condition: BssnShiftCondition,
 }
 
 impl BssnGridSystem {
@@ -1045,7 +1229,22 @@ impl BssnGridSystem {
             sources,
             dissipation: 0.0,
             slicing: BssnSlicing::Prescribed,
+            shift_condition: BssnShiftCondition::Prescribed,
         }
+    }
+
+    /// Choose the shift condition. Defaults to [`BssnShiftCondition::Prescribed`],
+    /// so a live shift is never enabled implicitly.
+    #[must_use]
+    pub const fn with_shift_condition(mut self, condition: BssnShiftCondition) -> Self {
+        self.shift_condition = condition;
+        self
+    }
+
+    /// The shift condition in force.
+    #[must_use]
+    pub const fn shift_condition(&self) -> BssnShiftCondition {
+        self.shift_condition
     }
 
     /// Choose the slicing condition. Defaults to [`BssnSlicing::Prescribed`], so
@@ -1111,7 +1310,15 @@ impl BssnGridSystem {
         out: &mut [f64],
     ) -> Result<(), BssnGridError> {
         let view = BssnGridView::new(self.grid, state)?;
-        bssn_grid_rhs_with_slicing(&view, &self.gauge, &self.sources, self.slicing, time, out)?;
+        bssn_grid_rhs_with_gauge(
+            &view,
+            &self.gauge,
+            &self.sources,
+            self.slicing,
+            self.shift_condition,
+            time,
+            out,
+        )?;
         if self.dissipation != 0.0
         {
             apply_kreiss_oliger(&self.grid, state, self.dissipation, out);

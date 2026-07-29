@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last stable across every resolution tested once `Rtilde_ij` was written in genuine BSSN form, and now carrying live 1+log slicing validated against the exact `sqrt(2)` gauge speed; the Gamma-driver shift is next |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last stable across every resolution tested once `Rtilde_ij` was written in genuine BSSN form, and now carrying the full moving-puncture gauge — 1+log slicing and the Gamma-driver — each validated against a closed form; a second spatial dimension is next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -442,6 +442,20 @@ Prescribed slicing stays the **default**, so a live gauge is never enabled
 implicitly, and Minkowski is bit-for-bit undisturbed by turning it on. **The
 Gamma-driver shift is not implemented** — `beta^i = 0` throughout — and is the
 next increment.
+
+That increment followed immediately. The shift `beta^i` and the driver auxiliary
+`B^i` are stored fields too, so every shift term in every equation is live, and
+the **Gamma-driver** (`d_t beta^i = (3/4) B^i`,
+`d_t B^i = d_t Gammatilde^i - eta B^i`) completes the moving-puncture gauge. Two
+closed forms validate it. For a *spatially constant* shift every `d(beta)` term
+vanishes, so the right-hand-side difference must equal `v d_x(field)` exactly for
+all seventeen evolved components — measured relative residuals `8.80e-16`,
+`1.47e-16`, `4.91e-19`, i.e. **rounding**. And on flat space the driver decouples
+into `B = B0 exp(-eta t)`, `beta = beta0 + (3/4)(B0/eta)(1 - exp(-eta t))`,
+matched to relative `4e-12` … `5e-10`. Prescribed slicing and a prescribed shift
+remain the **defaults**, and Minkowski under the full moving-puncture gauge is
+bit-for-bit stationary. The gauge is nonetheless only **weak-field tested** —
+never on a puncture, a horizon, or a strong field, which is what it exists for.
 
 ## What this platform will not do
 

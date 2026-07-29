@@ -488,15 +488,82 @@ zero and enabling 1+log leaves the vacuum solution bit-for-bit undisturbed.
 A non-finite or non-positive lapse is rejected with a located typed error; the
 lapse is never clamped.
 
-### What is not here
+## 15. The shift, and the Gamma-driver
 
-**The Gamma-driver shift is not implemented.** `beta^i = 0` throughout, so every
-shift-advection term still vanishes identically. Live *slicing* without a live
-*shift* is only half of the gauge a practical BSSN evolution uses, and the half
-that matters most for black-hole punctures is the missing one. That is the next
-increment.
+The shift `beta^i` and the driver auxiliary `B^i` are now stored fields too
+(slots 18–20 and 21–23 of 24), so every shift term in every equation is live:
 
-## 15. Known limitations
+```text
+d_t phi          += beta^j d_j phi + (1/6) d_j beta^j
+d_t gammatilde_ij += beta^k d_k gammatilde_ij + gammatilde_ik d_j beta^k
+                   + gammatilde_jk d_i beta^k - (2/3) gammatilde_ij d_k beta^k
+d_t K            += beta^j d_j K
+d_t Atilde_ij    += beta^k d_k Atilde_ij + Atilde_ik d_j beta^k
+                   + Atilde_jk d_i beta^k - (2/3) Atilde_ij d_k beta^k
+d_t Gammatilde^i += beta^j d_j Gammatilde^i - Gammatilde^j d_j beta^i
+                   + (2/3) Gammatilde^i d_j beta^j
+                   + (1/3) gammatilde^{li} d_l d_j beta^j + gammatilde^{lj} d_j d_l beta^i
+d_t alpha        += beta^j d_j alpha
+```
+
+### The sharpest oracle in this document
+
+For a **spatially constant** shift every `d(beta)` term vanishes identically, so
+the only surviving contribution is the advection `beta^j d_j`. The difference
+between the shifted and unshifted right-hand sides must therefore be exactly
+`v * d_x(field)` for every one of the seventeen evolved components — and since
+both sides use the same compact stencil, it must hold to **rounding**, not to a
+tolerance:
+
+| v | residual | advection scale | relative |
+| --- | --- | --- | --- |
+| 0.1 | `1.735e-18` | `1.972e-3` | `8.80e-16` |
+| 0.3 | `8.674e-19` | `5.916e-3` | `1.47e-16` |
+| 0.7 | `6.776e-21` | `1.380e-2` | `4.91e-19` |
+
+A sign error in any single advection term would show up here immediately. This
+is why the constant-shift case was tested before anything was evolved.
+
+### The Gamma-driver
+
+```text
+d_t beta^i = (3/4) B^i
+d_t B^i    = d_t Gammatilde^i - eta B^i
+```
+
+The `3/4` sets the shift's characteristic speed to exactly `1` — the speed of
+light — so it is not a free parameter. `eta >= 0` damps the long-wavelength
+drift an undamped driver develops; a negative `eta` would amplify precisely what
+the term exists to suppress, and is rejected.
+
+The driver is fed the **full** connection rate, shift terms included. Feeding it
+a partial rate would make the shift chase a quantity nothing else evolves.
+
+On flat space with a constant shift, `d_t Gammatilde^i` is exactly zero and the
+driver decouples into two exact ODEs with a closed-form solution
+`B = B0 exp(-eta t)`, `beta = beta0 + (3/4)(B0/eta)(1 - exp(-eta t))`. Measured
+against it at `t = 1`:
+
+| eta | worst deviation | scale | relative |
+| --- | --- | --- | --- |
+| 1 | `7.698e-13` | `1.896e-1` | `4.06e-12` |
+| 2 | `9.098e-12` | `1.297e-1` | `7.01e-11` |
+| 4 | `3.973e-11` | `7.363e-2` | `5.40e-10` |
+
+Prescribed shift is the **default**: `d_t beta^i = d_t B^i = 0`, freezing both
+bit-for-bit. With `beta^i = 0` that reproduces every earlier result exactly.
+Minkowski under the *full* moving-puncture gauge — 1+log slicing and the
+Gamma-driver together — is bit-for-bit stationary, because `Gammatilde^i = 0`,
+`K = 0` and `B^i = 0` make every gauge rate exactly zero.
+
+### What is still not here
+
+The gauge is now complete in form, but it has only been exercised on **weak,
+smooth, periodic** data. Nothing here involves a puncture, a horizon, or a
+strong field — which is what the moving-puncture gauge was invented for and the
+only setting in which its behaviour is really tested.
+
+## 16. Known limitations
 
 Stated plainly, because the gap between this and a numerical-relativity code is
 large:

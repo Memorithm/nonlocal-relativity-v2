@@ -8,9 +8,10 @@
 use scirust_relativity::adm_evolution::{AdmEvolutionSettings, AdmSources, SpatialTensorField};
 use scirust_relativity::bssn::{BssnGauge, adm_rhs_from_bssn, bssn_evolution_rhs};
 use scirust_relativity::bssn_grid::{
-    BssnGridState, BssnGridSystem, BssnGridView, BssnSlicing, COMPONENTS_PER_POINT,
-    TransverseTracelessWave, bssn_grid_constraints, bssn_grid_rhs, bssn_grid_ricci_report,
-    evolve_bssn_grid, grid_conformal_ricci, project_grid_trace_free, project_grid_unit_determinant,
+    BssnGridState, BssnGridSystem, BssnGridView, BssnShiftCondition, BssnSlicing,
+    COMPONENTS_PER_POINT, TransverseTracelessWave, bssn_grid_constraints, bssn_grid_rhs,
+    bssn_grid_ricci_report, evolve_bssn_grid, grid_conformal_ricci, project_grid_trace_free,
+    project_grid_unit_determinant,
 };
 use scirust_relativity::grid1d::UniformGrid1d;
 use scirust_relativity::{Metric, ricci_tensor_from_metric};
@@ -1111,7 +1112,13 @@ fn connection_rhs_rejects_an_unvalidated_matter_term() {
     // this increment has no non-vacuum oracle to validate it against. It must
     // be refused rather than silently ignored or guessed.
     use scirust_relativity::bssn::{
-        BssnLapseDerivatives, BssnSpatialDerivatives, bssn_connection_rhs,
+        BssnLapseDerivatives, BssnSecondDerivatives, BssnShiftDerivatives, BssnSpatialDerivatives,
+        bssn_connection_rhs,
+    };
+    let zero_second = BssnSecondDerivatives {
+        conformal_factor_hessian: [[0.0; 3]; 3],
+        conformal_metric_hessian: [[[[0.0; 3]; 3]; 3]; 3],
+        conformal_connection_gradient: [[0.0; 3]; 3],
     };
     let grid = unit_grid(8);
     let state = BssnGridState::minkowski(grid).state_at(0);
@@ -1124,7 +1131,9 @@ fn connection_rhs_rejects_an_unvalidated_matter_term() {
         bssn_connection_rhs(
             &state,
             &BssnSpatialDerivatives::ZERO,
+            &zero_second,
             &BssnLapseDerivatives::ZERO,
+            &BssnShiftDerivatives::ZERO,
             &BssnGauge::SYNCHRONOUS,
             &sources,
         )
@@ -1135,7 +1144,9 @@ fn connection_rhs_rejects_an_unvalidated_matter_term() {
         bssn_connection_rhs(
             &state,
             &BssnSpatialDerivatives::ZERO,
+            &zero_second,
             &BssnLapseDerivatives::ZERO,
+            &BssnShiftDerivatives::ZERO,
             &BssnGauge::SYNCHRONOUS,
             &AdmSources::VACUUM,
         )
@@ -1382,4 +1393,193 @@ fn a_live_lapse_gradient_feeds_the_curvature_and_connection_equations() {
     )
     .expect("rhs");
     assert_eq!(max_abs(&flat_rhs[7 * points..8 * points]), 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Shift terms and the Gamma-driver
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_constant_shift_is_exactly_pure_advection() {
+    // The sharpest test of the shift terms available. For a *spatially constant*
+    // shift every `d beta` term vanishes identically, so the only surviving
+    // contribution is the advection `beta^j d_j`. The difference between the
+    // shifted and unshifted right-hand sides must therefore equal
+    // `v * d_x(field)` for every evolved component -- and because both sides use
+    // the same compact stencil, it must hold to *rounding*, not to a tolerance.
+    //
+    // A sign error in any one of the seventeen advection terms would show up
+    // here immediately.
+    use scirust_relativity::grid1d::periodic_first_derivative;
+
+    let grid = unit_grid(64);
+    let points = grid.points();
+    let wave = TransverseTracelessWave::new(1.0e-3, TWO_PI, 0.0);
+    let base = BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+        .expect("initial data");
+    let velocity = 0.3_f64;
+
+    let mut unshifted = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+    bssn_grid_rhs(
+        &base.view(),
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut unshifted,
+    )
+    .expect("rhs");
+
+    let mut drifting = base.clone();
+    for index in 0..points
+    {
+        drifting.set_shift_at(index, &[velocity, 0.0, 0.0]);
+    }
+    let mut shifted = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+    bssn_grid_rhs(
+        &drifting.view(),
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut shifted,
+    )
+    .expect("rhs");
+
+    let mut worst = 0.0_f64;
+    let mut scale = 0.0_f64;
+    for slot in 0..17
+    {
+        let field: Vec<f64> = (0..points)
+            .map(|index| base.as_slice()[slot * points + index])
+            .collect();
+        for index in 0..points
+        {
+            let gradient = periodic_first_derivative(&field, &grid, index).expect("d1");
+            let difference = shifted[slot * points + index] - unshifted[slot * points + index];
+            worst = worst.max((difference - velocity * gradient).abs());
+            scale = scale.max((velocity * gradient).abs());
+        }
+    }
+
+    // The advection is genuinely present, not trivially zero.
+    assert!(
+        scale > 1.0e-4,
+        "advection scale is trivially small: {scale}"
+    );
+    // And it matches to rounding: a relative agreement of ~1e-16.
+    assert!(
+        worst < 1.0e-16 * scale.max(1.0) + 1.0e-17,
+        "advection residual {worst} against scale {scale}"
+    );
+}
+
+#[test]
+fn the_gamma_driver_matches_its_closed_form_on_flat_space() {
+    // On Minkowski with a spatially constant shift every gradient vanishes, so
+    // d_t Gammatilde^i is exactly zero and the driver decouples into two exact
+    // ODEs:
+    //
+    //   d_t B^i    = -eta B^i          =>  B(t)    = B0 exp(-eta t)
+    //   d_t beta^i = (3/4) B^i         =>  beta(t) = beta0 + (3/4)(B0/eta)(1 - exp(-eta t))
+    //
+    // a closed form with no free parameters.
+    let grid = unit_grid(16);
+    let eta = 2.0_f64;
+    let initial_driver = 0.4_f64;
+
+    let mut initial = BssnGridState::minkowski(grid);
+    for index in 0..grid.points()
+    {
+        initial.set_driver_at(index, &[initial_driver, 0.0, 0.0]);
+    }
+
+    let system =
+        BssnGridSystem::vacuum(grid).with_shift_condition(BssnShiftCondition::GammaDriver { eta });
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.005).expect("driver evolves");
+
+    for sample in &samples
+    {
+        let t = sample.time;
+        let expected_driver = initial_driver * (-eta * t).exp();
+        let expected_shift = 0.75 * (initial_driver / eta) * (1.0 - (-eta * t).exp());
+        for index in 0..grid.points()
+        {
+            let driver = sample.state.driver_at(index)[0];
+            let shift = sample.state.shift_at(index)[0];
+            // RK4 at this step size resolves a decay rate of 2 to far better
+            // than 1e-9; the bound is the integrator's accuracy, not a fudge.
+            assert!(
+                (driver - expected_driver).abs() < 1.0e-9,
+                "B at t = {t}: {driver} vs {expected_driver}"
+            );
+            assert!(
+                (shift - expected_shift).abs() < 1.0e-9,
+                "beta at t = {t}: {shift} vs {expected_shift}"
+            );
+        }
+    }
+
+    // The transverse components were never excited and must stay exactly zero.
+    let last = samples.last().expect("final");
+    for index in 0..grid.points()
+    {
+        assert_eq!(last.state.shift_at(index)[1], 0.0);
+        assert_eq!(last.state.shift_at(index)[2], 0.0);
+    }
+}
+
+#[test]
+fn the_gamma_driver_leaves_minkowski_exactly_stationary() {
+    // Flat space has Gammatilde^i = 0 and d_t Gammatilde^i = 0, so with B = 0
+    // and beta = 0 the driver produces exactly nothing. Enabling the full
+    // moving-puncture gauge must not disturb the vacuum solution at all.
+    let grid = unit_grid(16);
+    let initial = BssnGridState::minkowski(grid);
+    let system = BssnGridSystem::vacuum(grid)
+        .with_slicing(BssnSlicing::OnePlusLog)
+        .with_shift_condition(BssnShiftCondition::GammaDriver { eta: 1.0 });
+    let samples = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.01).expect("evolution");
+    for sample in &samples
+    {
+        assert_eq!(
+            sample.state.as_slice(),
+            initial.as_slice(),
+            "moving-puncture gauge disturbed Minkowski at t = {}",
+            sample.time
+        );
+    }
+}
+
+#[test]
+fn shift_conditions_default_to_prescribed_and_reject_negative_damping() {
+    let grid = unit_grid(16);
+    // A live shift is never enabled implicitly.
+    assert_eq!(
+        BssnGridSystem::vacuum(grid).shift_condition(),
+        BssnShiftCondition::Prescribed
+    );
+
+    // A prescribed shift is frozen bit-for-bit, driver included.
+    let mut initial = BssnGridState::minkowski(grid);
+    for index in 0..grid.points()
+    {
+        initial.set_shift_at(index, &[0.2, 0.0, 0.0]);
+        initial.set_driver_at(index, &[0.5, 0.0, 0.0]);
+    }
+    let samples = evolve_bssn_grid(&BssnGridSystem::vacuum(grid), &initial, 0.0, 0.2, 0.01)
+        .expect("evolution");
+    let last = samples.last().expect("final");
+    for index in 0..grid.points()
+    {
+        assert_eq!(last.state.shift_at(index), [0.2, 0.0, 0.0]);
+        assert_eq!(last.state.driver_at(index), [0.5, 0.0, 0.0]);
+    }
+
+    // A negative damping rate would amplify the drift the driver exists to
+    // suppress, so it is refused rather than accepted.
+    let bad = BssnGridSystem::vacuum(grid)
+        .with_shift_condition(BssnShiftCondition::GammaDriver { eta: -1.0 });
+    assert!(evolve_bssn_grid(&bad, &initial, 0.0, 0.1, 0.01).is_err());
+    let nan = BssnGridSystem::vacuum(grid)
+        .with_shift_condition(BssnShiftCondition::GammaDriver { eta: f64::NAN });
+    assert!(evolve_bssn_grid(&nan, &initial, 0.0, 0.1, 0.01).is_err());
 }
