@@ -266,8 +266,9 @@ Layer 3 — Numerical Relativity:
   observed order 1.97/1.99/2.00, a linearized transverse-traceless wave
   converging at 1.96/1.99/2.00, RK4 temporal refinement at 4.00/4.00/3.99, a
   Courant sweep, a Kreiss-Oliger dissipation sweep, an off-constraint state, and
-  rejected configurations. **The headline result is negative**: the pipeline is
-  second-order accurate but the discretisation is *unstable* — `N >= 64` fails at
-  every Courant factor tested, with an onset time independent of the timestep
-  that halves as the resolution doubles, and dissipation does not cure it. See
+  rejected configurations. Stable across every resolution tested, with a genuine
+  resolution-independent Courant boundary (`C <= 1` accepted, `C = 2` rejected at
+  both `N = 64` and `N = 128`). That required writing `Rtilde_ij` in genuine BSSN
+  form using the evolved `Gammatilde^k`; the generic metric Ricci leaves ADM\'s
+  weakly hyperbolic principal part wearing BSSN variables and is unstable. See
   [`docs/LAYER_3_BSSN_PERIODIC_1D.md`](../../docs/LAYER_3_BSSN_PERIODIC_1D.md).

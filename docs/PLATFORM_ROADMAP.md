@@ -64,7 +64,7 @@ headers. Blurring these categories is treated as a defect.
 |------|-------|--------|
 | 1 — Geometry Core | manifolds, metrics, tetrads, connections, curvature tensors, geodesics, parallel transport, bitensors, world function, geometry diagnostics | **partially delivered** (see below) |
 | 2 — Covariant Gravity Workbench | symbolic actions, variational calculus, automatic field-equation derivation, weak-field / PPN / cosmological limits, stability & ghost checks | near-term slices delivered: linearized gravity, PPN `gamma`/`beta`, Einstein–Hilbert action variation, and 3+1 (ADM) kinematics ([`LAYER_2_COVARIANT_GRAVITY.md`](LAYER_2_COVARIANT_GRAVITY.md), [`LAYER_2_PPN.md`](LAYER_2_PPN.md), [`LAYER_2_ACTION_VARIATION.md`](LAYER_2_ACTION_VARIATION.md), [`LAYER_2_ADM.md`](LAYER_2_ADM.md)); bridges to Layer 3 |
-| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last being second-order accurate but **measurably unstable**; a derivative-injecting refactor and live gauge are next |
+| 3 — Numerical Relativity | linear perturbations, self-force, EMRI; then ADM/BSSN, constraint damping, AMR, wave extraction | **opening**: ADM constraint and evolution core ([`LAYER_3_ADM_EVOLUTION.md`](LAYER_3_ADM_EVOLUTION.md)), homogeneous ADM time evolution ([`LAYER_3_HOMOGENEOUS_EVOLUTION.md`](LAYER_3_HOMOGENEOUS_EVOLUTION.md)), the BSSN formulation core ([`LAYER_3_BSSN.md`](LAYER_3_BSSN.md)), and a periodic 1D BSSN grid ([`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)) delivered — the last stable across every resolution tested once `Rtilde_ij` was written in genuine BSSN form; live gauge is next |
 | 4 — Gravitational Memory Lab | standard / Christodoulou / fractional memory, observer and detector response | partially explored in the experimental worldline layer (phenomenological) |
 | 5 — Astrophysical Inference | waveform generation, noise models, likelihood, MCMC / nested sampling, matched filtering | planned |
 | 6 — Relativistic Navigation | proper time, Shapiro delay, redshift, GNSS corrections, filtering across Earth/Moon/Mars/Sun/deep space | planned |
@@ -407,19 +407,26 @@ truncation error with an error model; short-time wave propagation converges at
 **1.96 / 1.99 / 2.00**; and RK4 retains **4.00 / 4.00 / 3.99** against a fixed
 spatial operator.
 
-But the evolution is **not stable**, and that is reported rather than hidden.
-Reusing Layer 3.3's nested finite differences forces every spatial operator onto
-a `2 dx` stencil whose second-difference symbol `2 cos(2 theta) - 2` vanishes at
-the Nyquist mode, leaving the highest grid frequency in the null space of the
-principal part. `N = 32` survives to `t = 1` at every Courant factor from `0.1`
-to `2.0`; `N = 64` and `N = 128` fail at **every** Courant factor, with an onset
-time independent of the timestep that roughly halves as the resolution doubles.
-Explicit Kreiss-Oliger dissipation — implemented, disabled by default — does not
-cure it: at `N = 128` it moves the onset only from `t = 0.50` to `t = 0.60`, and
-at `N = 64` the coefficient that averts the abort inflates the physical wave
-amplitude by `2.3e3`. **Dissipation is not used anywhere to make a result look
-better than it is.** The principled fix — a derivative-injecting entry point in
-`bssn.rs` removing the `2 dx` span — is the recommended next increment.
+Getting there required a correction worth recording. The first revision reused
+Layer 3.3's `conformal_ricci` unchanged — which computes the *generic* Ricci
+tensor of `gammatilde_ij` and never reads `Gammatilde^i` — and inherited its
+`d_t Gammatilde^i = 0`. That is BSSN *variables* carrying ADM's *principal
+part*, and it behaved exactly like weakly hyperbolic ADM: `N >= 64` blew up
+before `t = 1` at every Courant factor, worse under refinement, and dissipation
+could not cure it. The failure was first attributed to stencil width; the
+connection constraint's **resolution-independent** growth disproved that, and
+supplying `d_t Gammatilde^i` alone did not help either — because the Ricci
+tensor never read it.
+
+The fix is to write `Rtilde_ij` in genuine BSSN form, where
+`gammatilde_{k(i} d_{j)} Gammatilde^k` carries the evolved connection and
+removes the mixed second derivatives from the principal part, *and* to supply
+the deferred `d_t Gammatilde^i` equation. Both are needed. Afterwards every
+resolution from `N = 32` to `N = 256` reaches `t = 4` with the error decreasing
+under refinement, the Courant boundary is a genuine resolution-**independent**
+`C <= 1`, and dissipation becomes a no-op. **Stability here is measured, not
+proven** — strong hyperbolicity is an analytic property of the continuum system
+and nothing here establishes it. Live gauge is the next increment.
 
 ## What this platform will not do
 

@@ -79,11 +79,15 @@
 //!   A **1D3V** reduction — one spatially varying coordinate, full 3x3 tensors —
 //!   **not** a three-dimensional numerical-relativity solver. The pipeline is
 //!   second-order accurate (Minkowski exactly stationary; conformal Ricci and
-//!   wave propagation both converging at order 2; RK4 retaining order 4), but
-//!   the discretisation obtained by reusing Layer 3.3's nested differences is
-//!   **measurably unstable** — its `2 dx` stencil leaves the Nyquist mode in the
-//!   null space of the principal part — and explicit dissipation does not cure
-//!   it. Reported, not concealed.
+//!   wave propagation both converging at order 2; RK4 retaining order 4) and
+//!   stable across every resolution tested, with a resolution-independent
+//!   Courant boundary. Stability required writing `Rtilde_ij` in **genuine BSSN
+//!   form** — carrying the evolved `Gammatilde^k`, which removes the mixed
+//!   second derivatives from the principal part — and supplying the
+//!   `d_t Gammatilde^i` equation Layer 3.3 deferred. Using the generic metric
+//!   Ricci instead leaves ADM's weakly hyperbolic principal part wearing BSSN
+//!   variables, and is measurably unstable. Stability here is **measured, not
+//!   proven**.
 //!
 //! The crate does not assume that fractional calculus modifies general
 //! relativity. Such models, if added later, must be exposed explicitly as
@@ -139,7 +143,7 @@ mod static_spherical;
 mod synge;
 mod tetrad;
 
-pub use connection::{Connection, numerical_christoffel};
+pub use connection::{Connection, christoffel_from_derivatives, numerical_christoffel};
 pub use covariant_transport::{
     transport_covariant_tensor_along_polyline, transport_covariant_tensor_along_segment,
     transport_covector_along_polyline, transport_covector_along_segment,

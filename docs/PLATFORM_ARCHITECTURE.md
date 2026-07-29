@@ -140,9 +140,13 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   `scirust_sim::System`, `bssn_grid_constraints`, `bssn_grid_ricci_report`,
   opt-in grid projections, and an opt-in `kreiss_oliger_term` (off by default).
   Carries a typed `BssnGridError` with time, grid index, field, and category.
-  **The pipeline is second-order accurate but the discretisation is measurably
-  unstable** — see `docs/LAYER_3_BSSN_PERIODIC_1D.md` §13. 1D3V only: one
-  spatially varying coordinate, not a 3D solver.
+  `Rtilde_ij` is written in **genuine BSSN form** (`bssn::conformal_ricci_from_derivatives`)
+  carrying the evolved `Gammatilde^k`, with `bssn::bssn_connection_rhs` supplying
+  the `d_t Gammatilde^i` equation Layer 3.3 deferred — together these remove the
+  mixed second derivatives from the principal part. Using the generic metric
+  Ricci instead is measurably unstable; see `docs/LAYER_3_BSSN_PERIODIC_1D.md`
+  §13. Stability is **measured, not proven**. 1D3V only: one spatially varying
+  coordinate, not a 3D solver.
 - **Backgrounds:** `Minkowski`, `MinkowskiSpherical`, `Schwarzschild`,
   `IsotropicSchwarzschild`, `ReissnerNordstrom`, `Kerr`, `DeSitter`,
   `AntiDeSitter`, and `Flrw<S: ScaleFactor>` (spatially flat cosmology, generic
@@ -274,7 +278,7 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 206 across twenty-three integration-test files (curvature, geometry,
+- **Tests:** 209 across twenty-three integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
@@ -507,8 +511,9 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   self-force, **any spatial grid**, live gauge, and therefore any inhomogeneous
   evolution, and its fourth — **BSSN on a periodic 1D grid** (the `grid1d` and
   `bssn_grid` modules: periodic finite differences, a grid-backed derivative
-  provider, and method-of-lines RK4), which is second-order accurate but
-  **measurably unstable** and says so. Implementing BSSN does not by itself establish strong
+  provider, and method-of-lines RK4), second-order accurate and stable across
+  every resolution tested once `Rtilde_ij` was written in genuine BSSN form.
+  Implementing BSSN does not by itself establish strong
   hyperbolicity. `scirust-sim` still lacks the dense output, event detection,
   and constraint-preserving/projection integration that a full evolution code
   needs.
@@ -569,9 +574,9 @@ Additive, each validated against an oracle, each one PR:
     radiation solutions) and the **BSSN formulation core** (the `bssn` module,
     `docs/LAYER_3_BSSN.md`) and the **periodic 1D BSSN grid**
     (`grid1d` + `bssn_grid`, `docs/LAYER_3_BSSN_PERIODIC_1D.md`) are *done* — the
-    last with a measured instability traced to the reused `2 dx` stencil. Next: a
-    derivative-injecting entry point in `bssn.rs` to remove that `2 dx` span, then
-    the live gauge conditions a practical BSSN evolution requires.
+    last stable once `Rtilde_ij` was written in genuine BSSN form using the
+    evolved `Gammatilde^k`. Next: the live gauge conditions a practical BSSN
+    evolution requires.
 
 Layers 2–6 open only after Layer 1 is broad and solid, each with a design note
 fixing its oracles and category labels before code lands.

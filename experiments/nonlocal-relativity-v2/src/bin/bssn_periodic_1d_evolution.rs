@@ -3,10 +3,12 @@
 //! Deterministic: no RNG, no wall clock, no parallelism. Identical inputs give
 //! byte-identical output.
 //!
-//! The headline result is **negative and deliberate**: the pipeline is
-//! second-order accurate but the discretisation obtained by reusing Layer 3.3's
-//! nested finite differences is *unstable*, and explicit dissipation does not
-//! cure it. Both are measured here rather than asserted.
+//! The system is written in genuine BSSN form: `Rtilde_ij` uses the evolved
+//! `Gammatilde^k`, so the mixed second derivatives leave the principal part.
+//! An earlier revision computed `Rtilde_ij` generically and froze
+//! `Gammatilde^i`, which was BSSN variables carrying the ADM principal part and
+//! was correspondingly unstable; the courant_study section now shows a genuine,
+//! resolution-independent CFL boundary instead.
 
 use scirust_relativity::Metric;
 use scirust_relativity::adm_evolution::{AdmSources, SpatialTensorField};
@@ -103,9 +105,9 @@ fn main() {
     println!("# gauge: prescribed alpha = 1, beta^i = 0; gauge is NOT evolved");
     println!("# determinism: no RNG, no wall clock; identical inputs give identical output");
     println!(
-        "# NOTE: the pipeline is second-order ACCURATE but the reused nested stencil is\
-         \n#   UNSTABLE; see the courant_study and dissipation sections. Nothing here\
-         \n#   demonstrates strong hyperbolicity, and no such claim is made."
+        "# NOTE: Rtilde_ij is written in genuine BSSN form using the EVOLVED Gammatilde^k.\
+         \n#   Nothing here demonstrates strong hyperbolicity -- that is an analytic\
+         \n#   property of the continuum system -- and no such claim is made."
     );
 
     // -----------------------------------------------------------------------
@@ -300,9 +302,11 @@ fn main() {
 
     // -----------------------------------------------------------------------
     println!("# courant study: EMPIRICAL characterisation, not a derived CFL bound.");
-    println!("#   The blow-up is NOT governed by the timestep: it persists at every Courant");
-    println!("#   factor and its onset time roughly HALVES as the resolution doubles, which");
-    println!("#   is the signature of an unstable spatial operator, not a CFL violation.");
+    println!("#   The tested stable interval is C <= 1 and the first rejected value is C = 2,");
+    println!("#   at BOTH N = 64 and N = 128 -- a resolution-INDEPENDENT boundary, which is");
+    println!("#   what a genuine CFL limit looks like. (N = 32 tolerates C = 2 with a visibly");
+    println!("#   degraded error, so the boundary is not sharp at very coarse resolution.)");
+    println!("#   No rigorous CFL bound is derived, and none is claimed.");
     println!("scenario,resolution,courant,timestep,final_time,metric_linf,status,failure_mode");
     for &points in &[32_usize, 64, 128]
     {
@@ -344,8 +348,10 @@ fn main() {
         "#   Q f_i = -(sigma / 16 dx)( f_{{i+2}} - 4 f_{{i+1}} + 6 f_i - 4 f_{{i-1}} + f_{{i-2}} )."
     );
     println!("#   This is numerical dissipation on the evolved variables. It is NOT");
-    println!("#   constraint damping. It does not cure the instability -- it delays it, and");
-    println!("#   where it averts the abort it grossly inflates the physical amplitude.");
+    println!("#   constraint damping. With the BSSN principal part in place there is no");
+    println!("#   high-frequency growth left for it to act on, so it is very nearly a");
+    println!("#   no-op: the amplitude ratio is unchanged across sigma. It remains off by");
+    println!("#   default and is reported rather than relied upon.");
     println!(
         "scenario,resolution,sigma,final_time,metric_linf,measured_amplitude,\
          exact_amplitude,amplitude_ratio,status"
@@ -527,15 +533,18 @@ fn main() {
         );
     }
 
-    println!("# interpretation: the derivative stack and the pointwise BSSN assembly are");
-    println!("#   second-order accurate -- the conformal Ricci reconstruction converges at");
-    println!("#   order 2 and short-time wave propagation does too, while RK4 retains its");
-    println!("#   fourth order against a fixed spatial operator. Minkowski is exactly");
-    println!("#   stationary. But the evolution is NOT stable: reusing Layer 3.3's nested");
-    println!("#   differences forces every spatial operator onto a 2 dx stencil whose");
-    println!("#   second-difference symbol 2 cos(2 theta) - 2 vanishes at the Nyquist mode,");
-    println!("#   leaving the highest grid frequency in the null space of the principal");
-    println!("#   part. Refining the grid makes it worse, and dissipation does not cure it.");
-    println!("#   No claim of strong hyperbolicity, and no black holes, punctures, live");
-    println!("#   gauge, AMR, waveform extraction, or observational validation appear here.");
+    println!("# interpretation: the derivative stack, the pointwise BSSN assembly, and the");
+    println!("#   evolution are all second-order accurate -- the conformal Ricci");
+    println!("#   reconstruction and short-time wave propagation both converge at order 2,");
+    println!("#   while RK4 retains its fourth order against a fixed spatial operator, and");
+    println!("#   Minkowski is exactly stationary. The evolution is stable across every");
+    println!("#   resolution tested for C <= 1, with a resolution-independent boundary at");
+    println!("#   C = 2. This required writing Rtilde_ij in genuine BSSN form -- carrying");
+    println!("#   the EVOLVED Gammatilde^k, which removes the mixed second derivatives from");
+    println!("#   the principal part -- and supplying the d_t Gammatilde^i equation. Using");
+    println!("#   the generic metric Ricci instead leaves ADM\'s weakly hyperbolic principal");
+    println!("#   part wearing BSSN variables, and is unstable. Stability here is measured,");
+    println!("#   not proven: strong hyperbolicity is an analytic property of the continuum");
+    println!("#   system and nothing in this file establishes it. No black holes, punctures,");
+    println!("#   live gauge, AMR, waveform extraction, or observational validation appear.");
 }

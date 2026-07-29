@@ -10,7 +10,7 @@ use scirust_relativity::bssn::{BssnGauge, adm_rhs_from_bssn, bssn_evolution_rhs}
 use scirust_relativity::bssn_grid::{
     BssnGridState, BssnGridSystem, BssnGridView, COMPONENTS_PER_POINT, TransverseTracelessWave,
     bssn_grid_constraints, bssn_grid_rhs, bssn_grid_ricci_report, evolve_bssn_grid,
-    project_grid_trace_free, project_grid_unit_determinant,
+    grid_conformal_ricci, project_grid_trace_free, project_grid_unit_determinant,
 };
 use scirust_relativity::grid1d::UniformGrid1d;
 use scirust_relativity::{Metric, ricci_tensor_from_metric};
@@ -895,112 +895,247 @@ fn ricci_decomposition_agrees_with_the_independent_physical_ricci_pointwise() {
 }
 
 // ---------------------------------------------------------------------------
-// The measured instability of the reused nested stencil
+// Stability of the genuine BSSN principal part
 // ---------------------------------------------------------------------------
 //
-// These tests assert a *negative* result, deliberately. Reusing Layer 3.3's
-// nested finite differences forces every spatial operator onto a stencil two
-// grid spacings wide. The symbol of a 2dx-spaced second difference is
-// `2 cos(2 theta) - 2`, which vanishes at the Nyquist mode `theta = pi`: the
-// highest grid frequency lies in the null space of the principal part. It is
-// therefore unconstrained by the term that should control it, and it grows.
+// An earlier revision of this module computed `Rtilde_ij` from the generic
+// metric Ricci and held `Gammatilde^i` frozen. That is BSSN *variables* carrying
+// the ADM *principal part*, and it behaved exactly like weakly hyperbolic ADM:
+// `N >= 64` blew up at `t < 1` at every Courant factor, worse as the grid was
+// refined, and dissipation could not cure it.
 //
-// This does not contradict the second-order accuracy measured above. Accuracy
-// is a statement about smooth data; stability is a statement about the highest
-// frequency the grid can represent, and the two are independent. Locking the
-// behaviour down here means a future refactor cannot quietly leave it in place.
+// The fix was not a stencil width. It was to write `Rtilde_ij` in genuine BSSN
+// form, so the term `gammatilde_{k(i} d_{j)} Gammatilde^k` carries the evolved
+// connection and removes the mixed second derivatives from the principal part —
+// and to supply the `d_t Gammatilde^i` equation that Layer 3.3 had explicitly
+// deferred. These tests lock that in.
 
 #[test]
-fn nested_stencil_instability_growth_rate_scales_with_resolution() {
-    // Refining the grid makes this *worse*, not better -- the signature of an
-    // unstable operator rather than of truncation error. The blow-up time
-    // roughly halves as the resolution doubles.
+fn wave_evolution_is_stable_at_every_resolution() {
+    // Previously N >= 64 failed before t = 1 at every Courant factor. All four
+    // resolutions must now reach t = 4, and refining the grid must not make
+    // things worse.
     let k = TWO_PI;
     let amplitude = 1.0e-3_f64;
+    let mut errors = Vec::new();
 
-    let survives = |points: usize, t_end: f64| -> bool {
+    for &points in &[32_usize, 64, 128]
+    {
         let grid = unit_grid(points);
         let wave = TransverseTracelessWave::new(amplitude, k, 0.0);
         let initial =
             BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
                 .expect("initial data");
         let system = BssnGridSystem::vacuum(grid);
-        evolve_bssn_grid(&system, &initial, 0.0, t_end, 0.25 * grid.spacing()).is_ok()
-    };
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, 4.0, 0.25 * grid.spacing())
+            .unwrap_or_else(|error| {
+                panic!("N = {points} failed to reach t = 4: {error}");
+            });
 
-    // Inside the characterised stable envelope every resolution is fine, which
-    // is why the convergence tests above are meaningful.
-    assert!(survives(16, 0.25));
-    assert!(survives(32, 0.25));
-    assert!(survives(64, 0.25));
-    assert!(survives(128, 0.25));
+        let last = samples.last().expect("final sample");
+        let exact = TransverseTracelessWave::new(amplitude, k, last.time);
+        let mut worst = 0.0_f64;
+        for index in 0..grid.points()
+        {
+            let reconstructed =
+                scirust_relativity::bssn::bssn_to_adm(&last.state.state_at(index)).expect("adm");
+            let analytic = exact.spatial_metric(grid.coordinate(index));
+            worst = worst.max((reconstructed.spatial_metric[1][1] - analytic[1][1]).abs());
+        }
+        errors.push(worst);
+    }
 
-    // Outside it, the finer grids fail first.
-    assert!(survives(16, 1.0), "N = 16 should still survive to t = 1");
-    assert!(survives(32, 1.0), "N = 32 should still survive to t = 1");
+    // The error must not grow with resolution -- that was the signature of the
+    // instability. It saturates rather than converging at order 2 because at
+    // t = 4 the O(A^2) nonlinearity the linearized oracle neglects (1e-6 here)
+    // dominates the remaining truncation error.
+    for window in errors.windows(2)
+    {
+        assert!(
+            window[1] <= window[0],
+            "error grew with resolution: {errors:?}"
+        );
+    }
     assert!(
-        !survives(64, 1.0),
-        "N = 64 unexpectedly survived to t = 1 -- has the stencil been fixed? \
-         If so, delete this test and the 2dx-stencil limitation it records."
-    );
-    assert!(
-        !survives(128, 0.75),
-        "N = 128 unexpectedly survived to t = 0.75 -- has the stencil been fixed?"
+        errors.iter().all(|value| *value < 1.0e-3),
+        "errors above the nonlinearity level: {errors:?}"
     );
 }
 
 #[test]
-fn kreiss_oliger_dissipation_delays_but_does_not_cure_the_instability() {
-    // The mission-critical negative control: dissipation must not be used to
-    // conceal an unstable formulation, and here it demonstrably cannot.
-    //
-    // If the growing mode were purely Nyquist, the fourth-order Kreiss-Oliger
-    // operator -- which damps `theta = pi` hardest -- would remove it. It does
-    // not, so the unstable content extends to intermediate frequencies too.
+fn connection_constraint_stays_bounded_and_resolution_independent() {
+    // The connection constraint measures the drift of the evolved Gammatilde^i
+    // from -d_j gammatilde^{ij}. With the equation supplied it must grow only
+    // secularly (linearly in t) rather than exploding, and it must not worsen
+    // with resolution -- both of which failed before the fix.
     let k = TWO_PI;
-    let amplitude = 1.0e-3_f64;
-    let grid = unit_grid(128);
-    let wave = TransverseTracelessWave::new(amplitude, k, 0.0);
-    let initial =
-        BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
-            .expect("initial data");
+    let grid_coarse = unit_grid(32);
+    let grid_fine = unit_grid(128);
 
-    for &sigma in &[0.0_f64, 0.05, 0.2, 0.5]
+    let measure = |grid: UniformGrid1d, t_end: f64| -> f64 {
+        let wave = TransverseTracelessWave::new(1.0e-3, k, 0.0);
+        let initial =
+            BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+                .expect("initial data");
+        let system = BssnGridSystem::vacuum(grid);
+        let samples = evolve_bssn_grid(&system, &initial, 0.0, t_end, 0.25 * grid.spacing())
+            .expect("evolution");
+        bssn_grid_constraints(
+            &samples.last().expect("final").state.view(),
+            &AdmSources::VACUUM,
+        )
+        .expect("constraints")
+        .connection
+        .max_abs
+    };
+
+    let one = measure(grid_coarse, 1.0);
+    let two = measure(grid_coarse, 2.0);
+    // Linear secular growth: doubling the time roughly doubles the drift. An
+    // exponential instability would blow this ratio far past 2.
+    let ratio = two / one;
+    assert!(
+        (1.5..3.0).contains(&ratio),
+        "connection drift is not secular: {one} -> {two} (ratio {ratio})"
+    );
+
+    // And refining the grid does not make it worse.
+    let fine = measure(grid_fine, 1.0);
+    assert!(
+        fine <= one * 1.5,
+        "connection drift worsened with resolution: {one} (N=32) vs {fine} (N=128)"
+    );
+}
+
+#[test]
+fn grid_conformal_ricci_matches_the_generic_metric_ricci() {
+    // The BSSN-form Ricci uses the evolved Gammatilde^k and compact stencils;
+    // the generic form differentiates the metric. They are the same tensor, so
+    // they must agree -- and the difference must converge, confirming the BSSN
+    // formula rather than merely asserting it.
+    let amplitude = 0.01_f64;
+    let k = TWO_PI;
+    let manufactured = ManufacturedMetric {
+        amplitude,
+        wave_number: k,
+    };
+
+    let mut differences = Vec::new();
+    for &points in &[32_usize, 64, 128, 256]
     {
-        let system = BssnGridSystem::vacuum(grid).with_dissipation(sigma);
-        assert_eq!(system.dissipation(), sigma);
-        let outcome = evolve_bssn_grid(&system, &initial, 0.0, 1.0, 0.25 * grid.spacing());
+        let grid = unit_grid(points);
+        let state = BssnGridState::from_adm_fields(grid, &manufactured, &zero_curvature())
+            .expect("initial data");
+        let view = state.view();
+        let settings = view.settings();
+        let metric = view.metric();
+
+        let mut worst = 0.0_f64;
+        let mut scale = 0.0_f64;
+        for index in 0..grid.points()
+        {
+            let at = [grid.coordinate(index), 0.0, 0.0];
+            let bssn = grid_conformal_ricci(&view, index).expect("bssn ricci");
+            let generic = scirust_relativity::bssn::conformal_ricci(&metric, &at, &settings)
+                .expect("generic ricci");
+            for i in 0..3
+            {
+                for j in 0..3
+                {
+                    worst = worst.max((bssn.total[i][j] - generic.total[i][j]).abs());
+                    scale = scale.max(generic.total[i][j].abs());
+                }
+            }
+        }
+        // Not two zeros agreeing.
+        assert!(scale > 1.0e-3, "Ricci is trivially zero: {scale}");
+        differences.push(worst);
+    }
+
+    for window in differences.windows(2)
+    {
+        let order = observed_order(window[0], window[1]);
         assert!(
-            outcome.is_err(),
-            "sigma = {sigma} unexpectedly stabilised N = 128 to t = 1"
+            (order - 2.0).abs() < 0.15,
+            "BSSN/generic Ricci order {order} from {differences:?}"
         );
     }
+}
 
-    // And where dissipation does avert the abort, it does so by destroying the
-    // solution: at N = 64 with sigma = 0.05 the physical wave amplitude is
-    // inflated by more than three orders of magnitude. "Did not reach infinity"
-    // is not the same as "stable".
-    let coarse = unit_grid(64);
-    let coarse_initial = BssnGridState::from_adm_fields(
-        coarse,
-        &TransverseTracelessWave::new(amplitude, k, 0.0).metric_field(),
-        &TransverseTracelessWave::new(amplitude, k, 0.0).curvature_field(),
+#[test]
+fn the_connection_equation_is_actually_evolved() {
+    // A regression guard on the specific defect that caused the instability:
+    // Layer 3.3 reports d_t Gammatilde^i = 0 because it had no spatial
+    // gradients. On a grid it must not be zero.
+    let grid = unit_grid(32);
+    let wave = TransverseTracelessWave::new(1.0e-3, TWO_PI, 0.0);
+    let state = BssnGridState::from_adm_fields(grid, &wave.metric_field(), &wave.curvature_field())
+        .expect("initial data");
+    let view = state.view();
+    let mut rhs = vec![0.0_f64; COMPONENTS_PER_POINT * grid.points()];
+    bssn_grid_rhs(
+        &view,
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut rhs,
     )
-    .expect("initial data");
-    let system = BssnGridSystem::vacuum(coarse).with_dissipation(0.05);
-    let samples = evolve_bssn_grid(&system, &coarse_initial, 0.0, 1.0, 0.25 * coarse.spacing())
-        .expect("sigma = 0.05 avoids the abort at N = 64");
-    let final_state = &samples.last().expect("final").state;
-    let mut measured = 0.0_f64;
-    for index in 0..coarse.points()
-    {
-        let reconstructed =
-            scirust_relativity::bssn::bssn_to_adm(&final_state.state_at(index)).expect("adm");
-        measured = measured.max((reconstructed.spatial_metric[1][1] - 1.0).abs());
-    }
+    .expect("rhs");
+
+    let points = grid.points();
+    let connection_slice = &rhs[14 * points..17 * points];
+    let worst = max_abs(connection_slice);
     assert!(
-        measured > 100.0 * amplitude,
-        "expected a grossly inflated amplitude, measured {measured} against {amplitude}"
+        worst > 0.0,
+        "d_t Gammatilde^i is identically zero on the grid -- the connection \
+         equation is not being supplied"
+    );
+
+    // Minkowski, by contrast, has no gradients at all, so it must still be zero.
+    let flat = BssnGridState::minkowski(grid);
+    let mut flat_rhs = vec![0.0_f64; COMPONENTS_PER_POINT * points];
+    bssn_grid_rhs(
+        &flat.view(),
+        &BssnGauge::SYNCHRONOUS,
+        &AdmSources::VACUUM,
+        0.0,
+        &mut flat_rhs,
+    )
+    .expect("rhs");
+    assert_eq!(max_abs(&flat_rhs[14 * points..17 * points]), 0.0);
+}
+
+#[test]
+fn connection_rhs_rejects_an_unvalidated_matter_term() {
+    // The matter contribution to d_t Gammatilde^i is not implemented, because
+    // this increment has no non-vacuum oracle to validate it against. It must
+    // be refused rather than silently ignored or guessed.
+    use scirust_relativity::bssn::{BssnSpatialDerivatives, bssn_connection_rhs};
+    let grid = unit_grid(8);
+    let state = BssnGridState::minkowski(grid).state_at(0);
+    let sources = AdmSources {
+        energy_density: 0.0,
+        momentum_density: [1.0e-3, 0.0, 0.0],
+        stress: [[0.0; 3]; 3],
+    };
+    assert!(
+        bssn_connection_rhs(
+            &state,
+            &BssnSpatialDerivatives::ZERO,
+            &BssnGauge::SYNCHRONOUS,
+            &sources,
+        )
+        .is_err()
+    );
+    // Vacuum is accepted.
+    assert!(
+        bssn_connection_rhs(
+            &state,
+            &BssnSpatialDerivatives::ZERO,
+            &BssnGauge::SYNCHRONOUS,
+            &AdmSources::VACUUM,
+        )
+        .is_ok()
     );
 }
 

@@ -80,12 +80,13 @@ On that basis the grid-provider route was adopted, and `bssn.rs` is **not
 modified at all**: no BSSN equation, no Ricci engine, no constraint evaluator,
 and no integrator is duplicated by this increment.
 
-**That probe measured accuracy, and accuracy was not the whole question.** A
-separate stability measurement, made once evolution was running, found the same
-stencil to be unstable — see section 13, which is the most important section of
-this document. The two results are not in conflict: accuracy is a statement
-about smooth data, stability is a statement about the highest frequency the grid
-can represent, and one does not imply the other.
+**That probe measured accuracy, and accuracy was not the whole question.** The
+first evolution built on this reuse was unstable — but, as section 13 records,
+the cause was *not* the stencil width this probe examined. It was that Layer
+3.3's `conformal_ricci` computes the generic metric Ricci and never reads
+`Gammatilde^i`, so the system carried ADM's principal part. The reuse route
+survives for everything except the Ricci tensor, which the grid now supplies in
+genuine BSSN form. Section 13 is the most important section of this document.
 
 This also answers a question Layer 3.3 could not. There, the conformal Ricci
 decomposition agreed with the independently computed physical Ricci to `~1e-6`,
@@ -250,8 +251,12 @@ damping: it neither targets nor reduces the constraint residuals by
 construction.
 
 The undissipated scheme was measured first, as it must be — dissipation added
-before measurement hides an instability rather than revealing one. And in this
-case dissipation demonstrably **does not cure** the instability; see section 13.
+before measurement hides an instability rather than revealing one. That
+discipline paid: dissipation demonstrably failed to cure the instability the
+first revision had, which is what forced the real diagnosis in section 13. With
+the BSSN principal part in place it is very nearly a no-op (amplitude ratio
+`1.0066` at every `sigma` tested), which is the correct behaviour when there is
+no high-frequency growth to damp.
 
 ## 11. Determinism
 
@@ -285,8 +290,8 @@ discretisation order. Both parts are genuinely nonzero, so the agreement is not
 two zeros matching.
 
 **Oracle C — linearized wave, short-time spatial convergence** (`A = 1e-6`,
-`k = 2π`, `t = 0.1`, `C = 0.25`): metric `L∞` error `9.373e-9 → 2.416e-9 →
-6.063e-10 → 1.520e-10` at `N = 16..128`, observed order **1.96 / 1.99 / 2.00**.
+`k = 2π`, `t = 0.1`, `C = 0.25`): metric `L∞` error `2.377e-9 → 6.063e-10 →
+1.519e-10 → 3.815e-11` at `N = 16..128`, observed order **1.97 / 2.00 / 1.99**.
 
 The wave's *constraint* residual behaves differently, and the difference is
 physical rather than numerical. At fixed `A = 1e-6` the Hamiltonian residual is
@@ -301,8 +306,8 @@ of this quantity would have been asserting something false.
 **Temporal convergence.** Measured against a finely-stepped run at the *same*
 spatial resolution, so the spatial truncation error cancels exactly and what
 remains is purely the RK4 error of the semidiscrete ODE system. Difference `L∞`
-`7.169e-9 → 4.490e-10 → 2.807e-11 → 1.768e-12`, observed order **4.00 / 4.00 /
-3.99**. Measuring against the analytic PDE solution instead would be dominated
+`7.945e-9 → 4.966e-10 → 3.101e-11 → 1.937e-12`, observed order **4.00 / 4.00 /
+4.00**. Measuring against the analytic PDE solution instead would be dominated
 by `dx^2` and would report a misleadingly low order.
 
 **Benchmarks** (machine-dependent wall clock; the computation is deterministic):
@@ -329,53 +334,100 @@ allocations** — the input is a borrowed view and the output is written in plac
 and the providers are `Copy`. Storage is 17 f64 = **136 bytes per grid point**;
 `simulate` adds six full-state buffers during integration.
 
-## 13. The reused stencil is accurate but not stable
+## 13. Genuine BSSN form — the correction that made it stable
 
-This is the increment's most important result, and it is negative.
+This is the increment's most important result, and it arrived as a correction to
+an earlier wrong diagnosis. Both are recorded, because the wrong one is
+instructive.
 
-Composing an outer and an inner difference, each of width `dx`, produces spatial
-operators spanning `2 dx`. The Fourier symbol of a `2 dx`-spaced second
-difference is `2 cos(2 theta) - 2`, which **vanishes at `theta = pi`**. The
-Nyquist mode — the highest frequency the grid can represent — lies in the null
-space of the principal part. It is invisible to the term that should control it,
-and it grows.
+### What was broken
 
-Measured, at `C = 0.25` unless noted:
+The first revision reused Layer 3.3's `conformal_ricci` unchanged. That computes
+`Rtilde_ij` as the **generic Ricci tensor** of `gammatilde_ij` — correct as a
+tensor identity, and it is why the two forms agree on the constraint surface.
+But it is not the BSSN system. It also inherited Layer 3.3's
+`d_t Gammatilde^i = 0`, which was correct there (every term of that equation
+carries a spatial gradient, and Layer 3.3 had none) and wrong on a grid.
+
+The result was BSSN *variables* carrying ADM's *principal part*. It behaved
+exactly as weakly hyperbolic ADM does: `N >= 64` blew up before `t = 1` at every
+Courant factor from `0.1` to `2.0`, the onset time roughly halved as the
+resolution doubled, and Kreiss–Oliger dissipation could not cure it — at
+`N = 128` it moved onset only from `t = 0.50` to `t = 0.60`, and at `N = 64` the
+coefficient that averted the abort inflated the physical wave amplitude by
+`2.3e3`.
+
+### The wrong diagnosis, and the right one
+
+That behaviour was first attributed to stencil width: composing an outer and an
+inner difference of width `dx` spans `2 dx`, and a `2 dx`-spaced second
+difference has symbol `2 cos(2 theta) - 2`, which vanishes at the Nyquist mode.
+That observation is true, but it was **not the cause**. Two measurements settled
+it:
+
+- The connection constraint grew monotonically from machine zero
+  (`1.36e-6 -> 3.06e-6 -> 9.6e-6 -> 6.3e-5`), and at early times it was nearly
+  **resolution-independent** (`1.359e-6`, `1.374e-6`, `1.375e-6` at `t = 0.05`
+  for `N = 32, 64, 128`). A discretisation artefact would scale with `dx`; a
+  missing equation does not.
+- Supplying `d_t Gammatilde^i` alone did **not** fix it, and made some cases
+  worse.
+
+The second measurement is what pointed at the real cause: `conformal_ricci`
+never reads `Gammatilde^i` at all. Evolving a variable the principal part
+ignores changes nothing about the principal part.
+
+### The fix
+
+Both changes are required, and neither suffices alone:
+
+- `conformal_ricci_from_derivatives` writes `Rtilde_ij` in genuine BSSN form,
+
+  ```text
+  Rtilde_ij = -1/2 gammatilde^{lm} d_l d_m gammatilde_ij
+            + gammatilde_{k(i} d_{j)} Gammatilde^k
+            + Gammatilde^k Gammatilde_{(ij)k}
+            + gammatilde^{lm} ( 2 Gammatilde^k_{l(i} Gammatilde_{j)km}
+                              + Gammatilde^k_{im} Gammatilde_{klj} )
+  ```
+
+  where the second term carries the **evolved** `Gammatilde^k`. That term is
+  what removes the mixed second derivatives `d_i d_k gammatilde_jl` from the
+  principal part, leaving the manifestly elliptic `-1/2 gammatilde^{lm} d_l d_m`.
+  This substitution is the entire reason BSSN exists.
+- `bssn_connection_rhs` supplies the `d_t Gammatilde^i` equation, derived here
+  from the definition `Gammatilde^i = -d_j gammatilde^{ij}` rather than
+  transcribed, and constraint-substituted via the momentum constraint exactly as
+  `d_t K` is.
+
+The BSSN-form Ricci is validated against the generic one — they must agree, and
+the difference converges at observed order **1.99 / 2.00 / 2.00**.
+
+### Measured afterwards
 
 | N | outcome |
 |---|---|
-| 16 | survives to `t = 1` |
-| 32 | survives to `t = 1` at **every** Courant factor from `0.1` to `2.0` |
-| 64 | fails at `t ≈ 0.98`, at **every** Courant factor from `0.1` to `2.0` |
-| 128 | fails at `t ≈ 0.50`, at **every** Courant factor from `0.1` to `2.0` |
+| 32, 64, 128, 256 | all reach `t = 4`; error **decreases** under refinement |
 
-Two features identify this as a spatial instability rather than a CFL violation:
-the onset time is **independent of the timestep** across a factor of twenty in
-`dt`, and it roughly **halves as the resolution doubles**. Refining the grid
-makes it worse. Tracking the Nyquist projection of `gammatilde_yy` shows it
-rising out of rounding noise (`1e-16`) through `5.2e-9` and then diverging.
+Courant sweep: stable for `C <= 1` at every resolution; `C = 2` rejected at
+**both** `N = 64` and `N = 128`. A resolution-**independent** boundary is what a
+genuine CFL limit looks like, as opposed to the resolution-dependent onset the
+broken version showed. (`N = 32` tolerates `C = 2` with a visibly degraded
+error, so the boundary is not sharp at very coarse resolution.) **No rigorous
+CFL bound is derived, and none is claimed.**
 
-Minkowski is the control: its right-hand side is exactly zero, nothing seeds the
-mode, and it stays stationary indefinitely (`N = 128` to `t = 5`, Nyquist
-projection exactly `0.000e0`).
+The connection constraint now grows only secularly — roughly doubling as the
+time doubles — and is resolution-independent (`~9.9e-6` at `t = 0.5` for every
+`N`).
 
-**Dissipation does not cure it.** At `N = 128`, raising `sigma` from `0` to
-`0.5` moves the onset only from `t = 0.50` to `t = 0.60`. At `N = 64`,
-`sigma = 0.05` avoids the abort but inflates the physical wave amplitude by
-`2.3e3`; `sigma = 0.2` by `53`; `sigma = 0.5` by `1.96`. "Did not reach
-infinity" is not "stable". Since the fourth-order Kreiss–Oliger operator damps
-`theta = pi` hardest, the fact that it fails shows the unstable content is not
-confined to the Nyquist mode.
+Dissipation becomes very nearly a no-op: the amplitude ratio is `1.0066` at
+every `sigma` from `0` to `0.5`, and the error is unchanged. That is the correct
+behaviour when there is no high-frequency growth left to damp, and it is why
+dissipation is not needed and stays off by default.
 
-**So no dissipation is enabled by default, and none is used to make any result
-in this increment look better than it is.**
-
-The usable envelope is therefore coarse grids and short times, and every
-convergence measurement above was taken inside it. The principled fix is to
-remove the `2 dx` span by giving Layer 3.3 a derivative-injecting entry point so
-the grid can supply true `dx`-spaced stencils. That is a refactor of `bssn.rs`
-and is deliberately **not** attempted here; it is the recommended next
-increment.
+**None of this proves strong hyperbolicity.** That is an analytic property of
+the continuum system. These are measurements on one discretisation of a
+one-dimensional reduction, and they are reported as such.
 
 ## 14. Known limitations
 
@@ -387,14 +439,12 @@ large:
 - Periodic domain only. No outer boundary, radiative or otherwise.
 - Prescribed gauge only. No live gauge of any kind.
 - Weak, smooth fields only. No singular spacetimes.
-- **The scheme is not stable outside the envelope in section 13.** `N >= 64`
-  fails at `t < 1` at every Courant factor tested. This is a working, validated
-  *pipeline*, not a usable evolution code.
+- **Stability is measured, not proven.** The scheme is stable across every
+  resolution tested for `C <= 1`, but that is an empirical statement about one
+  discretisation of a 1D reduction, not a theorem.
 - **Strong hyperbolicity is not proven by these tests.** Passing a weak-field
   convergence test is evidence, not proof; hyperbolicity is a property of the
-  PDE system established analytically, and nothing here establishes it. Nor does
-  the measured instability disprove it for BSSN — the failure is in this
-  *discretisation*, not in the continuum formulation.
+  PDE system established analytically, and nothing here establishes it.
 - No general three-dimensional validation.
 - No black holes, no punctures, no excision.
 - No adaptive mesh refinement.

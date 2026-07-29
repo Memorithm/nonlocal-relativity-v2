@@ -31,41 +31,43 @@
 //! No BSSN equation, no Ricci engine, no constraint evaluator, and no
 //! integrator is duplicated here.
 //!
-//! # The reused stencil is accurate but NOT stable
+//! # Genuine BSSN form, and why it matters
 //!
-//! This is the increment's central measured result, and it is negative.
+//! An earlier revision of this module reused Layer 3.3's [`conformal_ricci`]
+//! unchanged. That computes `Rtilde_ij` as the *generic* Ricci tensor of
+//! `gammatilde_ij` — correct as a tensor identity, but **not the BSSN system**.
+//! It also inherited Layer 3.3's `d_t Gammatilde^i = 0`, which was right there
+//! (every term carries a spatial gradient, and it had none) and wrong here.
 //!
-//! The reuse is genuinely **second-order accurate**: the conformal Ricci
-//! reconstruction converges at observed order 1.97 / 1.99 / 2.00, short-time
-//! wave propagation at 1.96 / 1.99 / 2.00, and RK4 retains fourth order
-//! (4.00 / 4.00 / 3.99) against a fixed spatial operator. Minkowski is exactly
-//! stationary to the last bit.
+//! The result was BSSN *variables* carrying ADM's *principal part*, and it
+//! behaved exactly like weakly hyperbolic ADM: `N >= 64` blew up before `t = 1`
+//! at every Courant factor, worse as the grid was refined, and Kreiss-Oliger
+//! dissipation could not cure it.
 //!
-//! But accuracy on smooth data says nothing about the highest frequency the
-//! grid can represent, and there the reuse fails. Composing an outer and an
-//! inner difference, each of width `dx`, produces spatial operators spanning
-//! `2 dx`. The symbol of a `2 dx`-spaced second difference is
-//! `2 cos(2 theta) - 2`, which **vanishes at the Nyquist mode** `theta = pi`:
-//! the highest grid frequency lies in the null space of the principal part, is
-//! unconstrained by the term that should control it, and grows.
+//! Two things fix it, and both are needed:
 //!
-//! Measured consequences, at Courant factor `0.25` on `[0, 1)`:
+//! - [`crate::bssn::conformal_ricci_from_derivatives`] writes `Rtilde_ij` in
+//!   BSSN form, so the term `gammatilde_{k(i} d_{j)} Gammatilde^k` carries the
+//!   **evolved** connection and removes the mixed second derivatives from the
+//!   principal part, leaving the manifestly elliptic
+//!   `-1/2 gammatilde^{lm} d_l d_m`.
+//! - [`crate::bssn::bssn_connection_rhs`] supplies the `d_t Gammatilde^i`
+//!   equation that Layer 3.3 explicitly deferred.
 //!
-//! - `N = 32` survives to `t = 1` at every Courant factor from `0.1` to `2.0`.
-//! - `N = 64` and `N = 128` fail at **every** Courant factor tested. The onset
-//!   time roughly halves as the resolution doubles (`t ~ 0.98` at `N = 64`,
-//!   `t ~ 0.50` at `N = 128`). Refining the grid makes it *worse*, which is the
-//!   signature of an unstable operator, not of truncation error.
-//! - Explicit Kreiss-Oliger dissipation does **not** cure it. At `N = 128` it
-//!   moves the onset from `t = 0.50` to only `t = 0.60` across `sigma` from `0`
-//!   to `0.5`; at `N = 64` the coefficient that averts the abort inflates the
-//!   physical wave amplitude by a factor of `2.3e3`.
+//! Evolving `Gammatilde^i` without the first change does not help, because the
+//! Ricci tensor never reads it.
 //!
-//! So the usable envelope is coarse grids and short times, and it is stated
-//! rather than papered over. The principled fix is to remove the `2 dx` span by
-//! giving Layer 3.3 a derivative-injecting entry point; that is a refactor of
-//! `bssn.rs`, deliberately not attempted here. See
-//! `docs/LAYER_3_BSSN_PERIODIC_1D.md`.
+//! Measured afterwards: every resolution from `N = 32` to `N = 256` reaches
+//! `t = 4` with the error *decreasing* under refinement; the connection
+//! constraint grows only secularly and is resolution-independent; and the
+//! Courant boundary is a genuine, resolution-independent `C <= 1` with `C = 2`
+//! rejected at both `N = 64` and `N = 128`. Dissipation becomes very nearly a
+//! no-op, which is the correct behaviour when there is no high-frequency growth
+//! to damp.
+//!
+//! **None of this proves strong hyperbolicity.** That is an analytic property of
+//! the continuum system; these are measurements on one discretisation of a
+//! one-dimensional reduction.
 //!
 //! # Flat state layout
 //!
@@ -126,8 +128,10 @@ use crate::adm_evolution::{
     hamiltonian_constraint, momentum_constraint,
 };
 use crate::bssn::{
-    BssnError, BssnGauge, BssnProjection, BssnState, adm_to_bssn, bssn_algebraic_constraints,
-    bssn_evolution_rhs, bssn_to_adm, conformal_ricci, project_trace_free, project_unit_determinant,
+    BssnConnectionRhs, BssnError, BssnGauge, BssnProjection, BssnSecondDerivatives,
+    BssnSpatialDerivatives, BssnState, ConformalRicci, adm_to_bssn, bssn_algebraic_constraints,
+    bssn_connection_rhs, bssn_evolution_rhs_with_ricci, bssn_to_adm, conformal_ricci,
+    conformal_ricci_from_derivatives, project_trace_free, project_unit_determinant,
 };
 use crate::grid1d::{Grid1dError, GridReduction, UniformGrid1d};
 
@@ -701,6 +705,136 @@ impl SpatialTensorField for GridCurvature<'_, '_> {
 // Right-hand side
 // ---------------------------------------------------------------------------
 
+/// The centred periodic first difference of one component array at `index`.
+///
+/// Compact: it samples `i-1` and `i+1` only, so the stencil is one grid spacing
+/// wide. This is what makes the connection evolution well-behaved where the
+/// nested coordinate-sampled path is not.
+fn component_gradient(view: &BssnGridView<'_>, slot: usize, index: usize) -> f64 {
+    let points = view.grid.points();
+    let base = slot * points;
+    let left = view.components[base + view.grid.offset(index, -1)];
+    let right = view.components[base + view.grid.offset(index, 1)];
+    (right - left) / (2.0 * view.grid.spacing())
+}
+
+/// The spatial gradients at `index`, taken with compact stencils on the stored
+/// component arrays.
+///
+/// **1D3V**: only the `x` gradient can be non-zero. The `y` and `z` entries are
+/// exactly zero because the grid has no extent in those directions — a
+/// structural fact, not an approximation.
+#[must_use]
+pub fn grid_spatial_derivatives(view: &BssnGridView<'_>, index: usize) -> BssnSpatialDerivatives {
+    let mut conformal_metric_gradient = [[[0.0_f64; 3]; 3]; 3];
+    for (slot, &(i, j)) in SYMMETRIC_PAIRS.iter().enumerate()
+    {
+        let value = component_gradient(view, SLOT_CONFORMAL_METRIC + slot, index);
+        conformal_metric_gradient[0][i][j] = value;
+        conformal_metric_gradient[0][j][i] = value;
+    }
+
+    BssnSpatialDerivatives {
+        conformal_factor_gradient: [
+            component_gradient(view, SLOT_CONFORMAL_FACTOR, index),
+            0.0,
+            0.0,
+        ],
+        mean_curvature_gradient: [
+            component_gradient(view, SLOT_MEAN_CURVATURE, index),
+            0.0,
+            0.0,
+        ],
+        conformal_metric_gradient,
+    }
+}
+
+/// The centred periodic second difference of one component array at `index`.
+///
+/// Compact: `f_{i+1} - 2 f_i + f_{i-1}` over `dx^2`. Its Fourier symbol
+/// `2 cos(theta) - 2` is maximal at the Nyquist mode rather than vanishing
+/// there, unlike the `2 dx`-spaced difference the coordinate-sampled path
+/// produces.
+fn component_curvature(view: &BssnGridView<'_>, slot: usize, index: usize) -> f64 {
+    let points = view.grid.points();
+    let base = slot * points;
+    let centre = view.components[base + view.grid.wrap_usize(index)];
+    let left = view.components[base + view.grid.offset(index, -1)];
+    let right = view.components[base + view.grid.offset(index, 1)];
+    (right - 2.0 * centre + left) / (view.grid.spacing() * view.grid.spacing())
+}
+
+/// The second spatial derivatives at `index`, taken with compact stencils.
+///
+/// **1D3V**: only the `xx` entries can be non-zero.
+#[must_use]
+pub fn grid_second_derivatives(view: &BssnGridView<'_>, index: usize) -> BssnSecondDerivatives {
+    let mut conformal_metric_hessian = [[[[0.0_f64; 3]; 3]; 3]; 3];
+    for (slot, &(i, j)) in SYMMETRIC_PAIRS.iter().enumerate()
+    {
+        let value = component_curvature(view, SLOT_CONFORMAL_METRIC + slot, index);
+        conformal_metric_hessian[0][0][i][j] = value;
+        conformal_metric_hessian[0][0][j][i] = value;
+    }
+
+    let mut conformal_factor_hessian = [[0.0_f64; 3]; 3];
+    conformal_factor_hessian[0][0] = component_curvature(view, SLOT_CONFORMAL_FACTOR, index);
+
+    let mut conformal_connection_gradient = [[0.0_f64; 3]; 3];
+    // Indexed rather than iterated: the loop walks tensor components and the
+    // matching storage slots together, which the index expresses.
+    #[allow(clippy::needless_range_loop)]
+    for component in 0..3
+    {
+        conformal_connection_gradient[component][0] =
+            component_gradient(view, SLOT_CONFORMAL_CONNECTION + component, index);
+    }
+
+    BssnSecondDerivatives {
+        conformal_factor_hessian,
+        conformal_metric_hessian,
+        conformal_connection_gradient,
+    }
+}
+
+/// The conformal Ricci tensor at one grid point, in genuine BSSN form.
+///
+/// Uses the **evolved** `Gammatilde^i` and compact stencils, so the principal
+/// part is the manifestly elliptic `-1/2 gammatilde^{lm} d_l d_m`.
+pub fn grid_conformal_ricci(
+    view: &BssnGridView<'_>,
+    index: usize,
+) -> Result<ConformalRicci, BssnGridError> {
+    let first = grid_spatial_derivatives(view, index);
+    let second = grid_second_derivatives(view, index);
+    conformal_ricci_from_derivatives(&view.state_at(index), &first, &second).map_err(|source| {
+        BssnGridError::Pointwise {
+            time: 0.0,
+            index,
+            stage: "conformal_ricci_from_derivatives",
+            source,
+        }
+    })
+}
+
+/// Evaluate the conformal connection right-hand side at one grid point.
+pub fn grid_connection_rhs(
+    view: &BssnGridView<'_>,
+    index: usize,
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+) -> Result<BssnConnectionRhs, BssnGridError> {
+    let derivatives = grid_spatial_derivatives(view, index);
+    bssn_connection_rhs(&view.state_at(index), &derivatives, gauge, sources).map_err(|source| {
+        BssnGridError::Pointwise {
+            time: 0.0,
+            index,
+            stage: "bssn_connection_rhs",
+            source,
+        }
+    })
+}
+
 /// Evaluate the BSSN right-hand side over the whole grid into `out`.
 ///
 /// Points are visited in ascending index order. Nothing is allocated per point:
@@ -729,13 +863,28 @@ pub fn bssn_grid_rhs(
     for index in 0..points
     {
         let at = [view.grid.coordinate(index), 0.0, 0.0];
-        let (_, rhs) = bssn_evolution_rhs(&metric, &curvature, &at, gauge, sources, &settings)
-            .map_err(|source| BssnGridError::Pointwise {
-                time,
-                index,
-                stage: "bssn_evolution_rhs",
-                source,
-            })?;
+        // The conformal Ricci comes from the genuine BSSN form -- the evolved
+        // Gammatilde^k with compact stencils -- not from a generic metric Ricci.
+        // That substitution is what removes the mixed second derivatives from
+        // the principal part.
+        let ricci = grid_conformal_ricci(view, index)?;
+        let (_, rhs) = bssn_evolution_rhs_with_ricci(
+            &metric, &curvature, &at, gauge, sources, &settings, &ricci,
+        )
+        .map_err(|source| BssnGridError::Pointwise {
+            time,
+            index,
+            stage: "bssn_evolution_rhs_with_ricci",
+            source,
+        })?;
+
+        // Layer 3.3 reports `d_t Gammatilde^i = 0`: every term of that equation
+        // carries a spatial gradient, and it had none. On a grid those gradients
+        // are non-zero, so the equation is supplied here from compact centred
+        // differences of the stored arrays. Leaving it at zero freezes
+        // `Gammatilde^i` while `gammatilde_ij` evolves, which is what reduces
+        // BSSN back to a weakly hyperbolic ADM-like system.
+        let connection = grid_connection_rhs(view, index, gauge, sources)?;
 
         // The right-hand side has exactly the shape of a state, so it is stored
         // through the same layout: no second flattening convention exists.
@@ -744,7 +893,7 @@ pub fn bssn_grid_rhs(
             conformal_metric: rhs.conformal_metric,
             mean_curvature: rhs.mean_curvature,
             conformal_curvature: rhs.conformal_curvature,
-            conformal_connection: rhs.conformal_connection,
+            conformal_connection: connection.total,
         };
         state_into_flat(out, points, index, &as_state);
     }

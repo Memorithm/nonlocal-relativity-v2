@@ -64,8 +64,8 @@ use crate::adm_evolution::{
     curvature_evolution_rhs, hamiltonian_constraint, metric_evolution_rhs,
 };
 use crate::{
-    Metric, RelativityError, determinant, invert_metric, numerical_christoffel,
-    ricci_tensor_from_metric,
+    Metric, RelativityError, christoffel_from_derivatives, determinant, invert_metric,
+    numerical_christoffel, ricci_tensor_from_metric,
 };
 
 /// A typed failure of a BSSN operation. It never panics.
@@ -929,7 +929,12 @@ pub fn conformal_ricci<G: Metric<3>>(
 /// and for the exact `alpha * H` relation between this `d_t K` and the ADM one.
 // Explicit tensor-index loops read most clearly here (matching the crate's
 // curvature, action, adm, and adm_evolution modules).
-#[allow(clippy::needless_range_loop)]
+/// The BSSN evolution right-hand sides at a point, computing the conformal
+/// Ricci tensor internally from the supplied metric field.
+///
+/// Behaviour is unchanged from Layer 3.3. See
+/// [`bssn_evolution_rhs_with_ricci`] for the variant a grid uses, which supplies
+/// `Rtilde_ij` in genuine BSSN form instead.
 pub fn bssn_evolution_rhs<G: Metric<3>>(
     spatial_metric: &G,
     extrinsic_curvature: &impl SpatialTensorField,
@@ -937,6 +942,29 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
     gauge: &BssnGauge,
     sources: &AdmSources,
     settings: &AdmEvolutionSettings,
+) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
+    evolution_rhs_inner(
+        spatial_metric,
+        extrinsic_curvature,
+        coordinates,
+        gauge,
+        sources,
+        settings,
+        None,
+    )
+}
+
+// Tensor-component loops index several distinct rank-2/3 arrays together;
+// iterating one of them would obscure that pairing.
+#[allow(clippy::needless_range_loop)]
+fn evolution_rhs_inner<G: Metric<3>>(
+    spatial_metric: &G,
+    extrinsic_curvature: &impl SpatialTensorField,
+    coordinates: &[f64; 3],
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+    settings: &AdmEvolutionSettings,
+    supplied_ricci: Option<&ConformalRicci>,
 ) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
     if !gauge.lapse.is_finite() || gauge.shift.iter().any(|v| !v.is_finite())
     {
@@ -994,7 +1022,11 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
         + mean_curvature_shift_term;
 
     // d_t Atilde_ij.
-    let ricci = conformal_ricci(spatial_metric, coordinates, settings)?;
+    let ricci = match supplied_ricci
+    {
+        Some(value) => *value,
+        None => conformal_ricci(spatial_metric, coordinates, settings)?,
+    };
     let mut ricci_source = [[0.0_f64; 3]; 3];
     let mut matter_source = [[0.0_f64; 3]; 3];
     for i in 0..3
@@ -1045,8 +1077,12 @@ pub fn bssn_evolution_rhs<G: Metric<3>>(
     // the spatially constant fields and prescribed constant gauge this
     // increment supports. It is therefore exactly zero here -- carried so the
     // state and its rates stay complete, and exercised structurally (the
-    // connection constraint) rather than dynamically. A later grid increment
-    // supplies the non-vanishing derivative terms.
+    // connection constraint) rather than dynamically.
+    //
+    // A grid, where those gradients are non-zero, must NOT use this value:
+    // freezing `Gammatilde^i` while `gammatilde_ij` evolves reduces BSSN back to
+    // a weakly hyperbolic ADM-like system. `bssn_connection_rhs` supplies the
+    // full equation from caller-provided gradients; `crate::bssn_grid` uses it.
     let conformal_connection = [0.0_f64; 3];
 
     require_finite_tensor("conformal_metric_rhs", &conformal_metric_rhs)?;
@@ -1210,4 +1246,391 @@ pub fn adm_bssn_equivalence<G: Metric<3>>(
         hamiltonian_residual: hamiltonian.signed_residual,
         lapse: gauge.lapse,
     })
+}
+
+// ---------------------------------------------------------------------------
+// The conformal connection evolution equation
+// ---------------------------------------------------------------------------
+
+/// The spatial gradients a grid must supply to evolve `Gammatilde^i`.
+///
+/// Layer 3.3 evaluates every derivative internally from coordinate-sampled
+/// fields, which is why it could only report `d_t Gammatilde^i = 0` for the
+/// spatially constant data it supported. A grid has these gradients already, so
+/// it supplies them directly rather than being differenced a second time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnSpatialDerivatives {
+    /// `d_i phi`.
+    pub conformal_factor_gradient: [f64; 3],
+    /// `d_i K`.
+    pub mean_curvature_gradient: [f64; 3],
+    /// `d_k gammatilde_ij`, indexed `[k][i][j]`.
+    pub conformal_metric_gradient: [[[f64; 3]; 3]; 3],
+}
+
+impl BssnSpatialDerivatives {
+    /// All gradients zero — the spatially homogeneous case Layer 3.3 supported.
+    pub const ZERO: Self = Self {
+        conformal_factor_gradient: [0.0; 3],
+        mean_curvature_gradient: [0.0; 3],
+        conformal_metric_gradient: [[[0.0; 3]; 3]; 3],
+    };
+}
+
+/// The decomposed right-hand side of the `Gammatilde^i` evolution equation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnConnectionRhs {
+    /// The total right-hand side.
+    pub total: [f64; 3],
+    /// The `2 alpha Gammatilde^i_jk Atilde^jk` contribution.
+    pub christoffel_term: [f64; 3],
+    /// The `-(4/3) alpha gammatilde^{ij} d_j K` contribution.
+    pub mean_curvature_term: [f64; 3],
+    /// The `12 alpha Atilde^{ij} d_j phi` contribution.
+    pub conformal_factor_term: [f64; 3],
+    /// The `-2 Atilde^{ij} d_j alpha` contribution (zero for a constant lapse).
+    pub lapse_term: [f64; 3],
+    /// The conformal Christoffel symbols used, exposed for cross-checking.
+    pub conformal_christoffel: [[[f64; 3]; 3]; 3],
+}
+
+/// The evolution right-hand side of the conformal connection functions
+/// `Gammatilde^i`.
+///
+/// # Derivation, not transcription
+///
+/// `Gammatilde^i` is *defined* by `Gammatilde^i = gammatilde^{jk}
+/// Gammatilde^i_{jk} = -d_j gammatilde^{ij}`, so differentiating the definition
+/// in time gives, for a constant lapse and zero shift,
+///
+/// ```text
+/// d_t gammatilde_ij  = -2 alpha Atilde_ij
+/// d_t gammatilde^{ij} = +2 alpha Atilde^{ij}
+/// d_t Gammatilde^i    = -d_j ( 2 alpha Atilde^{ij} ) = -2 alpha d_j Atilde^{ij}
+/// ```
+///
+/// Substituting the momentum constraint for `d_j Atilde^{ij}` gives the form
+/// implemented here:
+///
+/// ```text
+/// d_t Gammatilde^i = -2 Atilde^{ij} d_j alpha
+///     + 2 alpha ( Gammatilde^i_{jk} Atilde^{jk}
+///                 + 6 Atilde^{ij} d_j phi
+///                 - (2/3) gammatilde^{ij} d_j K )
+/// ```
+///
+/// **This is constraint-substituted**, exactly as the `d_t K` equation is (see
+/// the module documentation). The two forms agree *on the momentum-constraint
+/// surface* and differ off it by the momentum constraint itself. The
+/// substituted form is the one that makes BSSN strongly hyperbolic, which is
+/// the entire reason BSSN exists, so it is the form used — and the fact that it
+/// is substituted is stated rather than glossed.
+///
+/// # Matter
+///
+/// The matter contribution is **not** implemented. Deriving it requires fixing a
+/// convention for the momentum density that this increment has no vacuum-free
+/// oracle to validate against, and shipping an unvalidated formula would be
+/// worse than refusing. A non-zero momentum density is therefore rejected with a
+/// typed error rather than silently ignored or silently guessed.
+// Tensor-component loops index several distinct arrays together by index.
+#[allow(clippy::needless_range_loop)]
+pub fn bssn_connection_rhs(
+    state: &BssnState,
+    derivatives: &BssnSpatialDerivatives,
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+) -> Result<BssnConnectionRhs, BssnError> {
+    if !gauge.lapse.is_finite() || gauge.shift.iter().any(|value| !value.is_finite())
+    {
+        return Err(BssnError::NonFiniteState { quantity: "gauge" });
+    }
+    if sources.momentum_density.iter().any(|value| *value != 0.0)
+    {
+        return Err(BssnError::UnavailableDerivative {
+            quantity: "connection_matter_term",
+        });
+    }
+
+    let alpha = gauge.lapse;
+    let inverse = state.inverse_conformal_metric()?;
+    let curvature_up = raise_both(&inverse, &state.conformal_curvature);
+
+    // One implementation of the Christoffel formula in the crate: this reuses
+    // the algebraic core that `numerical_christoffel` also calls.
+    let christoffel =
+        christoffel_from_derivatives::<3>(&inverse, &derivatives.conformal_metric_gradient);
+
+    let mut christoffel_term = [0.0_f64; 3];
+    let mut mean_curvature_term = [0.0_f64; 3];
+    let mut conformal_factor_term = [0.0_f64; 3];
+    let mut lapse_term = [0.0_f64; 3];
+    let mut total = [0.0_f64; 3];
+
+    for i in 0..3
+    {
+        let mut contracted = 0.0;
+        for j in 0..3
+        {
+            for k in 0..3
+            {
+                contracted += christoffel[i][j][k] * curvature_up[j][k];
+            }
+        }
+        christoffel_term[i] = 2.0 * alpha * contracted;
+
+        let mut trace_gradient = 0.0;
+        let mut factor_gradient = 0.0;
+        for j in 0..3
+        {
+            trace_gradient += inverse[i][j] * derivatives.mean_curvature_gradient[j];
+            factor_gradient += curvature_up[i][j] * derivatives.conformal_factor_gradient[j];
+        }
+        mean_curvature_term[i] = -(4.0 / 3.0) * alpha * trace_gradient;
+        conformal_factor_term[i] = 12.0 * alpha * factor_gradient;
+
+        // A prescribed constant lapse has no gradient, so this term is exactly
+        // zero; it is carried explicitly so a later live-gauge increment has a
+        // named place to fill in rather than a silent omission.
+        lapse_term[i] = 0.0;
+
+        total[i] =
+            christoffel_term[i] + mean_curvature_term[i] + conformal_factor_term[i] + lapse_term[i];
+
+        if !total[i].is_finite()
+        {
+            return Err(BssnError::NonFiniteState {
+                quantity: "connection_rhs",
+            });
+        }
+    }
+
+    Ok(BssnConnectionRhs {
+        total,
+        christoffel_term,
+        mean_curvature_term,
+        conformal_factor_term,
+        lapse_term,
+        conformal_christoffel: christoffel,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// The conformal Ricci tensor in genuine BSSN form
+// ---------------------------------------------------------------------------
+
+/// The second spatial derivatives the BSSN-form conformal Ricci tensor needs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BssnSecondDerivatives {
+    /// `d_i d_j phi`.
+    pub conformal_factor_hessian: [[f64; 3]; 3],
+    /// `d_k d_l gammatilde_ij`, indexed `[k][l][i][j]`.
+    pub conformal_metric_hessian: [[[[f64; 3]; 3]; 3]; 3],
+    /// `d_j Gammatilde^i`, indexed `[i][j]`.
+    pub conformal_connection_gradient: [[f64; 3]; 3],
+}
+
+/// The conformal Ricci tensor written in **BSSN form**, using the
+/// independently evolved `Gammatilde^k`.
+///
+/// # Why this is not the same as differentiating the metric
+///
+/// [`conformal_ricci`] obtains `Rtilde_ij` from [`ricci_tensor_from_metric`] —
+/// the generic Ricci tensor of `gammatilde_ij`. That is *correct* as a tensor
+/// identity, and it is why the two agree on the constraint surface. But it is
+/// **not the BSSN system**.
+///
+/// The BSSN form is
+///
+/// ```text
+/// Rtilde_ij = -1/2 gammatilde^{lm} d_l d_m gammatilde_ij
+///           + gammatilde_{k(i} d_{j)} Gammatilde^k
+///           + Gammatilde^k Gammatilde_{(ij)k}
+///           + gammatilde^{lm} ( 2 Gammatilde^k_{l(i} Gammatilde_{j)km}
+///                             + Gammatilde^k_{im} Gammatilde_{klj} )
+/// ```
+///
+/// where `Gammatilde_{kij} = gammatilde_{kl} Gammatilde^l_{ij}` and
+/// `X_{(ij)} = 1/2 (X_ij + X_ji)`.
+///
+/// The second term carries the **evolved** `Gammatilde^k`, and it is exactly
+/// what removes the mixed second derivatives `d_i d_k gammatilde_jl` from the
+/// principal part, leaving only the manifestly elliptic
+/// `-1/2 gammatilde^{lm} d_l d_m`. That substitution is the entire reason BSSN
+/// exists: it is what turns the weakly hyperbolic ADM system into a strongly
+/// hyperbolic one.
+///
+/// Computing `Rtilde_ij` generically from the metric instead puts those mixed
+/// derivatives back and leaves a system with ADM's principal part wearing BSSN
+/// variables. Evolving `Gammatilde^i` does not help if the Ricci tensor never
+/// reads it.
+///
+/// Being an evolved variable rather than a derived one, `Gammatilde^k` can drift
+/// from `-d_j gammatilde^{kj}`; that drift is the connection constraint, which
+/// is monitored and never enforced.
+// Tensor-component loops index several distinct arrays together by index.
+#[allow(clippy::needless_range_loop)]
+pub fn conformal_ricci_from_derivatives(
+    state: &BssnState,
+    first: &BssnSpatialDerivatives,
+    second: &BssnSecondDerivatives,
+) -> Result<ConformalRicci, BssnError> {
+    let inverse = state.inverse_conformal_metric()?;
+    let christoffel = christoffel_from_derivatives::<3>(&inverse, &first.conformal_metric_gradient);
+
+    // Fully covariant connection Gammatilde_{kij} = gammatilde_{kl} Gammatilde^l_{ij}.
+    let mut lowered = [[[0.0_f64; 3]; 3]; 3];
+    for k in 0..3
+    {
+        for i in 0..3
+        {
+            for j in 0..3
+            {
+                let mut value = 0.0;
+                for l in 0..3
+                {
+                    value += state.conformal_metric[k][l] * christoffel[l][i][j];
+                }
+                lowered[k][i][j] = value;
+            }
+        }
+    }
+
+    let mut conformal = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            // -1/2 gammatilde^{lm} d_l d_m gammatilde_ij : the principal part,
+            // and the only second-derivative term that survives.
+            let mut laplacian = 0.0;
+            for l in 0..3
+            {
+                for m in 0..3
+                {
+                    laplacian += inverse[l][m] * second.conformal_metric_hessian[l][m][i][j];
+                }
+            }
+
+            // gammatilde_{k(i} d_{j)} Gammatilde^k, using the EVOLVED connection.
+            let mut connection_term = 0.0;
+            for k in 0..3
+            {
+                connection_term += state.conformal_metric[k][i]
+                    * second.conformal_connection_gradient[k][j]
+                    + state.conformal_metric[k][j] * second.conformal_connection_gradient[k][i];
+            }
+            connection_term *= 0.5;
+
+            // Gammatilde^k Gammatilde_{(ij)k}
+            let mut product_term = 0.0;
+            for k in 0..3
+            {
+                product_term +=
+                    state.conformal_connection[k] * (lowered[k][i][j] + lowered[k][j][i]);
+            }
+            product_term *= 0.5;
+
+            // gammatilde^{lm} ( 2 Gammatilde^k_{l(i} Gammatilde_{j)km}
+            //                 + Gammatilde^k_{im} Gammatilde_{klj} )
+            let mut quadratic = 0.0;
+            for l in 0..3
+            {
+                for m in 0..3
+                {
+                    let mut bracket = 0.0;
+                    for k in 0..3
+                    {
+                        bracket += christoffel[k][l][i] * lowered[j][k][m]
+                            + christoffel[k][l][j] * lowered[i][k][m]
+                            + christoffel[k][i][m] * lowered[k][l][j];
+                    }
+                    quadratic += inverse[l][m] * bracket;
+                }
+            }
+
+            conformal[i][j] = -0.5 * laplacian + connection_term + product_term + quadratic;
+        }
+    }
+    require_finite_tensor("bssn_conformal_ricci", &conformal)?;
+
+    // The conformal-factor part, from the supplied gradients rather than a
+    // second differencing of the metric.
+    let mut covariant_hessian = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            let mut value = second.conformal_factor_hessian[i][j];
+            for k in 0..3
+            {
+                value -= christoffel[k][i][j] * first.conformal_factor_gradient[k];
+            }
+            covariant_hessian[i][j] = value;
+        }
+    }
+    let hessian_trace = trace_with(&inverse, &covariant_hessian);
+    let mut gradient_norm = 0.0;
+    for k in 0..3
+    {
+        for l in 0..3
+        {
+            gradient_norm += inverse[k][l]
+                * first.conformal_factor_gradient[k]
+                * first.conformal_factor_gradient[l];
+        }
+    }
+
+    let mut conformal_factor_part = [[0.0_f64; 3]; 3];
+    let mut total = [[0.0_f64; 3]; 3];
+    for i in 0..3
+    {
+        for j in 0..3
+        {
+            conformal_factor_part[i][j] = -2.0 * covariant_hessian[i][j]
+                - 2.0 * state.conformal_metric[i][j] * hessian_trace
+                + 4.0 * first.conformal_factor_gradient[i] * first.conformal_factor_gradient[j]
+                - 4.0 * state.conformal_metric[i][j] * gradient_norm;
+            total[i][j] = conformal[i][j] + conformal_factor_part[i][j];
+        }
+    }
+    require_finite_tensor("bssn_conformal_factor_ricci", &conformal_factor_part)?;
+
+    Ok(ConformalRicci {
+        conformal,
+        conformal_factor_part,
+        total,
+    })
+}
+
+/// The BSSN evolution right-hand sides at a point, with the conformal Ricci
+/// tensor **supplied by the caller**.
+///
+/// A grid computes `Rtilde_ij` in genuine BSSN form from the evolved
+/// `Gammatilde^k` (see [`conformal_ricci_from_derivatives`]), which is a
+/// different discrete operator from the generic metric Ricci that
+/// [`bssn_evolution_rhs`] would compute internally — and the difference is
+/// precisely what makes the system strongly rather than weakly hyperbolic.
+///
+/// Everything downstream of the Ricci tensor is shared with
+/// [`bssn_evolution_rhs`]: there is one implementation of the BSSN evolution
+/// equations, differing only in where `Rtilde_ij` comes from.
+pub fn bssn_evolution_rhs_with_ricci<G: Metric<3>>(
+    spatial_metric: &G,
+    extrinsic_curvature: &impl SpatialTensorField,
+    coordinates: &[f64; 3],
+    gauge: &BssnGauge,
+    sources: &AdmSources,
+    settings: &AdmEvolutionSettings,
+    ricci: &ConformalRicci,
+) -> Result<(BssnState, BssnEvolutionRhs), BssnError> {
+    evolution_rhs_inner(
+        spatial_metric,
+        extrinsic_curvature,
+        coordinates,
+        gauge,
+        sources,
+        settings,
+        Some(ricci),
+    )
 }
