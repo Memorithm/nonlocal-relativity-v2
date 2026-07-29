@@ -13,7 +13,7 @@ use scirust_relativity::bssn_grid::{
     bssn_grid_ricci_report, evolve_bssn_grid, grid_conformal_ricci, project_grid_trace_free,
     project_grid_unit_determinant,
 };
-use scirust_relativity::grid1d::UniformGrid1d;
+use scirust_relativity::grid::UniformGrid1d;
 use scirust_relativity::{Metric, ricci_tensor_from_metric};
 
 const TWO_PI: f64 = std::f64::consts::TAU;
@@ -1410,7 +1410,7 @@ fn a_constant_shift_is_exactly_pure_advection() {
     //
     // A sign error in any one of the seventeen advection terms would show up
     // here immediately.
-    use scirust_relativity::grid1d::periodic_first_derivative;
+    use scirust_relativity::grid::periodic_first_derivative;
 
     let grid = unit_grid(64);
     let points = grid.points();

@@ -130,8 +130,8 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   a constraint-corrected difference. **Implementing BSSN does not demonstrate
   numerical stability**; there is no spatial grid and no live gauge. See
   `docs/LAYER_3_BSSN.md`.
-- **BSSN on a periodic 1D grid (Layer 3.4):** the `grid1d` module supplies a
-  half-open uniform periodic grid (`UniformGrid1d`, `x_n = x_min + n dx`,
+- **BSSN on a periodic 1D grid (Layer 3.4):** the `grid` module supplies a
+  half-open uniform periodic grid (`UniformGrid<D>`, `x_n = x_min + n dx`,
   `dx = L / N`, Euclidean-remainder wrapping) with centred periodic first and
   second derivatives and deterministic `GridReduction` norms; the `bssn_grid`
   module supplies `BssnGridState` (17 structure-of-arrays components per point),
@@ -145,7 +145,10 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   the `d_t Gammatilde^i` equation Layer 3.3 deferred — together these remove the
   mixed second derivatives from the principal part. Using the generic metric
   Ricci instead is measurably unstable; see `docs/LAYER_3_BSSN_PERIODIC_1D.md`
-  §13. Carries the platform's first **live gauge**: 1+log slicing
+  §13. The grid substrate is `D`-dimensional (`UniformGrid<D>`), with per-axis
+  periodic neighbours and a four-corner **mixed** second difference that has no
+  one-dimensional analogue and is bit-for-bit symmetric in its two axes by
+  construction. Carries the platform's first **live gauge**: 1+log slicing
   (`bssn::one_plus_log_lapse_rhs`, `BssnSlicing::OnePlusLog`) with the lapse an
   evolved field (slot 17 of 18) and the covariant lapse Hessian supplied to
   `d_t K` and `d_t Atilde_ij`, validated against the exact `sqrt(2)` gauge speed;
@@ -286,11 +289,11 @@ The established-GR geometry engine. Trait-based, const-generic over dimension.
   world-function, singular metric, invalid difference/affine step, non-convergent
   logarithm map, and tetrad failures: invalid floor, non-timelike frame vector,
   non-finite leg, degenerate frame).
-- **Tests:** 218 across twenty-three integration-test files (curvature, geometry,
+- **Tests:** 226 across twenty-three integration-test files (curvature, geometry,
   kerr, reissner_nordstrom, schwarzschild, coordinate_independence,
   parallel_transport, covariant_transport, flrw, geodesic_deviation,
   exponential_map, tetrad, synge, van_vleck, linearized, ppn, action, adm,
-  adm_evolution, adm_homogeneous, bssn, grid1d, bssn_grid).
+  adm_evolution, adm_homogeneous, bssn, grid, bssn_grid).
 - **Benchmarks:** `benches/geometry_core.rs`, `benches/ppn.rs`,
   `benches/action.rs`, `benches/adm.rs`, `benches/adm_evolution.rs`,
   `benches/adm_homogeneous.rs`, `benches/bssn.rs`, and `benches/bssn_grid.rs` (`criterion`,
@@ -517,7 +520,7 @@ Relative to [`PLATFORM_ROADMAP.md`](PLATFORM_ROADMAP.md):
   conformal Ricci decomposition, and local right-hand sides, validated against
   the ADM system) — are delivered. Still absent: perturbation theory,
   self-force, **any spatial grid**, live gauge, and therefore any inhomogeneous
-  evolution, and its fourth — **BSSN on a periodic 1D grid** (the `grid1d` and
+  evolution, and its fourth — **BSSN on a periodic 1D grid** (the `grid` and
   `bssn_grid` modules: periodic finite differences, a grid-backed derivative
   provider, and method-of-lines RK4), second-order accurate and stable across
   every resolution tested once `Rtilde_ij` was written in genuine BSSN form.
@@ -581,7 +584,7 @@ Additive, each validated against an oracle, each one PR:
     constraint monitored and validated against the exact de Sitter / dust /
     radiation solutions) and the **BSSN formulation core** (the `bssn` module,
     `docs/LAYER_3_BSSN.md`) and the **periodic 1D BSSN grid**
-    (`grid1d` + `bssn_grid`, `docs/LAYER_3_BSSN_PERIODIC_1D.md`) are *done* — the
+    (`grid` + `bssn_grid`, `docs/LAYER_3_BSSN_PERIODIC_1D.md`) are *done* — the
     last stable once `Rtilde_ij` was written in genuine BSSN form using the
     evolved `Gammatilde^k`, and now carrying the full moving-puncture gauge
     (1+log slicing plus the Gamma-driver). Next: a second spatial dimension.

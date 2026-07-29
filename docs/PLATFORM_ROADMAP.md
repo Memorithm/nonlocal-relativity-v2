@@ -391,7 +391,7 @@ requires, is the next Layer 3 frontier.
 Its fourth increment — **BSSN on a periodic one-dimensional grid** (Layer 3.4) —
 is **delivered**, and its headline result is **negative**
 (design: [`LAYER_3_BSSN_PERIODIC_1D.md`](LAYER_3_BSSN_PERIODIC_1D.md)). The
-`grid1d` and `bssn_grid` modules supply a half-open periodic grid, centred
+`grid` and `bssn_grid` modules supply a half-open periodic grid, centred
 finite-difference operators, a grid-backed derivative provider, and a
 method-of-lines adapter that integrates through the existing
 `scirust_sim::simulate` RK4. This is the first increment in which BSSN is a

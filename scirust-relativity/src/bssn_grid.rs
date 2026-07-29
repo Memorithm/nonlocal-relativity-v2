@@ -99,7 +99,7 @@
 //! use scirust_relativity::bssn_grid::{
 //!     BssnGridState, BssnGridSystem, bssn_grid_constraints, evolve_bssn_grid,
 //! };
-//! use scirust_relativity::grid1d::UniformGrid1d;
+//! use scirust_relativity::grid::UniformGrid1d;
 //!
 //! let grid = UniformGrid1d::new(16, 0.0, 1.0).expect("valid grid");
 //! let system = BssnGridSystem::vacuum(grid);
@@ -135,7 +135,7 @@ use crate::bssn::{
     conformal_ricci_from_derivatives, gamma_driver_rhs, one_plus_log_lapse_rhs, project_trace_free,
     project_unit_determinant,
 };
-use crate::grid1d::{Grid1dError, GridReduction, UniformGrid1d};
+use crate::grid::{Grid1dError, GridReduction, UniformGrid1d};
 
 /// Evolved scalar component arrays per grid point.
 pub const COMPONENTS_PER_POINT: usize = 24;
@@ -829,7 +829,7 @@ pub struct GridMetric<'v, 'a> {
 
 impl Metric<3> for GridMetric<'_, '_> {
     fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
-        let index = self.view.grid.nearest_index(coordinates[0]);
+        let index = self.view.grid.nearest_index(coordinates);
         match bssn_to_adm(&self.view.state_at(index))
         {
             Ok(adm) => adm.spatial_metric,
@@ -848,7 +848,7 @@ pub struct GridCurvature<'v, 'a> {
 
 impl SpatialTensorField for GridCurvature<'_, '_> {
     fn components(&self, coordinates: &[f64; 3]) -> [[f64; 3]; 3] {
-        let index = self.view.grid.nearest_index(coordinates[0]);
+        let index = self.view.grid.nearest_index(coordinates);
         match bssn_to_adm(&self.view.state_at(index))
         {
             Ok(adm) => adm.extrinsic_curvature,
