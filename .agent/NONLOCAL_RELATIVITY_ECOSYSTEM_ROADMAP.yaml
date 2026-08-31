@@ -1,0 +1,271 @@
+schema_version: 1
+kind: nonlocal_relativity_ecosystem_agent_roadmap
+status: active
+last_updated: "2026-08-31"
+repository: Memorithm/nonlocal-relativity-v2
+intended_consumer: autonomous_coding_agent
+visibility_note: >-
+  This roadmap is intentionally kept off the default branch on an agent-oriented
+  branch. GitHub cannot make repository content visible only to an AI assistant;
+  humans with sufficient repository access may discover it. Never store secrets,
+  private keys, tokens, credentials, unpublished personal data, or sensitive
+  deployment information here.
+merge_policy: never_merge_this_file_to_default_branch_unless_user_explicitly_requests
+
+mission:
+  primary: >-
+    Maintain a rigorous, deterministic research and implementation lineage for
+    SciRust relativity and nonlocal-relativity work, while preserving a strict
+    scientific boundary between established general-relativity validation and
+    experimental phenomenological models.
+  ecosystem_goal: >-
+    Serve as a research incubator and evidence-producing upstream for SciRust.
+    Mature primitives, numerical methods, deterministic experiments, and
+    scientific documentation may be promoted into Memorithm/scirust only through
+    explicit review and exact provenance; this repository must not silently become
+    a second incompatible SciRust distribution.
+
+verified_current_facts:
+  - >-
+    The workspace currently identifies itself as SciRust 0.14.0 and includes both
+    scirust-relativity and scirust-nonlocal-relativity plus
+    experiments/nonlocal-relativity-v2.
+  - >-
+    The experiment suite explicitly separates an experimental phenomenological
+    fractional-memory test-particle layer from established general-relativity
+    implementation validation.
+  - >-
+    The experiment suite is designed without RNG or wall-clock dependence and
+    emits deterministic metadata/CSV output for identical inputs.
+  - >-
+    The experimental nonlocal layer keeps the background metric and connection
+    fixed and does not modify Einstein field equations, Einstein tensor,
+    stress-energy, curvature sourcing, or backreaction.
+  - >-
+    The phenomenological model has no claimed empirical validation and must not be
+    presented as evidence of new physics.
+
+scientific_invariants:
+  - established_GR_and_phenomenological_nonlocal_results_must_remain_explicitly_separated
+  - no_empirical_validation_claim_without_empirical_evidence
+  - no_new_physics_claim_from_numerical_self_consistency
+  - no_field_equation_claim_for_the_test_particle_memory_model
+  - background_geometry_remains_external_and_fixed_for_the_current_nonlocal_model
+  - numerical_self_convergence_is_not_physical_validation
+  - exact_oracles_must_be_named_and_scoped_exactly
+  - approximations_and_coordinate_dependence_must_remain_visible
+  - non_finite_numerical_values_fail_closed
+  - reproducibility_claims_must_be_tied_to_exact_inputs_code_and_environment_scope
+
+engineering_invariants:
+  - correctness_and_declared_semantics_dominate_optimization
+  - do_not_fabricate_performance_or_scientific_novelty
+  - preserve_deterministic_experiment_outputs_unless_a_versioned_change_is_justified
+  - do_not_duplicate_existing_SciRust_primitives_when_a_shared_primitive_is_available
+  - cross_repository_promotion_requires_exact_source_and_destination_SHAs
+  - cross_repository_contracts_are_not_assumed_until_published_and_tested
+  - CI_required_by_the_target_repository_must_be_green_on_the_exact_PR_head_before_merge
+
+ownership:
+  role: research_incubator_and_scientific_oracle_producer
+  owns:
+    - experimental_nonlocal_relativity_research_lineage_in_this_repository
+    - deterministic_experiment_scenarios_and_scientific_interpretation_boundaries
+    - numerical_validation_against_named_exact_or_fine_grid_oracles_for_this_lineage
+    - research_only_variants_until_explicitly_promoted_elsewhere
+  does_not_own:
+    - the_global_SciRust_control_plane
+    - generic_ecosystem_orchestration
+    - evidence_dossier_semantics_owned_by_SciRust_Verify
+    - portable_capsule_product_semantics_owned_by_SciCapsule
+    - evolutionary_search_strategy_owned_by_Forge
+    - generic_elastic_resource_runtime_semantics_owned_by_ElasticXxx
+    - NNIS_CUDA_inference_runtime_internals
+    - FLAT_ATTENTION_kernel_ownership
+    - SLHAv2_KV_cache_product_ownership
+
+promotion_policy_to_scirust:
+  target_repository: Memorithm/scirust
+  status: required_for_mature_shared_work
+  rules:
+    - audit_exact_lineage_and_diff_before_promotion
+    - identify_whether_the_target_already_contains_equivalent_or_newer_code
+    - preserve_or_strengthen_tests_and_scientific_boundary_documentation
+    - carry_provenance_to_exact_source_commit
+    - avoid_bulk_sync_of_unrelated_SciRust_workspace_content
+    - promote_the_smallest_coherent_scientific_or_engineering_slice
+    - do_not_delete_research_evidence_only_because_a_candidate_is_rejected
+    - require_target_repository_CI_on_exact_head_before_merge
+
+control_loop:
+  - OBSERVE_CURRENT_LINEAGE
+  - CLASSIFY_ESTABLISHED_VS_EXPERIMENTAL_SCIENCE
+  - DEFINE_ORACLE_AND_SCOPE
+  - PROPOSE_SMALLEST_CHANGE
+  - VALIDATE_STATIC_AND_NUMERICAL_INVARIANTS
+  - RUN_DETERMINISTIC_EXPERIMENTS
+  - COMPARE_WITH_NAMED_ORACLE_OR_PREVIOUS_BASELINE
+  - RECORD_LIMITATIONS_AND_PROVENANCE
+  - PROMOTE_TO_SCIRUST_OR_KEEP_RESEARCH_ONLY
+  - VERIFY_TARGET_INTEGRATION
+  - COMMIT_OR_ROLLBACK
+
+ecosystem_interfaces:
+  Memorithm/scirust:
+    relationship: primary_promotion_target_and_shared_scientific_platform
+    status: active_conceptual_relationship_contract_to_be_hardened
+    may_exchange:
+      - validated_relativity_primitives
+      - deterministic_experiment_harnesses
+      - numerical_oracles
+      - documentation_of_scientific_scope_and_limitations
+    must_not:
+      - bulk_overwrite_unrelated_SciRust_workspace_changes
+      - assume_this_repository_is_authoritative_for_all_SciRust_crates
+  Memorithm/SciRust-Verify:
+    relationship: future_evidence_normalization_and_verdict_layer
+    status: planned_not_assumed
+    desired_contract:
+      - ingest_deterministic_experiment_artifacts_without_reinterpreting_scientific_claims
+      - record_exact_source_SHA_inputs_environment_and_oracle_scope
+      - distinguish_VERIFIED_implementation_properties_from_unvalidated_physical_models
+  Memorithm/scirust-hub:
+    relationship: future_orchestration_control_plane
+    status: planned_not_assumed
+    desired_contract:
+      - orchestrate_published_experiment_components
+      - retain_immutable_artifacts_and_execution_provenance
+      - never_absorb_relativity_or_nonlocal_scientific_semantics
+  Memorithm/SciCapsule:
+    relationship: future_portable_reproducible_experiment_packaging
+    status: planned_not_assumed
+    desired_contract:
+      - package_exact_experiment_inputs_binaries_and_manifests_when_useful
+      - keep_scientific_interpretation_outside_capsule_integrity_semantics
+  Memorithm/forge:
+    relationship: optional_search_engine_for_numerical_or_algorithmic_candidates
+    status: planned_not_assumed
+    constraints:
+      - independent_oracle_verification_before_measurement_selection
+      - no_search_objective_may_weaken_scientific_or_numerical_invariants
+      - candidate_speed_is_not_scientific_evidence
+  Memorithm/ElasticXxx:
+    relationship: future_adaptive_resource_policy_for_expensive_numerical_paths
+    status: planned_not_assumed
+    candidate_axes:
+      - bounded_vs_complete_history_resource_policy
+      - memory_budget_and_parallelism_under_explicit_error_contracts
+      - representation_or_kernel_choices_only_after_semantic_contracts_exist
+    constraints:
+      - no_silent_change_to_model_equations
+      - approximation_budget_must_be_explicit_and_verifiable
+  Memorithm/NVIDIA-Native-Inference-Stack:
+    relationship: no_direct_contract_currently_required
+    status: none_assumed
+  Memorithm/FLAT-ATTENTION:
+    relationship: no_direct_contract_currently_required
+    status: none_assumed
+  Memorithm/SLHAv2:
+    relationship: no_direct_contract_currently_required
+    status: none_assumed
+
+roadmap:
+  - id: NLR0
+    name: Exact lineage and repository-role audit
+    status: active
+    goals:
+      - compare_current_repository_lineage_against_Memorithm_scirust
+      - classify_files_as_shared_SciRust_research_only_or_local_experiment_support
+      - identify_duplicate_diverged_and_already_promoted_slices
+      - record_exact_HEADs_used_for_every_cross_repository_decision
+    exit_criteria:
+      - no_promotion_is_based_on_repository_name_or_age_alone
+      - every_candidate_promotion_has_a_precise_source_and_target_diff
+
+  - id: NLR1
+    name: Formal SciRust promotion contract
+    status: pending_after_NLR0
+    goals:
+      - define_a_machine_readable_promotion_manifest
+      - include_source_SHA_target_base_SHA_files_scientific_category_and_test_commands
+      - require_exact_oracle_and_limitation_metadata_for_scientific_changes
+      - support_small_reviewable_PRs_into_SciRust
+    exit_criteria:
+      - one_real_nontrivial_slice_is_promoted_with_provenance_and_green_target_CI
+
+  - id: NLR2
+    name: Evidence bridge to SciRust-Verify
+    status: pending_after_NLR1
+    goals:
+      - define_versioned_experiment_evidence_envelope
+      - preserve_raw_CSV_and_metadata_without_claim_inflation
+      - distinguish_implementation_validation_from_physical_validation
+      - enable_replay_or_diff_against_exact_source_identity
+    exit_criteria:
+      - SciRust_Verify_can_ingest_one_relativity_experiment_without_semantic_flattening
+
+  - id: NLR3
+    name: Resource-aware numerical experimentation
+    status: pending_after_NLR1
+    goals:
+      - expose_expensive_history_and_integrator_resource_dimensions_explicitly
+      - evaluate_ElasticXxx_only_through_versioned_invariant_preserving_plans
+      - preserve_complete_history_as_reference_when_testing_bounded_approximations
+      - report_error_cost_and_resource_cost_separately
+    forbid:
+      - selecting_an_approximation_only_because_it_is_faster
+      - hiding_coordinate_dependence_or_truncation_error
+
+  - id: NLR4
+    name: Reproducible ecosystem execution
+    status: pending_after_NLR2
+    goals:
+      - define_a_SciCapsule_packaging_profile_for_selected_experiments
+      - register_that_profile_with_SciRust_Hub_only_through_a_published_contract
+      - retain_exact_inputs_outputs_source_identity_and_verification_dossiers
+    exit_criteria:
+      - one_experiment_can_be_packaged_orchestrated_and_verified_without_copying_scientific_logic_into_Hub_or_SciCapsule
+
+  - id: NLR5
+    name: Continued relativity research under explicit evidence classes
+    status: long_term
+    goals:
+      - keep_established_GR_implementation_validation_separate_from_experimental_models
+      - add_new_oracles_before_broadening_claims
+      - promote_reusable_numerics_to_SciRust_when_mature
+      - retain_negative_and_null_results_as_research_evidence
+
+cross_repository_change_protocol:
+  before_editing_another_repository:
+    - read_that_repository_AGENTS_md
+    - read_that_repository_current_off_main_agent_roadmap
+    - verify_the_declared_ownership_boundary
+    - record_exact_source_and_target_SHAs
+  before_opening_a_cross_repository_PR:
+    - verify_the_destination_contract_is_published_or_mark_the_integration_as_new_versioned_contract_work
+    - run_source_tests_and_destination_tests_relevant_to_the_change
+    - include_provenance_and_migration_or_compatibility_notes
+  before_merge:
+    - re_read_both_repositories_current_agent_roadmaps
+    - verify_PR_exact_head_SHA
+    - require_all_required_CI_green_on_that_head
+    - fail_closed_on_missing_required_evidence
+
+agent_operating_protocol:
+  must_read_this_file:
+    - at_start_of_every_agent_session_on_this_repository
+    - before_selecting_the_next_major_task_or_research_phase
+    - before_interpreting_or_promoting_any_scientific_result
+    - before_any_cross_repository_promotion_or_integration
+    - after_any_user_change_to_scientific_scope_or_ecosystem_role
+    - before_opening_or_merging_any_PR_that_changes_scientific_semantics_or_cross_repo_contracts
+  must_update_this_file:
+    - when_a_phase_changes_status
+    - when_a_cross_repository_contract_is_published_changed_or_rejected
+    - when_a_research_candidate_is_promoted_rejected_or_reclassified
+    - when_new_exact_oracles_or_scientific_boundaries_are_added
+    - when_the_authoritative_promotion_target_or_strategy_changes
+  fail_closed: >-
+    If this roadmap cannot be fetched or read, an autonomous agent must not make
+    a major scientific-interpretation, architecture, cross-repository promotion,
+    integration-contract, or merge decision. Read-only diagnosis is allowed.
