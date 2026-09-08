@@ -25,10 +25,7 @@ fn matrix_vector<const D: usize>(matrix: &[[f64; D]; D], vector: &[f64; D]) -> [
     out
 }
 
-fn matrix_multiply<const D: usize>(
-    left: &[[f64; D]; D],
-    right: &[[f64; D]; D],
-) -> [[f64; D]; D] {
+fn matrix_multiply<const D: usize>(left: &[[f64; D]; D], right: &[[f64; D]; D]) -> [[f64; D]; D] {
     let mut out = [[0.0_f64; D]; D];
     for row in 0..D
     {
@@ -99,10 +96,7 @@ fn segment_transport_is_reconstructed_by_one_linear_operator() {
     let background = CylindricalMinkowski;
     let transport = DiscreteConnectionTransport;
     let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
-    let to = WorldlineState::new(
-        [0.03, 5.01, 0.72, -0.001],
-        [1.19, 0.1515, 0.079, -0.05],
-    );
+    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
     let step = 0.03;
     let operator = probed_segment_operator(&background, &from, &to, step);
 
@@ -191,10 +185,7 @@ fn composed_segment_operators_reproduce_polyline_transport() {
 fn operator_construction_and_composition_are_deterministic_bit_for_bit() {
     let background = CylindricalMinkowski;
     let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
-    let to = WorldlineState::new(
-        [0.03, 5.01, 0.72, -0.001],
-        [1.19, 0.1515, 0.079, -0.05],
-    );
+    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
 
     let first = probed_segment_operator(&background, &from, &to, 0.03);
     let second = probed_segment_operator(&background, &from, &to, 0.03);
