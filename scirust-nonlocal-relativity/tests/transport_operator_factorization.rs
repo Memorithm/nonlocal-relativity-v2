@@ -92,6 +92,16 @@ fn zero_connection_operator_is_bit_exact_identity() {
 }
 
 #[test]
+fn production_zero_connection_operator_is_bit_exact_identity() {
+    let from = WorldlineState::new([0.0, 1.0, 2.0, 3.0], [1.2, 0.2, -0.1, 0.05]);
+    let to = WorldlineState::new([0.05, 1.01, 1.99, 3.02], [1.18, 0.21, -0.08, 0.04]);
+    let operator = DiscreteConnectionTransport::segment_operator(&Minkowski, &from, &to, 0.05)
+        .expect("flat segment operator must succeed");
+
+    assert_eq!(operator, identity::<4>());
+}
+
+#[test]
 fn segment_transport_is_reconstructed_by_one_linear_operator() {
     let background = CylindricalMinkowski;
     let transport = DiscreteConnectionTransport;
@@ -119,6 +129,85 @@ fn segment_transport_is_reconstructed_by_one_linear_operator() {
             "operator reconstruction error {error:.3e} for vector {index}: direct={direct:?}, factored={factored:?}"
         );
     }
+}
+
+#[test]
+fn direct_operator_matches_basis_probed_scalar_oracle() {
+    let background = CylindricalMinkowski;
+    let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
+    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+    let step = 0.03;
+    let oracle = probed_segment_operator(&background, &from, &to, step);
+    let direct = DiscreteConnectionTransport::segment_operator(&background, &from, &to, step)
+        .expect("direct operator construction must succeed");
+
+    for row in 0..4
+    {
+        for column in 0..4
+        {
+            let error = (oracle[row][column] - direct[row][column]).abs();
+            assert!(
+                error <= 2.0e-15,
+                "operator entry ({row}, {column}) differs by {error:.3e}: oracle={}, direct={}",
+                oracle[row][column],
+                direct[row][column]
+            );
+        }
+    }
+}
+
+#[test]
+fn batch_transport_matches_existing_scalar_transport() {
+    let background = CylindricalMinkowski;
+    let transport = DiscreteConnectionTransport;
+    let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
+    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+    let step = 0.03;
+    let mut batch = [
+        [1.3, 0.2, -0.1, 0.05],
+        [0.7, -0.4, 0.3, 0.2],
+        [-0.2, 0.6, 0.1, -0.8],
+        [2.0, 0.0, 0.0, 0.0],
+    ];
+    let inputs = batch;
+
+    DiscreteConnectionTransport::transport_batch(&background, &mut batch, &from, &to, step)
+        .expect("batch transport must succeed");
+
+    for (index, input) in inputs.into_iter().enumerate()
+    {
+        let scalar = transport
+            .transport_segment(index, &background, input, &from, &to, step)
+            .expect("scalar transport must succeed");
+        let error = max_abs_difference(&scalar, &batch[index]);
+        assert!(
+            error <= 3.0e-15,
+            "batch/scalar error {error:.3e} for vector {index}: scalar={scalar:?}, batch={:?}",
+            batch[index]
+        );
+    }
+}
+
+#[test]
+fn batch_transport_does_not_partially_commit_on_invalid_input() {
+    let background = Minkowski;
+    let from = WorldlineState::new([0.0, 0.0, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0]);
+    let to = WorldlineState::new([0.1, 0.01, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0]);
+    let mut vectors = [[1.0, 2.0, 3.0, 4.0], [f64::INFINITY, 0.0, 0.0, 0.0]];
+    let first_before = vectors[0];
+
+    assert!(
+        DiscreteConnectionTransport::transport_batch(
+            &background,
+            &mut vectors,
+            &from,
+            &to,
+            0.1,
+        )
+        .is_err()
+    );
+    assert_eq!(vectors[0], first_before);
+    assert!(vectors[1][0].is_infinite());
 }
 
 #[test]
