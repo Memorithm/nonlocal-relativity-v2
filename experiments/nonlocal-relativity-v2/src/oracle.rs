@@ -33,7 +33,8 @@ impl EvidenceClass {
     /// Stable lowercase identifier for CSV/metadata output.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
-        match self {
+        match self
+        {
             Self::ExactAnalytic => "exact_analytic",
             Self::ClosedForm => "closed_form",
             Self::IndependentNumerical => "independent_numerical",
@@ -77,10 +78,15 @@ pub enum OracleError {
 
 impl fmt::Display for OracleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NonFiniteInput { name, value } => {
-                write!(formatter, "oracle input '{name}' must be finite; got {value}")
-            }
+        match self
+        {
+            Self::NonFiniteInput { name, value } =>
+            {
+                write!(
+                    formatter,
+                    "oracle input '{name}' must be finite; got {value}"
+                )
+            },
             Self::NonPositiveScale { name, value } => write!(
                 formatter,
                 "oracle scale '{name}' must be finite and strictly positive; got {value}"
@@ -228,7 +234,8 @@ pub fn observed_order(
 ) -> Result<f64, OracleError> {
     require_positive_error("coarse_error", coarse_error)?;
     require_positive_error("fine_error", fine_error)?;
-    if !refinement_ratio.is_finite() || refinement_ratio <= 1.0 {
+    if !refinement_ratio.is_finite() || refinement_ratio <= 1.0
+    {
         return Err(OracleError::InvalidRefinementRatio(refinement_ratio));
     }
     Ok((coarse_error / fine_error).ln() / refinement_ratio.ln())
@@ -236,31 +243,36 @@ pub fn observed_order(
 
 /// Return whether a sequence decreases strictly at every refinement step.
 pub fn strictly_decreasing(values: &[f64]) -> Result<bool, OracleError> {
-    if values.len() < 2 {
+    if values.len() < 2
+    {
         return Err(OracleError::InsufficientSamples(values.len()));
     }
-    for &value in values {
+    for &value in values
+    {
         require_finite("monotonicity_value", value)?;
     }
     Ok(values.windows(2).all(|pair| pair[1] < pair[0]))
 }
 
 fn require_finite(name: &'static str, value: f64) -> Result<(), OracleError> {
-    if !value.is_finite() {
+    if !value.is_finite()
+    {
         return Err(OracleError::NonFiniteInput { name, value });
     }
     Ok(())
 }
 
 fn require_positive(name: &'static str, value: f64) -> Result<(), OracleError> {
-    if !value.is_finite() || value <= 0.0 {
+    if !value.is_finite() || value <= 0.0
+    {
         return Err(OracleError::NonPositiveScale { name, value });
     }
     Ok(())
 }
 
 fn require_positive_error(name: &'static str, value: f64) -> Result<(), OracleError> {
-    if !value.is_finite() || value <= 0.0 {
+    if !value.is_finite() || value <= 0.0
+    {
         return Err(OracleError::NonPositiveError { name, value });
     }
     Ok(())
