@@ -6,7 +6,8 @@ use scirust_relativity::{Connection, Minkowski};
 
 fn identity<const D: usize>() -> [[f64; D]; D] {
     let mut matrix = [[0.0_f64; D]; D];
-    for i in 0..D {
+    for i in 0..D
+    {
         matrix[i][i] = 1.0;
     }
     matrix
@@ -14,19 +15,27 @@ fn identity<const D: usize>() -> [[f64; D]; D] {
 
 fn matrix_vector<const D: usize>(matrix: &[[f64; D]; D], vector: &[f64; D]) -> [f64; D] {
     let mut out = [0.0_f64; D];
-    for row in 0..D {
-        for column in 0..D {
+    for row in 0..D
+    {
+        for column in 0..D
+        {
             out[row] += matrix[row][column] * vector[column];
         }
     }
     out
 }
 
-fn matrix_multiply<const D: usize>(left: &[[f64; D]; D], right: &[[f64; D]; D]) -> [[f64; D]; D] {
+fn matrix_multiply<const D: usize>(
+    left: &[[f64; D]; D],
+    right: &[[f64; D]; D],
+) -> [[f64; D]; D] {
     let mut out = [[0.0_f64; D]; D];
-    for row in 0..D {
-        for column in 0..D {
-            for inner in 0..D {
+    for row in 0..D
+    {
+        for column in 0..D
+        {
+            for inner in 0..D
+            {
                 out[row][column] += left[row][inner] * right[inner][column];
             }
         }
@@ -51,13 +60,15 @@ where
     let transport = DiscreteConnectionTransport;
     let mut operator = [[0.0_f64; D]; D];
 
-    for column in 0..D {
+    for column in 0..D
+    {
         let mut basis = [0.0_f64; D];
         basis[column] = 1.0;
         let transported = transport
             .transport_segment(column, background, basis, from, to, step)
             .expect("basis transport must succeed");
-        for row in 0..D {
+        for row in 0..D
+        {
             operator[row][column] = transported[row];
         }
     }
@@ -67,7 +78,8 @@ where
 
 fn max_abs_difference<const D: usize>(left: &[f64; D], right: &[f64; D]) -> f64 {
     let mut max = 0.0_f64;
-    for component in 0..D {
+    for component in 0..D
+    {
         max = max.max((left[component] - right[component]).abs());
     }
     max
@@ -87,7 +99,10 @@ fn segment_transport_is_reconstructed_by_one_linear_operator() {
     let background = CylindricalMinkowski;
     let transport = DiscreteConnectionTransport;
     let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
-    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+    let to = WorldlineState::new(
+        [0.03, 5.01, 0.72, -0.001],
+        [1.19, 0.1515, 0.079, -0.05],
+    );
     let step = 0.03;
     let operator = probed_segment_operator(&background, &from, &to, step);
 
@@ -98,7 +113,8 @@ fn segment_transport_is_reconstructed_by_one_linear_operator() {
         [2.0, 0.0, 0.0, 0.0],
     ];
 
-    for (index, vector) in vectors.into_iter().enumerate() {
+    for (index, vector) in vectors.into_iter().enumerate()
+    {
         let direct = transport
             .transport_segment(index, &background, vector, &from, &to, step)
             .expect("direct segment transport must succeed");
@@ -115,14 +131,31 @@ fn segment_transport_is_reconstructed_by_one_linear_operator() {
 fn composed_segment_operators_reproduce_polyline_transport() {
     let background = CylindricalMinkowski;
     let waypoints = [
-        HistoryEntry::new([0.00, 5.000, 0.700, 0.000], [1.20, 0.150, 0.080, -0.050], 0.00),
-        HistoryEntry::new([0.03, 5.010, 0.720, -0.001], [1.19, 0.151, 0.079, -0.050], 0.03),
-        HistoryEntry::new([0.07, 5.025, 0.748, -0.003], [1.18, 0.153, 0.078, -0.049], 0.07),
-        HistoryEntry::new([0.12, 5.045, 0.785, -0.006], [1.17, 0.154, 0.077, -0.048], 0.12),
+        HistoryEntry::new(
+            [0.00, 5.000, 0.700, 0.000],
+            [1.20, 0.150, 0.080, -0.050],
+            0.00,
+        ),
+        HistoryEntry::new(
+            [0.03, 5.010, 0.720, -0.001],
+            [1.19, 0.151, 0.079, -0.050],
+            0.03,
+        ),
+        HistoryEntry::new(
+            [0.07, 5.025, 0.748, -0.003],
+            [1.18, 0.153, 0.078, -0.049],
+            0.07,
+        ),
+        HistoryEntry::new(
+            [0.12, 5.045, 0.785, -0.006],
+            [1.17, 0.154, 0.077, -0.048],
+            0.12,
+        ),
     ];
 
     let mut prefix = identity::<4>();
-    for window in waypoints.windows(2) {
+    for window in waypoints.windows(2)
+    {
         let from = WorldlineState::new(window[0].coordinates, window[0].velocity);
         let to = WorldlineState::new(window[1].coordinates, window[1].velocity);
         let step = window[1].parameter - window[0].parameter;
@@ -136,7 +169,8 @@ fn composed_segment_operators_reproduce_polyline_transport() {
         [-0.2, 0.6, 0.1, -0.8],
     ];
 
-    for vector in vectors {
+    for vector in vectors
+    {
         let direct = transport_vector_along_polyline(
             &background,
             &DiscreteConnectionTransport,
@@ -157,7 +191,10 @@ fn composed_segment_operators_reproduce_polyline_transport() {
 fn operator_construction_and_composition_are_deterministic_bit_for_bit() {
     let background = CylindricalMinkowski;
     let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
-    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+    let to = WorldlineState::new(
+        [0.03, 5.01, 0.72, -0.001],
+        [1.19, 0.1515, 0.079, -0.05],
+    );
 
     let first = probed_segment_operator(&background, &from, &to, 0.03);
     let second = probed_segment_operator(&background, &from, &to, 0.03);
