@@ -168,6 +168,9 @@ members = [
 exclude = [
     "examples/simd_views_demo",
     "examples/benchmarks",
+    # Staged upstream history crate: validated standalone in the focused
+    # nonlocal-relativity workflow until the root Cargo.lock promotion lands.
+    "scirust-history",
     # Fuzz harness: its own nightly-only workspace (libfuzzer-sys), built only
     # by the dedicated `fuzz` CI job. Never part of the main workspace build.
     "fuzz",
