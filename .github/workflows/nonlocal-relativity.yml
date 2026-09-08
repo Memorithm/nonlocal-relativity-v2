@@ -1,8 +1,10 @@
 name: Nonlocal Relativity
 
 # Focused, reproducible gate for the three crates of the experimental
-# fractional-memory worldline research layer:
+# fractional-memory worldline research layer plus the staged, domain-neutral
+# retained-history crate harvested from that work:
 #   - scirust-fractional
+#   - scirust-history (standalone while excluded from the root workspace)
 #   - scirust-relativity
 #   - scirust-nonlocal-relativity
 #
@@ -24,6 +26,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scirust-fractional/**"
+      - "scirust-history/**"
       - "scirust-relativity/**"
       - "scirust-nonlocal-relativity/**"
       - "experiments/nonlocal-relativity-v2/**"
@@ -35,6 +38,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scirust-fractional/**"
+      - "scirust-history/**"
       - "scirust-relativity/**"
       - "scirust-nonlocal-relativity/**"
       - "experiments/nonlocal-relativity-v2/**"
@@ -74,6 +78,18 @@ jobs:
 
       - name: Formatting
         run: cargo +nightly-2026-07-02 fmt --all -- --check
+
+      - name: Staged scirust-history standalone validation
+        run: |
+          cargo +nightly-2026-07-02 fmt \
+            --manifest-path scirust-history/Cargo.toml \
+            -- --check
+          cargo +nightly-2026-07-02 clippy \
+            --manifest-path scirust-history/Cargo.toml \
+            --all-targets \
+            -- -D warnings
+          cargo +nightly-2026-07-02 test \
+            --manifest-path scirust-history/Cargo.toml
 
       - name: Clippy (deny warnings)
         run: |
@@ -117,11 +133,10 @@ jobs:
 
       - name: Forbidden-marker scan
         run: |
-          # Scope: the three hardened crates plus only the nonlocal-relativity
-          # v2 artifacts. Unrelated pre-existing docs elsewhere in the repo
-          # (for example other papers under paper/) are deliberately not
-          # scanned, since they legitimately contain these words in prose.
-          scan="scirust-fractional scirust-relativity scirust-nonlocal-relativity"
+          # Scope: the three hardened crates, staged generic history, plus only
+          # the nonlocal-relativity v2 artifacts. Unrelated pre-existing docs
+          # elsewhere in the repo are deliberately not scanned.
+          scan="scirust-fractional scirust-history scirust-relativity scirust-nonlocal-relativity"
           [ -d experiments/nonlocal-relativity-v2 ] && scan="$scan experiments/nonlocal-relativity-v2"
           [ -f paper/nonlocal-relativity-v2.md ] && scan="$scan paper/nonlocal-relativity-v2.md"
           echo "Scanning: $scan"
