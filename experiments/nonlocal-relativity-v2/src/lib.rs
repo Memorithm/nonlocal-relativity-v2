@@ -11,6 +11,9 @@
 use scirust_nonlocal_relativity::WorldlineState;
 use std::f64::consts::FRAC_PI_2;
 
+/// Reusable scientific evidence/oracle primitives shared by experiments.
+pub mod oracle;
+
 /// Circular equatorial geodesic four-velocity initial state for Schwarzschild
 /// mass `mass` at areal radius `radius` (requires `radius > 3 * mass`).
 #[must_use]
