@@ -6,9 +6,9 @@ use scirust_relativity::{Connection, Minkowski};
 
 fn identity<const D: usize>() -> [[f64; D]; D] {
     let mut matrix = [[0.0_f64; D]; D];
-    for i in 0..D
+    for (i, row) in matrix.iter_mut().enumerate()
     {
-        matrix[i][i] = 1.0;
+        row[i] = 1.0;
     }
     matrix
 }
