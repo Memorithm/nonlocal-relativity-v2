@@ -114,6 +114,12 @@ jobs:
             -p scirust-nonlocal-relativity \
             --doc
 
+      - name: Geometric flat cross-chart diagnostic
+        run: |
+          cargo +nightly-2026-07-02 run --locked --release \
+            -p nonlocal-relativity-experiments \
+            --bin geometric_state_diagnostic
+
       - name: Whitespace / conflict-marker check (git diff --check)
         run: |
           if [ -n "${GITHUB_BASE_REF:-}" ]; then

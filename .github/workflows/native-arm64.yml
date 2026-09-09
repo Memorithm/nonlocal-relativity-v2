@@ -11,6 +11,7 @@ on:
       - "scirust-nonlocal-relativity/**"
       - "scirust-sim/**"
       - "scirust-special/**"
+      - "experiments/nonlocal-relativity-v2/**"
       - ".github/workflows/native-arm64.yml"
   push:
     branches: [master, main, develop]
@@ -22,6 +23,7 @@ on:
       - "scirust-nonlocal-relativity/**"
       - "scirust-sim/**"
       - "scirust-special/**"
+      - "experiments/nonlocal-relativity-v2/**"
       - ".github/workflows/native-arm64.yml"
   workflow_dispatch:
 
@@ -96,6 +98,12 @@ jobs:
 
       - name: Test experimental nonlocal relativity
         run: cargo test -p scirust-nonlocal-relativity
+
+      - name: Run geometric flat cross-chart diagnostic
+        run: |
+          cargo +nightly-2026-07-02 run --locked --release \
+            -p nonlocal-relativity-experiments \
+            --bin geometric_state_diagnostic
 
       - name: Run Clippy
         run: |
