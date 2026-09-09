@@ -29,17 +29,19 @@ Symmetric tensors store only their six independent components, so symmetry is re
 
 `BssnSlicing` currently exposes two modes:
 
-- `Prescribed` — `d_t alpha = 0`; this remains the default.
+- `Prescribed` — the gauge evolution contribution to `d_t alpha` is zero; this remains the default.
 - `OnePlusLog` — live 1+log slicing. With non-zero shift the implementation also includes lapse advection.
 
-The lapse is a stored field in both modes. Selecting `Prescribed` freezes its right-hand side; it does not remove the lapse from the state layout.
+The lapse is a stored field in both modes. Selecting `Prescribed` suppresses its gauge-evolution right-hand-side contribution; it does not remove the lapse from the state layout. If Kreiss–Oliger dissipation is enabled with `.with_dissipation(sigma)`, the dissipation pass is applied across the stored state slots, including the lapse slot, so a spatially varying prescribed lapse can still receive a non-zero effective right-hand-side contribution from dissipation.
 
 ## Shift conditions actually implemented
 
 `BssnShiftCondition` currently exposes:
 
-- `Prescribed` — freezes both `beta^i` and `B^i`; this remains the default.
+- `Prescribed` — suppresses the gauge-evolution contributions for both `beta^i` and `B^i`; this remains the default.
 - `GammaDriver { eta }` — evolves the hyperbolic Gamma-driver auxiliary system through `gamma_driver_rhs`.
+
+As with the lapse, enabling Kreiss–Oliger dissipation applies the dissipation pass to the stored `beta^i` and `B^i` slots as well. Therefore `Prescribed` means prescribed with respect to the gauge evolution equations, not necessarily bitwise/static under a run that also enables dissipation on spatially varying prescribed gauge fields.
 
 The driver is fed the **full** conformal-connection rate used by the grid right-hand side. A live shift is therefore an explicit opt-in capability, not an absent future feature.
 
