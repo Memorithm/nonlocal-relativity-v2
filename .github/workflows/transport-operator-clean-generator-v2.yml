@@ -1,0 +1,553 @@
+name: Transport operator clean generator v2
+
+on:
+  push:
+    branches:
+      - research/transport-operator-production-clean
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: research/transport-operator-production-clean
+          fetch-depth: 0
+
+      - name: Install pinned nightly toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: nightly-2026-07-02
+          components: rustfmt, clippy
+
+      - name: Apply production transport specialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def insert_before(text: str, marker: str, addition: str, label: str, start: int = 0) -> str:
+              index = text.find(marker, start)
+              if index < 0:
+                  raise SystemExit(f'{label} marker not found')
+              return text[:index] + addition + text[index:]
+
+          lib_path = Path('scirust-nonlocal-relativity/src/lib.rs')
+          lib = lib_path.read_text()
+
+          trait_start = lib.find('pub trait HistoryTransport<const D: usize>: Clone {')
+          if trait_start < 0:
+              raise SystemExit('HistoryTransport trait not found')
+          trait_end_marker = '\n}\n\n/// Coordinate identity transport for retained velocity history.'
+          trait_end = lib.find(trait_end_marker, trait_start)
+          if trait_end < 0:
+              raise SystemExit('HistoryTransport trait end not found')
+          batch_method = r'''
+
+              /// Transport a batch of vectors across one accepted segment.
+              ///
+              /// The default implementation preserves scalar transport semantics but
+              /// computes every output into temporary storage first, so `vectors` is
+              /// modified only after all transports succeed. Implementations may
+              /// override this method to share segment-level work across the batch.
+              fn transport_batch<B>(
+                  &self,
+                  background: &B,
+                  vectors: &mut [[f64; D]],
+                  from_state: &WorldlineState<D>,
+                  to_state: &WorldlineState<D>,
+                  segment_step: f64,
+              ) -> NonlocalResult<()>
+              where
+                  B: Connection<D>,
+              {
+                  let mut outputs = Vec::with_capacity(vectors.len());
+                  for (retained_index, vector) in vectors.iter().copied().enumerate()
+                  {
+                      outputs.push(self.transport_segment(
+                          retained_index,
+                          background,
+                          vector,
+                          from_state,
+                          to_state,
+                          segment_step,
+                      )?);
+                  }
+                  vectors.copy_from_slice(&outputs);
+                  Ok(())
+              }
+          '''
+          lib = lib[:trait_end] + batch_method + lib[trait_end:]
+
+          error_marker = '    /// Proper-time-mode tolerance is non-finite or non-positive.\n    InvalidProperTimeTolerance'
+          error_addition = r'''    /// A precomputed transport-operator coefficient is not finite.
+              NonFiniteTransportOperator {
+                  /// Operator row index.
+                  row: usize,
+                  /// Operator column index.
+                  column: usize,
+                  /// Invalid coefficient value.
+                  value: f64,
+              },
+
+          '''
+          lib = insert_before(lib, error_marker, error_addition, 'transport operator error')
+
+          display_marker = '            Self::InvalidProperTimeTolerance(tolerance) => write!('
+          display_addition = r'''            Self::NonFiniteTransportOperator { row, column, value } => write!(
+                      formatter,
+                      "transport operator coefficient ({row}, {column}) is not finite; got {value}"
+                  ),
+          '''
+          lib = insert_before(lib, display_marker, display_addition, 'transport operator Display')
+          lib_path.write_text(lib)
+
+          transport_path = Path('scirust-nonlocal-relativity/src/transport.rs')
+          transport = transport_path.read_text()
+
+          old_doc = '''/// This is called once per accepted (or provisional) segment by
+          /// [`HistoryBackend::push_entry`] implementations. It performs `O(len)`
+          /// transport evaluations per call; combined with `N` accepted steps this
+          /// gives `O(N^2)` transport evaluations over a trajectory, each costing
+          /// `O(D^3)` for a Christoffel contraction, i.e. `O(D^3 * N^2)` overall for the
+          /// discrete-transport pipeline. This is documented in
+          /// `scirust-nonlocal-relativity/README.md`.
+          '''
+          new_doc = '''/// This is called once per accepted (or provisional) segment by
+          /// [`HistoryBackend::push_entry`] implementations. The generic batch contract is
+          /// transactional. [`DiscreteConnectionTransport`] specializes it by constructing
+          /// one segment operator in `O(D^3)` and applying it to `H` retained vectors in
+          /// `O(H * D^2)`, rather than recomputing Christoffel contractions `H` times.
+          '''
+          if old_doc not in transport:
+              raise SystemExit('retained history complexity documentation not found')
+          transport = transport.replace(old_doc, new_doc, 1)
+
+          loop_start = transport.find('    for (retained_index, existing) in entries.iter_mut().enumerate()')
+          if loop_start < 0:
+              raise SystemExit('retained scalar transport loop start not found')
+          loop_end = transport.find('\n\n    Ok(())\n}', loop_start)
+          if loop_end < 0:
+              raise SystemExit('retained scalar transport loop end not found')
+          batch_body = r'''    let mut velocities: Vec<[f64; D]> = entries.iter().map(|entry| entry.velocity).collect();
+              transport.transport_batch(
+                  background,
+                  &mut velocities,
+                  &from_state,
+                  &to_state,
+                  segment_step,
+              )?;
+              for (retained_index, velocity) in velocities.iter().enumerate()
+              {
+                  validate_transported_vector(velocity, retained_index)?;
+              }
+              for (entry, velocity) in entries.iter_mut().zip(velocities)
+              {
+                  entry.velocity = velocity;
+              }'''
+          transport = transport[:loop_start] + batch_body + transport[loop_end:]
+
+          struct_marker = '#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]\npub struct DiscreteConnectionTransport;\n'
+          struct_pos = transport.find(struct_marker)
+          if struct_pos < 0:
+              raise SystemExit('DiscreteConnectionTransport declaration not found')
+          insert_pos = struct_pos + len(struct_marker)
+          inherent_impl = r'''
+
+          impl DiscreteConnectionTransport {
+              /// Construct the linear Heun transport operator for one accepted segment.
+              ///
+              /// Let `A_0^mu_beta = Gamma^mu_(alpha beta)(x_0) u_0^alpha` and
+              /// analogously `A_1` at the segment end. With `H_0 = h A_0` and
+              /// `H_1 = h A_1`, the existing scalar Heun update is algebraically
+              ///
+              /// `V_1 = [I - 1/2 H_0 - 1/2 H_1 + 1/2 H_1 H_0] V_0`.
+              ///
+              /// The generators are scaled before multiplication. This avoids forming
+              /// `A_1 A_0` first and only then multiplying by `h^2`, which can overflow
+              /// even when the final Heun update is finite. Floating-point regrouping
+              /// means results are numerically equivalent to, but not generally
+              /// bit-identical with, [`HistoryTransport::transport_segment`].
+              pub fn segment_operator<B, const D: usize>(
+                  background: &B,
+                  from_state: &WorldlineState<D>,
+                  to_state: &WorldlineState<D>,
+                  segment_step: f64,
+              ) -> NonlocalResult<[[f64; D]; D]>
+              where
+                  B: Connection<D>,
+              {
+                  if !segment_step.is_finite()
+                  {
+                      return Err(NonlocalRelativityError::InvalidTransportSegmentStep(
+                          segment_step,
+                      ));
+                  }
+
+                  let start_symbols = background.christoffel(&from_state.coordinates);
+                  validate_transport_christoffel(&start_symbols)?;
+                  let end_symbols = background.christoffel(&to_state.coordinates);
+                  validate_transport_christoffel(&end_symbols)?;
+
+                  let mut start_scaled = transport_generator(&start_symbols, &from_state.velocity);
+                  let mut end_scaled = transport_generator(&end_symbols, &to_state.velocity);
+                  scale_transport_generator(&mut start_scaled, segment_step)?;
+                  scale_transport_generator(&mut end_scaled, segment_step)?;
+
+                  let mut operator = [[0.0_f64; D]; D];
+                  for (row_index, row) in operator.iter_mut().enumerate()
+                  {
+                      for (column_index, coefficient) in row.iter_mut().enumerate()
+                      {
+                          let mut product = 0.0_f64;
+                          for (end_value, start_row) in
+                              end_scaled[row_index].iter().zip(start_scaled.iter())
+                          {
+                              product += *end_value * start_row[column_index];
+                          }
+                          let identity = if row_index == column_index { 1.0 } else { 0.0 };
+                          *coefficient = identity
+                              - 0.5 * start_scaled[row_index][column_index]
+                              - 0.5 * end_scaled[row_index][column_index]
+                              + 0.5 * product;
+                          if !coefficient.is_finite()
+                          {
+                              return Err(NonlocalRelativityError::NonFiniteTransportOperator {
+                                  row: row_index,
+                                  column: column_index,
+                                  value: *coefficient,
+                              });
+                          }
+                      }
+                  }
+                  Ok(operator)
+              }
+
+              /// Apply a precomputed segment operator to one retained vector.
+              pub fn apply_segment_operator<const D: usize>(
+                  operator: &[[f64; D]; D],
+                  vector: [f64; D],
+                  retained_index: usize,
+              ) -> NonlocalResult<[f64; D]> {
+                  validate_history_velocity(&vector, retained_index)?;
+                  let mut transported = [0.0_f64; D];
+                  for (row, output) in operator.iter().zip(transported.iter_mut())
+                  {
+                      for (coefficient, value) in row.iter().zip(vector.iter())
+                      {
+                          *output += coefficient * value;
+                      }
+                  }
+                  validate_transported_vector(&transported, retained_index)?;
+                  Ok(transported)
+              }
+          }
+          '''
+          transport = transport[:insert_pos] + inherent_impl + transport[insert_pos:]
+
+          impl_start = transport.find('impl<const D: usize> HistoryTransport<D> for DiscreteConnectionTransport')
+          if impl_start < 0:
+              raise SystemExit('DiscreteConnectionTransport trait impl not found')
+          impl_end_marker = '\n}\n\nfn heun_discrete_parallel_transport'
+          impl_end = transport.find(impl_end_marker, impl_start)
+          if impl_end < 0:
+              raise SystemExit('DiscreteConnectionTransport trait impl end not found')
+          override = r'''
+
+              fn transport_batch<B>(
+                  &self,
+                  background: &B,
+                  vectors: &mut [[f64; D]],
+                  from_state: &WorldlineState<D>,
+                  to_state: &WorldlineState<D>,
+                  segment_step: f64,
+              ) -> NonlocalResult<()>
+              where
+                  B: Connection<D>,
+              {
+                  let operator =
+                      Self::segment_operator(background, from_state, to_state, segment_step)?;
+                  let mut outputs = Vec::with_capacity(vectors.len());
+                  for (retained_index, vector) in vectors.iter().copied().enumerate()
+                  {
+                      outputs.push(Self::apply_segment_operator(
+                          &operator,
+                          vector,
+                          retained_index,
+                      )?);
+                  }
+                  vectors.copy_from_slice(&outputs);
+                  Ok(())
+              }
+          '''
+          transport = transport[:impl_end] + override + transport[impl_end:]
+
+          derivative_marker = '/// Evaluate `-Gamma^mu_(alpha beta) u^alpha V^beta`, the linear parallel\n/// transport derivative of `vector` along local direction `local_velocity`.\nfn parallel_transport_derivative<const D: usize>('
+          derivative_pos = transport.find(derivative_marker)
+          if derivative_pos < 0:
+              raise SystemExit('parallel transport derivative marker not found')
+          helpers = r'''/// Build `A^mu_beta = Gamma^mu_(alpha beta) u^alpha`, the linear generator
+          /// whose negative multiplies a vector in the parallel-transport equation.
+          fn transport_generator<const D: usize>(
+              christoffel: &[[[f64; D]; D]; D],
+              local_velocity: &[f64; D],
+          ) -> [[f64; D]; D] {
+              let mut generator = [[0.0_f64; D]; D];
+              for (row_index, row) in generator.iter_mut().enumerate()
+              {
+                  for (column_index, coefficient) in row.iter_mut().enumerate()
+                  {
+                      for (alpha, velocity) in local_velocity.iter().copied().enumerate()
+                      {
+                          *coefficient += christoffel[row_index][alpha][column_index] * velocity;
+                      }
+                  }
+              }
+              generator
+          }
+
+          fn scale_transport_generator<const D: usize>(
+              generator: &mut [[f64; D]; D],
+              segment_step: f64,
+          ) -> NonlocalResult<()> {
+              for (row_index, row) in generator.iter_mut().enumerate()
+              {
+                  for (column_index, coefficient) in row.iter_mut().enumerate()
+                  {
+                      *coefficient *= segment_step;
+                      if !coefficient.is_finite()
+                      {
+                          return Err(NonlocalRelativityError::NonFiniteTransportOperator {
+                              row: row_index,
+                              column: column_index,
+                              value: *coefficient,
+                          });
+                      }
+                  }
+              }
+              Ok(())
+          }
+
+          '''
+          transport = transport[:derivative_pos] + helpers + transport[derivative_pos:]
+          transport_path.write_text(transport)
+
+          test_path = Path('scirust-nonlocal-relativity/tests/transport_operator_factorization.rs')
+          tests = test_path.read_text()
+          tests = 'use std::cell::Cell;\n\nuse scirust_nonlocal_relativity::{CompleteUniformHistory, HistoryBackend, NonlocalResult};\n' + tests
+          tests += r'''
+
+          #[derive(Debug, Clone, Copy)]
+          struct ExtremeConnection;
+
+          impl Connection<1> for ExtremeConnection {
+              fn christoffel(&self, _coordinates: &[f64; 1]) -> [[[f64; 1]; 1]; 1] {
+                  [[[1.0e200]]]
+              }
+          }
+
+          #[derive(Debug, Default)]
+          struct CountingBatchTransport {
+              batch_calls: Cell<usize>,
+              scalar_calls: Cell<usize>,
+          }
+
+          impl Clone for CountingBatchTransport {
+              fn clone(&self) -> Self {
+                  Self {
+                      batch_calls: Cell::new(self.batch_calls.get()),
+                      scalar_calls: Cell::new(self.scalar_calls.get()),
+                  }
+              }
+          }
+
+          impl<const D: usize> HistoryTransport<D> for CountingBatchTransport {
+              fn transport_velocity(
+                  &self,
+                  _retained_index: usize,
+                  velocity: [f64; D],
+                  _current_state: &WorldlineState<D>,
+              ) -> NonlocalResult<[f64; D]> {
+                  Ok(velocity)
+              }
+
+              fn transport_segment<B>(
+                  &self,
+                  _retained_index: usize,
+                  _background: &B,
+                  vector: [f64; D],
+                  _from_state: &WorldlineState<D>,
+                  _to_state: &WorldlineState<D>,
+                  _segment_step: f64,
+              ) -> NonlocalResult<[f64; D]>
+              where
+                  B: Connection<D>,
+              {
+                  self.scalar_calls.set(self.scalar_calls.get() + 1);
+                  Ok(vector)
+              }
+
+              fn transport_batch<B>(
+                  &self,
+                  _background: &B,
+                  _vectors: &mut [[f64; D]],
+                  _from_state: &WorldlineState<D>,
+                  _to_state: &WorldlineState<D>,
+                  _segment_step: f64,
+              ) -> NonlocalResult<()>
+              where
+                  B: Connection<D>,
+              {
+                  self.batch_calls.set(self.batch_calls.get() + 1);
+                  Ok(())
+              }
+          }
+
+          #[test]
+          fn production_operator_matches_basis_probed_scalar_oracle() {
+              let background = CylindricalMinkowski;
+              let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
+              let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+              let oracle = probed_segment_operator(&background, &from, &to, 0.03);
+              let production =
+                  DiscreteConnectionTransport::segment_operator(&background, &from, &to, 0.03)
+                      .expect("production operator construction must succeed");
+
+              for row in 0..4
+              {
+                  for column in 0..4
+                  {
+                      let error = (oracle[row][column] - production[row][column]).abs();
+                      assert!(
+                          error <= 2.0e-15,
+                          "operator entry ({row}, {column}) differs by {error:.3e}: oracle={}, production={}",
+                          oracle[row][column], production[row][column]
+                      );
+                  }
+              }
+          }
+
+          #[test]
+          fn production_batch_matches_existing_scalar_transport() {
+              let background = CylindricalMinkowski;
+              let transport = DiscreteConnectionTransport;
+              let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
+              let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+              let step = 0.03;
+              let mut batch = [
+                  [1.3, 0.2, -0.1, 0.05],
+                  [0.7, -0.4, 0.3, 0.2],
+                  [-0.2, 0.6, 0.1, -0.8],
+                  [2.0, 0.0, 0.0, 0.0],
+              ];
+              let inputs = batch;
+
+              transport
+                  .transport_batch(&background, &mut batch, &from, &to, step)
+                  .expect("batch transport must succeed");
+
+              for (index, input) in inputs.into_iter().enumerate()
+              {
+                  let scalar = transport
+                      .transport_segment(index, &background, input, &from, &to, step)
+                      .expect("scalar transport must succeed");
+                  let error = max_abs_difference(&scalar, &batch[index]);
+                  assert!(error <= 3.0e-15, "batch/scalar error {error:.3e} for vector {index}");
+              }
+          }
+
+          #[test]
+          fn production_batch_is_transactional_on_invalid_input() {
+              let transport = DiscreteConnectionTransport;
+              let from = WorldlineState::new([0.0, 0.0, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0]);
+              let to = WorldlineState::new([0.1, 0.01, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0]);
+              let mut vectors = [[1.0, 2.0, 3.0, 4.0], [f64::INFINITY, 0.0, 0.0, 0.0]];
+              let before = vectors;
+
+              assert!(
+                  transport
+                      .transport_batch(&Minkowski, &mut vectors, &from, &to, 0.1)
+                      .is_err()
+              );
+              assert_eq!(vectors[0], before[0]);
+              assert!(vectors[1][0].is_infinite());
+          }
+
+          #[test]
+          fn scaled_generator_avoids_spurious_unscaled_product_overflow() {
+              let transport = DiscreteConnectionTransport;
+              let from = WorldlineState::new([0.0], [1.0]);
+              let to = WorldlineState::new([1.0e-200], [1.0]);
+              let step = 1.0e-200;
+
+              let scalar = transport
+                  .transport_segment(0, &ExtremeConnection, [1.0], &from, &to, step)
+                  .expect("scalar Heun oracle must stay finite");
+              let operator =
+                  DiscreteConnectionTransport::segment_operator(&ExtremeConnection, &from, &to, step)
+                      .expect("step-scaled production operator must stay finite");
+              let factored = DiscreteConnectionTransport::apply_segment_operator(&operator, [1.0], 0)
+                  .expect("finite production operator must apply successfully");
+
+              assert!(operator[0][0].is_finite());
+              assert!(scalar[0].is_finite());
+              assert!(factored[0].is_finite());
+              assert!((operator[0][0] - 0.5).abs() <= 2.0e-15);
+              assert!((scalar[0] - factored[0]).abs() <= 2.0e-15);
+          }
+
+          #[test]
+          fn retained_history_dispatches_one_batch_per_accepted_segment() {
+              let transport = CountingBatchTransport::default();
+              let mut history = CompleteUniformHistory::<4>::new();
+              let first = HistoryEntry::new(
+                  [0.0, 1.0, 0.0, 0.0],
+                  [1.0, 0.1, 0.0, 0.0],
+                  0.0,
+              );
+              let second = HistoryEntry::new(
+                  [0.1, 1.01, 0.0, 0.0],
+                  [1.0, 0.1, 0.0, 0.0],
+                  0.1,
+              );
+
+              history
+                  .push_entry(&Minkowski, &transport, first)
+                  .expect("first retained entry must be accepted");
+              history
+                  .push_entry(&Minkowski, &transport, second)
+                  .expect("second retained entry must batch-transport prior history");
+
+              assert_eq!(transport.batch_calls.get(), 1);
+              assert_eq!(transport.scalar_calls.get(), 0);
+              assert_eq!(history.retained_samples(), 2);
+              assert_eq!(history.sample(0), Some(first.velocity));
+          }
+          '''
+          test_path.write_text(tests)
+          PY
+
+      - name: Format and validate focused transport slice
+        run: |
+          cargo +nightly-2026-07-02 fmt --all
+          cargo +nightly-2026-07-02 test --locked -p scirust-nonlocal-relativity --test transport_operator_factorization
+          cargo +nightly-2026-07-02 test --locked -p scirust-nonlocal-relativity
+          cargo +nightly-2026-07-02 clippy --locked -p scirust-nonlocal-relativity --all-targets -- -D warnings
+          git diff --check
+
+      - name: Commit validated production slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scirust-nonlocal-relativity/src/lib.rs \
+            scirust-nonlocal-relativity/src/transport.rs \
+            scirust-nonlocal-relativity/tests/transport_operator_factorization.rs
+          git commit -m "feat(nonlocal): specialize retained transport through shared Heun operators"
+          git push origin HEAD:research/transport-operator-production-clean
