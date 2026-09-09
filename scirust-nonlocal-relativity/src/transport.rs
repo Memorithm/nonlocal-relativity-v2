@@ -69,12 +69,10 @@ impl<const D: usize> HistoryEntry<D> {
 /// ready for the caller to push `destination` itself.
 ///
 /// This is called once per accepted (or provisional) segment by
-/// [`HistoryBackend::push_entry`] implementations. It performs `O(len)`
-/// transport evaluations per call; combined with `N` accepted steps this
-/// gives `O(N^2)` transport evaluations over a trajectory, each costing
-/// `O(D^3)` for a Christoffel contraction, i.e. `O(D^3 * N^2)` overall for the
-/// discrete-transport pipeline. This is documented in
-/// `scirust-nonlocal-relativity/README.md`.
+/// [`HistoryBackend::push_entry`] implementations. The generic batch contract is
+/// transactional. [`DiscreteConnectionTransport`] specializes it by constructing
+/// one segment operator in `O(D^3)` and applying it to `H` retained vectors in
+/// `O(H * D^2)`, rather than recomputing Christoffel contractions `H` times.
 pub(crate) fn transport_retained_entries<const D: usize, B, T>(
     entries: &mut [HistoryEntry<D>],
     background: &B,
@@ -95,18 +93,21 @@ where
     let to_state = WorldlineState::new(destination.coordinates, destination.velocity);
     let segment_step = destination.parameter - last.parameter;
 
-    for (retained_index, existing) in entries.iter_mut().enumerate()
+    let mut velocities: Vec<[f64; D]> = entries.iter().map(|entry| entry.velocity).collect();
+    transport.transport_batch(
+        background,
+        &mut velocities,
+        &from_state,
+        &to_state,
+        segment_step,
+    )?;
+    for (retained_index, velocity) in velocities.iter().enumerate()
     {
-        let transported = transport.transport_segment(
-            retained_index,
-            background,
-            existing.velocity,
-            &from_state,
-            &to_state,
-            segment_step,
-        )?;
-        validate_transported_vector(&transported, retained_index)?;
-        existing.velocity = transported;
+        validate_transported_vector(velocity, retained_index)?;
+    }
+    for (entry, velocity) in entries.iter_mut().zip(velocities)
+    {
+        entry.velocity = velocity;
     }
 
     Ok(())
@@ -195,6 +196,94 @@ where
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DiscreteConnectionTransport;
 
+impl DiscreteConnectionTransport {
+    /// Construct the linear Heun transport operator for one accepted segment.
+    ///
+    /// Let `A_0^mu_beta = Gamma^mu_(alpha beta)(x_0) u_0^alpha` and
+    /// analogously `A_1` at the segment end. With `H_0 = h A_0` and
+    /// `H_1 = h A_1`, the existing scalar Heun update is algebraically
+    ///
+    /// `V_1 = [I - 1/2 H_0 - 1/2 H_1 + 1/2 H_1 H_0] V_0`.
+    ///
+    /// The generators are scaled before multiplication. This avoids forming
+    /// `A_1 A_0` first and only then multiplying by `h^2`, which can overflow
+    /// even when the final Heun update is finite. Floating-point regrouping
+    /// means results are numerically equivalent to, but not generally
+    /// bit-identical with, [`HistoryTransport::transport_segment`].
+    pub fn segment_operator<B, const D: usize>(
+        background: &B,
+        from_state: &WorldlineState<D>,
+        to_state: &WorldlineState<D>,
+        segment_step: f64,
+    ) -> NonlocalResult<[[f64; D]; D]>
+    where
+        B: Connection<D>,
+    {
+        if !segment_step.is_finite()
+        {
+            return Err(NonlocalRelativityError::InvalidTransportSegmentStep(
+                segment_step,
+            ));
+        }
+
+        let start_symbols = background.christoffel(&from_state.coordinates);
+        validate_transport_christoffel(&start_symbols)?;
+        let end_symbols = background.christoffel(&to_state.coordinates);
+        validate_transport_christoffel(&end_symbols)?;
+
+        let mut start_scaled = transport_generator(&start_symbols, &from_state.velocity);
+        let mut end_scaled = transport_generator(&end_symbols, &to_state.velocity);
+        scale_transport_generator(&mut start_scaled, segment_step)?;
+        scale_transport_generator(&mut end_scaled, segment_step)?;
+
+        let mut operator = [[0.0_f64; D]; D];
+        for (row_index, row) in operator.iter_mut().enumerate()
+        {
+            for (column_index, coefficient) in row.iter_mut().enumerate()
+            {
+                let mut product = 0.0_f64;
+                for (end_value, start_row) in end_scaled[row_index].iter().zip(start_scaled.iter())
+                {
+                    product += *end_value * start_row[column_index];
+                }
+                let identity = if row_index == column_index { 1.0 } else { 0.0 };
+                *coefficient = identity
+                    - 0.5 * start_scaled[row_index][column_index]
+                    - 0.5 * end_scaled[row_index][column_index]
+                    + 0.5 * product;
+                if !coefficient.is_finite()
+                {
+                    return Err(NonlocalRelativityError::NonFiniteTransportOperator {
+                        row: row_index,
+                        column: column_index,
+                        value: *coefficient,
+                    });
+                }
+            }
+        }
+        Ok(operator)
+    }
+
+    /// Apply a precomputed segment operator to one retained vector.
+    pub fn apply_segment_operator<const D: usize>(
+        operator: &[[f64; D]; D],
+        vector: [f64; D],
+        retained_index: usize,
+    ) -> NonlocalResult<[f64; D]> {
+        validate_history_velocity(&vector, retained_index)?;
+        let mut transported = [0.0_f64; D];
+        for (row, output) in operator.iter().zip(transported.iter_mut())
+        {
+            for (coefficient, value) in row.iter().zip(vector.iter())
+            {
+                *output += coefficient * value;
+            }
+        }
+        validate_transported_vector(&transported, retained_index)?;
+        Ok(transported)
+    }
+}
+
 impl<const D: usize> HistoryTransport<D> for DiscreteConnectionTransport {
     fn transport_velocity(
         &self,
@@ -226,6 +315,31 @@ impl<const D: usize> HistoryTransport<D> for DiscreteConnectionTransport {
             to_state,
             segment_step,
         )
+    }
+
+    fn transport_batch<B>(
+        &self,
+        background: &B,
+        vectors: &mut [[f64; D]],
+        from_state: &WorldlineState<D>,
+        to_state: &WorldlineState<D>,
+        segment_step: f64,
+    ) -> NonlocalResult<()>
+    where
+        B: Connection<D>,
+    {
+        let operator = Self::segment_operator(background, from_state, to_state, segment_step)?;
+        let mut outputs = Vec::with_capacity(vectors.len());
+        for (retained_index, vector) in vectors.iter().copied().enumerate()
+        {
+            outputs.push(Self::apply_segment_operator(
+                &operator,
+                vector,
+                retained_index,
+            )?);
+        }
+        vectors.copy_from_slice(&outputs);
+        Ok(())
     }
 }
 
@@ -275,6 +389,48 @@ where
     validate_transported_vector(&corrected, retained_index)?;
 
     Ok(corrected)
+}
+
+/// Build `A^mu_beta = Gamma^mu_(alpha beta) u^alpha`, the linear generator
+/// whose negative multiplies a vector in the parallel-transport equation.
+fn transport_generator<const D: usize>(
+    christoffel: &[[[f64; D]; D]; D],
+    local_velocity: &[f64; D],
+) -> [[f64; D]; D] {
+    let mut generator = [[0.0_f64; D]; D];
+    for (row_index, row) in generator.iter_mut().enumerate()
+    {
+        for (column_index, coefficient) in row.iter_mut().enumerate()
+        {
+            for (alpha, velocity) in local_velocity.iter().copied().enumerate()
+            {
+                *coefficient += christoffel[row_index][alpha][column_index] * velocity;
+            }
+        }
+    }
+    generator
+}
+
+fn scale_transport_generator<const D: usize>(
+    generator: &mut [[f64; D]; D],
+    segment_step: f64,
+) -> NonlocalResult<()> {
+    for (row_index, row) in generator.iter_mut().enumerate()
+    {
+        for (column_index, coefficient) in row.iter_mut().enumerate()
+        {
+            *coefficient *= segment_step;
+            if !coefficient.is_finite()
+            {
+                return Err(NonlocalRelativityError::NonFiniteTransportOperator {
+                    row: row_index,
+                    column: column_index,
+                    value: *coefficient,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Evaluate `-Gamma^mu_(alpha beta) u^alpha V^beta`, the linear parallel
