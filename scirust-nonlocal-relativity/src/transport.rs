@@ -179,10 +179,11 @@ where
 /// 3. evaluate the connection and velocity at the segment end;
 /// 4. correct with the average of the two derivatives.
 ///
-/// [`HistoryBackend::push_entry`] calls this once per accepted segment for
-/// every currently retained vector, so transport accumulates along the
-/// actual accepted worldline polyline rather than jumping directly between a
-/// sample's original recorded point and the current point.
+/// [`HistoryBackend::push_entry`] dispatches one batch per accepted segment.
+/// This implementation reuses one segment operator across all currently
+/// retained vectors, so transport still accumulates along the actual accepted
+/// worldline polyline rather than jumping directly between a sample's original
+/// recorded point and the current point.
 ///
 /// This is a discrete numerical approximation to parallel transport along a
 /// polyline. It is **not** an exact analytic bitensor propagator, **not** a
