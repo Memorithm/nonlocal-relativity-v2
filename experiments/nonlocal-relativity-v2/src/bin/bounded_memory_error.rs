@@ -15,7 +15,9 @@
 #![forbid(unsafe_code)]
 
 use nonlocal_relativity_experiments::{
-    circular_schwarzschild_state, euclidean_distance, print_common_header, require_finite,
+    circular_schwarzschild_state, euclidean_distance,
+    oracle::{EvidenceClass, OracleCheck, strictly_decreasing},
+    print_common_header, require_finite,
 };
 use scirust_nonlocal_relativity::{
     BoundedShortMemoryHistory, CaputoCoordinateMemory, CompleteUniformHistory,
@@ -52,6 +54,9 @@ fn main() -> Result<(), String> {
     );
     println!("window_W,endpoint_coord_err,endpoint_vel_err,endpoint_memory_l2,retained_samples");
 
+    let mut coordinate_errors = Vec::with_capacity(WINDOWS.len());
+    let mut final_window_velocity_error = None;
+
     for &window in &WINDOWS
     {
         let trajectory = run_bounded(&background, initial, window)?;
@@ -69,12 +74,57 @@ fn main() -> Result<(), String> {
             ("endpoint_vel_err", vel_err),
             ("endpoint_memory_l2", final_diagnostics.memory_l2_norm),
         ])?;
+        coordinate_errors.push(coord_err);
+        final_window_velocity_error = Some(vel_err);
         println!(
             "{window},{coord_err:.6e},{vel_err:.6e},{:.9e},{retained}",
             final_diagnostics.memory_l2_norm
         );
     }
 
+    let monotonic = strictly_decreasing(&coordinate_errors).map_err(stringify)?;
+    if !monotonic
+    {
+        return Err(
+            "bounded-memory coordinate error is not strictly decreasing with window size"
+                .to_string(),
+        );
+    }
+
+    let final_coordinate_error = *coordinate_errors
+        .last()
+        .ok_or("bounded-memory sweep produced no coordinate errors")?;
+    let final_velocity_error =
+        final_window_velocity_error.ok_or("bounded-memory sweep produced no velocity error")?;
+    let coordinate_identity = OracleCheck::absolute(
+        "full_window_coordinate_identity",
+        EvidenceClass::Regression,
+        final_coordinate_error,
+        0.0,
+        f64::MIN_POSITIVE,
+    )
+    .map_err(stringify)?;
+    let velocity_identity = OracleCheck::absolute(
+        "full_window_velocity_identity",
+        EvidenceClass::Regression,
+        final_velocity_error,
+        0.0,
+        f64::MIN_POSITIVE,
+    )
+    .map_err(stringify)?;
+    if !coordinate_identity.passed || !velocity_identity.passed
+    {
+        return Err(format!(
+            "full-window bounded history failed complete-history identity: coordinate error {:.3e}, velocity error {:.3e}",
+            coordinate_identity.absolute_error, velocity_identity.absolute_error
+        ));
+    }
+
+    println!("# oracle_check: coordinate_error_strictly_decreasing=true");
+    println!(
+        "# oracle_check: full_window_identity=true,evidence={}",
+        coordinate_identity.evidence.as_str()
+    );
     println!("# interpretation: the endpoint error against the complete-history oracle decreases");
     println!("# monotonically as the window W grows, and vanishes once W covers every sample (the");
     println!("# window then IS the full history). This is the truncation cost of the short-memory");
