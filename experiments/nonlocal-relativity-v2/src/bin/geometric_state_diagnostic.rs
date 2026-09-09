@@ -21,9 +21,8 @@
 
 use nonlocal_relativity_experiments::{print_common_header, require_finite};
 use scirust_nonlocal_relativity::{
-    CylindricalMinkowski, cartesian_to_cylindrical_coordinates,
-    cartesian_to_cylindrical_velocity, cylindrical_to_cartesian_velocity,
-    exact_cylindrical_minkowski_transport, tetrad_state_error,
+    CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
+    cylindrical_to_cartesian_velocity, exact_cylindrical_minkowski_transport, tetrad_state_error,
 };
 use scirust_relativity::{Metric, Minkowski, geodesic_logarithm, transport_along_segment};
 
@@ -145,16 +144,12 @@ fn main() -> Result<(), String> {
     // Bring the cylindrical tangent-space discrepancies back to Cartesian
     // components at the common high point. This is an independent chart-level
     // comparison in addition to the tetrad scalar magnitudes below.
-    let cylindrical_position_tangent_cartesian = cylindrical_to_cartesian_velocity(
-        high_cylindrical,
-        cylindrical_position_tangent,
-    )
-    .map_err(stringify)?;
-    let cylindrical_velocity_difference_cartesian = cylindrical_to_cartesian_velocity(
-        high_cylindrical,
-        cylindrical_velocity_difference,
-    )
-    .map_err(stringify)?;
+    let cylindrical_position_tangent_cartesian =
+        cylindrical_to_cartesian_velocity(high_cylindrical, cylindrical_position_tangent)
+            .map_err(stringify)?;
+    let cylindrical_velocity_difference_cartesian =
+        cylindrical_to_cartesian_velocity(high_cylindrical, cylindrical_velocity_difference)
+            .map_err(stringify)?;
 
     let position_vector_disagreement = max_abs_difference(
         &cartesian_position_tangent,
@@ -183,11 +178,7 @@ fn main() -> Result<(), String> {
         &low_velocity_cylindrical,
         &low_velocity_cylindrical,
     );
-    let high_norm_cartesian = metric_contraction(
-        &cartesian_metric,
-        &high_velocity,
-        &high_velocity,
-    );
+    let high_norm_cartesian = metric_contraction(&cartesian_metric, &high_velocity, &high_velocity);
     let high_norm_cylindrical = metric_contraction(
         &cylindrical_metric,
         &high_velocity_cylindrical,
@@ -211,13 +202,22 @@ fn main() -> Result<(), String> {
             "position_temporal_disagreement",
             position_temporal_disagreement,
         ),
-        ("position_spatial_disagreement", position_spatial_disagreement),
+        (
+            "position_spatial_disagreement",
+            position_spatial_disagreement,
+        ),
         (
             "velocity_temporal_disagreement",
             velocity_temporal_disagreement,
         ),
-        ("velocity_spatial_disagreement", velocity_spatial_disagreement),
-        ("metric_norm_chart_disagreement", metric_norm_chart_disagreement),
+        (
+            "velocity_spatial_disagreement",
+            velocity_spatial_disagreement,
+        ),
+        (
+            "metric_norm_chart_disagreement",
+            metric_norm_chart_disagreement,
+        ),
         ("transport_metric_norm_drift", transport_metric_norm_drift),
     ])?;
 
@@ -237,10 +237,22 @@ fn main() -> Result<(), String> {
         VELOCITY_VECTOR_TOLERANCE,
     )?;
     for (name, value) in [
-        ("position temporal frame magnitude", position_temporal_disagreement),
-        ("position spatial frame magnitude", position_spatial_disagreement),
-        ("velocity temporal frame magnitude", velocity_temporal_disagreement),
-        ("velocity spatial frame magnitude", velocity_spatial_disagreement),
+        (
+            "position temporal frame magnitude",
+            position_temporal_disagreement,
+        ),
+        (
+            "position spatial frame magnitude",
+            position_spatial_disagreement,
+        ),
+        (
+            "velocity temporal frame magnitude",
+            velocity_temporal_disagreement,
+        ),
+        (
+            "velocity spatial frame magnitude",
+            velocity_spatial_disagreement,
+        ),
     ]
     {
         require_at_most(name, value, FRAME_MAGNITUDE_TOLERANCE)?;
@@ -258,7 +270,9 @@ fn main() -> Result<(), String> {
 
     print_common_header("geometric local-state diagnostic across flat-space charts");
     println!("# evidence: numerical diagnostic cross-checked against exact flat transport");
-    println!("# claim boundary: NOT a proof of covariance/invariance; NOT wired into adaptive acceptance");
+    println!(
+        "# claim boundary: NOT a proof of covariance/invariance; NOT wired into adaptive acceptance"
+    );
     println!(
         "# log settings: step={LOG_STEP}, jacobian_step={JACOBIAN_STEP}, tolerance={LOG_TOLERANCE}, max_iterations={LOG_MAX_ITERATIONS}"
     );
