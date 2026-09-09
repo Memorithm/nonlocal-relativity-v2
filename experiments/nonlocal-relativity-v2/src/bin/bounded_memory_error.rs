@@ -85,7 +85,10 @@ fn main() -> Result<(), String> {
     let monotonic = strictly_decreasing(&coordinate_errors).map_err(stringify)?;
     if !monotonic
     {
-        return Err("bounded-memory coordinate error is not strictly decreasing with window size".to_string());
+        return Err(
+            "bounded-memory coordinate error is not strictly decreasing with window size"
+                .to_string(),
+        );
     }
 
     let final_coordinate_error = *coordinate_errors
