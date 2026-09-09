@@ -20,7 +20,7 @@ fn bench_retained_transport(c: &mut Criterion) {
     let step = 0.03;
     let mut group = c.benchmark_group("retained_transport");
 
-    for history_len in [1_usize, 8, 64, 256]
+    for history_len in [1_usize, 2, 4, 8, 64, 256]
     {
         let template = retained_vectors(history_len);
 
