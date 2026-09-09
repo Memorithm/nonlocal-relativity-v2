@@ -195,22 +195,43 @@ fn composed_segment_operators_reproduce_polyline_transport() {
 }
 
 #[test]
-fn operator_construction_and_composition_are_deterministic_bit_for_bit() {
+fn operator_construction_and_composition_match_fixed_bit_oracle() {
     let background = CylindricalMinkowski;
     let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
     let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
 
-    let first = probed_segment_operator(&background, &from, &to, 0.03);
-    let second = probed_segment_operator(&background, &from, &to, 0.03);
-    assert!(
-        matrix_bits_equal(&first, &second),
-        "operator construction changed floating-point bit patterns: first={first:?}, second={second:?}"
-    );
+    // These bit patterns were frozen from the pre-optimization scalar Heun
+    // transport. They are intentionally constants rather than a second call
+    // to the code under test, so a deterministic arithmetic refactor cannot
+    // move both sides of the assertion together.
+    let expected_operator_bits = [
+        [0x3ff0_0000_0000_0000, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000],
+        [0x0000_0000_0000_0000, 0x3fef_fffa_0615_dd12, 0x3f88_6f8b_bd2f_c544, 0x0000_0000_0000_0000],
+        [0x0000_0000_0000_0000, 0xbf3f_3724_8784_cb95, 0x3fef_f893_eea8_39eb, 0x0000_0000_0000_0000],
+        [0x0000_0000_0000_0000, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000, 0x3ff0_0000_0000_0000],
+    ];
 
-    let first_square = matrix_multiply(&first, &first);
-    let second_square = matrix_multiply(&second, &second);
-    assert!(
-        matrix_bits_equal(&first_square, &second_square),
-        "operator composition changed floating-point bit patterns: first={first_square:?}, second={second_square:?}"
-    );
+    let operator = probed_segment_operator(&background, &from, &to, 0.03);
+    for (row, expected_row) in operator.iter().zip(expected_operator_bits.iter())
+    {
+        for (value, expected_bits) in row.iter().zip(expected_row.iter())
+        {
+            assert_eq!(value.to_bits(), *expected_bits);
+        }
+    }
+
+    let expected_square_bits = [
+        [0x3ff0_0000_0000_0000, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000],
+        [0x0000_0000_0000_0000, 0x3fef_ffe8_2117_59a7, 0x3f98_6cb3_fee9_d4c8, 0x0000_0000_0000_0000],
+        [0x0000_0000_0000_0000, 0xbf4f_3382_dfcf_47bc, 0x3fef_f11d_aaef_8121, 0x0000_0000_0000_0000],
+        [0x0000_0000_0000_0000, 0x0000_0000_0000_0000, 0x0000_0000_0000_0000, 0x3ff0_0000_0000_0000],
+    ];
+    let square = matrix_multiply(&operator, &operator);
+    for (row, expected_row) in square.iter().zip(expected_square_bits.iter())
+    {
+        for (value, expected_bits) in row.iter().zip(expected_row.iter())
+        {
+            assert_eq!(value.to_bits(), *expected_bits);
+        }
+    }
 }
