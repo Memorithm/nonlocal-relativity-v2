@@ -176,7 +176,10 @@ impl OracleCheck {
 
         let absolute_error = (measured - reference).abs();
         let scale = reference.abs().max(scale_floor);
-        let normalized_error = absolute_error / scale;
+        // Divide each operand before subtracting. `measured - reference` can
+        // overflow for finite opposite-signed values (for example ±f64::MAX),
+        // while the normalized difference can still be perfectly representable.
+        let normalized_error = ((measured / scale) - (reference / scale)).abs();
         Ok(Self {
             label: label.into(),
             evidence,
@@ -238,7 +241,9 @@ pub fn observed_order(
     {
         return Err(OracleError::InvalidRefinementRatio(refinement_ratio));
     }
-    Ok((coarse_error / fine_error).ln() / refinement_ratio.ln())
+    // Subtract logarithms rather than forming the ratio first: the ratio can
+    // overflow/underflow even when the logarithmic convergence order is finite.
+    Ok((coarse_error.ln() - fine_error.ln()) / refinement_ratio.ln())
 }
 
 /// Return whether a sequence decreases strictly at every refinement step.
@@ -322,6 +327,21 @@ mod tests {
     }
 
     #[test]
+    fn relative_check_normalizes_before_overflowing_difference() {
+        let check = OracleCheck::relative(
+            "opposite_extremes",
+            EvidenceClass::Regression,
+            f64::MAX,
+            -f64::MAX,
+            3.0,
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(check.normalized_error, 2.0);
+        assert!(check.passed);
+    }
+
+    #[test]
     fn activation_guard_rejects_trivial_coverage() {
         let inactive = activation_guard("mixed_term", 1.0e-14, 1.0e-8).unwrap();
         let active = activation_guard("mixed_term", 2.0e-3, 1.0e-8).unwrap();
@@ -333,6 +353,13 @@ mod tests {
     fn observed_order_recovers_second_order() {
         let order = observed_order(4.0e-4, 1.0e-4, 2.0).unwrap();
         assert!((order - 2.0).abs() < 1.0e-14);
+    }
+
+    #[test]
+    fn observed_order_handles_extreme_finite_error_ratio() {
+        let order = observed_order(f64::MAX, f64::MIN_POSITIVE, 2.0).unwrap();
+        assert!(order.is_finite());
+        assert!(order > 2000.0);
     }
 
     #[test]
