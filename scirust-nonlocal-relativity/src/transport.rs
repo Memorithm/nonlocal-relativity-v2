@@ -14,6 +14,8 @@ use crate::{
     validate_history_velocity,
 };
 
+type TransportGenerator<const D: usize> = [[f64; D]; D];
+
 /// One accepted worldline sample retained for history-dependent evaluation.
 ///
 /// This is the typed replacement for a bare velocity component array: it
@@ -198,6 +200,24 @@ where
 pub struct DiscreteConnectionTransport;
 
 impl DiscreteConnectionTransport {
+    fn segment_generators<B, const D: usize>(
+        background: &B,
+        from_state: &WorldlineState<D>,
+        to_state: &WorldlineState<D>,
+    ) -> NonlocalResult<(TransportGenerator<D>, TransportGenerator<D>)>
+    where
+        B: Connection<D>,
+    {
+        let start_symbols = background.christoffel(&from_state.coordinates);
+        validate_transport_christoffel(&start_symbols)?;
+        let end_symbols = background.christoffel(&to_state.coordinates);
+        validate_transport_christoffel(&end_symbols)?;
+        Ok((
+            transport_generator(&start_symbols, &from_state.velocity),
+            transport_generator(&end_symbols, &to_state.velocity),
+        ))
+    }
+
     /// Construct the linear Heun transport operator for one accepted segment.
     ///
     /// Let `A_0^mu_beta = Gamma^mu_(alpha beta)(x_0) u_0^alpha` and
@@ -227,13 +247,10 @@ impl DiscreteConnectionTransport {
             ));
         }
 
-        let start_symbols = background.christoffel(&from_state.coordinates);
-        validate_transport_christoffel(&start_symbols)?;
-        let end_symbols = background.christoffel(&to_state.coordinates);
-        validate_transport_christoffel(&end_symbols)?;
-
-        let mut start_scaled = transport_generator(&start_symbols, &from_state.velocity);
-        let mut end_scaled = transport_generator(&end_symbols, &to_state.velocity);
+        let (start_generator, end_generator) =
+            Self::segment_generators(background, from_state, to_state)?;
+        let mut start_scaled = start_generator;
+        let mut end_scaled = end_generator;
         scale_transport_generator(&mut start_scaled, segment_step)?;
         scale_transport_generator(&mut end_scaled, segment_step)?;
 
@@ -329,19 +346,59 @@ impl<const D: usize> HistoryTransport<D> for DiscreteConnectionTransport {
     where
         B: Connection<D>,
     {
-        let operator = Self::segment_operator(background, from_state, to_state, segment_step)?;
+        if !segment_step.is_finite()
+        {
+            return Err(NonlocalRelativityError::InvalidTransportSegmentStep(
+                segment_step,
+            ));
+        }
+        let (start_generator, end_generator) =
+            Self::segment_generators(background, from_state, to_state)?;
         let mut outputs = Vec::with_capacity(vectors.len());
         for (retained_index, vector) in vectors.iter().copied().enumerate()
         {
-            outputs.push(Self::apply_segment_operator(
-                &operator,
-                vector,
+            outputs.push(heun_discrete_parallel_transport_from_generators(
                 retained_index,
+                vector,
+                &start_generator,
+                &end_generator,
+                segment_step,
             )?);
         }
         vectors.copy_from_slice(&outputs);
         Ok(())
     }
+}
+
+fn heun_discrete_parallel_transport_from_generators<const D: usize>(
+    retained_index: usize,
+    vector: [f64; D],
+    start_generator: &[[f64; D]; D],
+    end_generator: &[[f64; D]; D],
+    segment_step: f64,
+) -> NonlocalResult<[f64; D]> {
+    validate_history_velocity(&vector, retained_index)?;
+    let start_derivative = generator_transport_derivative(start_generator, &vector);
+    validate_transported_vector(&start_derivative, retained_index)?;
+
+    let mut predicted = [0.0_f64; D];
+    for mu in 0..D
+    {
+        predicted[mu] = vector[mu] + segment_step * start_derivative[mu];
+    }
+    validate_transported_vector(&predicted, retained_index)?;
+
+    let end_derivative = generator_transport_derivative(end_generator, &predicted);
+    validate_transported_vector(&end_derivative, retained_index)?;
+
+    let mut corrected = [0.0_f64; D];
+    for mu in 0..D
+    {
+        corrected[mu] =
+            vector[mu] + 0.5 * segment_step * (start_derivative[mu] + end_derivative[mu]);
+    }
+    validate_transported_vector(&corrected, retained_index)?;
+    Ok(corrected)
 }
 
 fn heun_discrete_parallel_transport<B, const D: usize>(
@@ -432,6 +489,22 @@ fn scale_transport_generator<const D: usize>(
         }
     }
     Ok(())
+}
+
+/// Evaluate `-A^mu_beta V^beta` after the connection/velocity contraction.
+fn generator_transport_derivative<const D: usize>(
+    generator: &[[f64; D]; D],
+    vector: &[f64; D],
+) -> [f64; D] {
+    let mut derivative = [0.0_f64; D];
+    for (row, output) in generator.iter().zip(derivative.iter_mut())
+    {
+        for (coefficient, value) in row.iter().zip(vector.iter())
+        {
+            *output -= coefficient * value;
+        }
+    }
+    derivative
 }
 
 /// Evaluate `-Gamma^mu_(alpha beta) u^alpha V^beta`, the linear parallel

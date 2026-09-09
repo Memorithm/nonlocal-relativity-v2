@@ -460,3 +460,40 @@ fn retained_history_dispatches_one_batch_per_accepted_segment() {
     assert_eq!(history.retained_samples(), 2);
     assert_eq!(history.sample(0), Some(first.velocity));
 }
+
+#[derive(Debug, Clone, Copy)]
+struct TinyOffDiagonalConnection;
+
+impl Connection<2> for TinyOffDiagonalConnection {
+    fn christoffel(&self, _coordinates: &[f64; 2]) -> [[[f64; 2]; 2]; 2] {
+        let mut symbols = [[[0.0_f64; 2]; 2]; 2];
+        symbols[0][0][1] = 1.0e-100;
+        symbols
+    }
+}
+
+#[test]
+fn production_batch_preserves_terms_that_a_precomputed_f64_operator_can_underflow() {
+    let transport = DiscreteConnectionTransport;
+    let from = WorldlineState::new([0.0, 0.0], [1.0, 0.0]);
+    let to = WorldlineState::new([1.0e-308, 0.0], [1.0, 0.0]);
+    let step = 1.0e-308;
+    let input = [0.0, 1.0e308];
+
+    let scalar = transport
+        .transport_segment(0, &TinyOffDiagonalConnection, input, &from, &to, step)
+        .expect("scalar Heun oracle must preserve the representable correction");
+    let mut batch = [input];
+    transport
+        .transport_batch(&TinyOffDiagonalConnection, &mut batch, &from, &to, step)
+        .expect("shared-generator batch must preserve scalar dynamic range");
+
+    assert!(scalar[0].is_finite());
+    assert!(batch[0][0].is_finite());
+    assert!(
+        scalar[0] != 0.0,
+        "scalar oracle must exercise a nonzero correction"
+    );
+    assert_eq!(batch[0][0].to_bits(), scalar[0].to_bits());
+    assert_eq!(batch[0][1].to_bits(), scalar[1].to_bits());
+}
