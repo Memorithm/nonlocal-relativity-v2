@@ -72,9 +72,11 @@ impl<const D: usize> HistoryEntry<D> {
 ///
 /// This is called once per accepted (or provisional) segment by
 /// [`HistoryBackend::push_entry`] implementations. The generic batch contract is
-/// transactional. [`DiscreteConnectionTransport`] specializes it by constructing
-/// one segment operator in `O(D^3)` and applying it to `H` retained vectors in
-/// `O(H * D^2)`, rather than recomputing Christoffel contractions `H` times.
+/// transactional. [`DiscreteConnectionTransport`] specializes it by contracting
+/// the start/end connection and worldline velocity into two segment generators
+/// once in `O(D^3)`, then evaluating Heun for `H` retained vectors with
+/// `O(H * D^2)` matrix-vector work. The step remains applied after each
+/// matrix-vector product, preserving the scalar path's floating-point range.
 pub(crate) fn transport_retained_entries<const D: usize, B, T>(
     entries: &mut [HistoryEntry<D>],
     background: &B,
@@ -182,10 +184,13 @@ where
 /// 4. correct with the average of the two derivatives.
 ///
 /// [`HistoryBackend::push_entry`] dispatches one batch per accepted segment.
-/// This implementation reuses one segment operator across all currently
-/// retained vectors, so transport still accumulates along the actual accepted
-/// worldline polyline rather than jumping directly between a sample's original
-/// recorded point and the current point.
+/// This implementation reuses the two connection-contracted start/end segment
+/// generators across all currently retained vectors while retaining the scalar
+/// Heun ordering `A * V` followed by multiplication by the segment step. Transport
+/// still accumulates along the actual accepted worldline polyline rather than
+/// jumping directly between a sample's original recorded point and the current
+/// point. The explicit [`Self::segment_operator`] is a characterization primitive
+/// and is intentionally not the production batch path.
 ///
 /// This is a discrete numerical approximation to parallel transport along a
 /// polyline. It is **not** an exact analytic bitensor propagator, **not** a
