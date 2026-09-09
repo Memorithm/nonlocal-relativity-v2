@@ -1,3 +1,6 @@
+use std::cell::Cell;
+
+use scirust_nonlocal_relativity::{CompleteUniformHistory, HistoryBackend, NonlocalResult};
 use scirust_nonlocal_relativity::{
     CylindricalMinkowski, DiscreteConnectionTransport, HistoryEntry, HistoryTransport,
     WorldlineState, transport_vector_along_polyline,
@@ -274,4 +277,223 @@ fn operator_construction_and_composition_match_fixed_bit_oracle() {
             assert_eq!(value.to_bits(), *expected_bits);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ExtremeConnection;
+
+impl Connection<1> for ExtremeConnection {
+    fn christoffel(&self, _coordinates: &[f64; 1]) -> [[[f64; 1]; 1]; 1] {
+        [[[1.0e200]]]
+    }
+}
+
+#[derive(Debug, Default)]
+struct CountingBatchTransport {
+    batch_calls: Cell<usize>,
+    scalar_calls: Cell<usize>,
+}
+
+impl Clone for CountingBatchTransport {
+    fn clone(&self) -> Self {
+        Self {
+            batch_calls: Cell::new(self.batch_calls.get()),
+            scalar_calls: Cell::new(self.scalar_calls.get()),
+        }
+    }
+}
+
+impl<const D: usize> HistoryTransport<D> for CountingBatchTransport {
+    fn transport_velocity(
+        &self,
+        _retained_index: usize,
+        velocity: [f64; D],
+        _current_state: &WorldlineState<D>,
+    ) -> NonlocalResult<[f64; D]> {
+        Ok(velocity)
+    }
+
+    fn transport_segment<B>(
+        &self,
+        _retained_index: usize,
+        _background: &B,
+        vector: [f64; D],
+        _from_state: &WorldlineState<D>,
+        _to_state: &WorldlineState<D>,
+        _segment_step: f64,
+    ) -> NonlocalResult<[f64; D]>
+    where
+        B: Connection<D>,
+    {
+        self.scalar_calls.set(self.scalar_calls.get() + 1);
+        Ok(vector)
+    }
+
+    fn transport_batch<B>(
+        &self,
+        _background: &B,
+        _vectors: &mut [[f64; D]],
+        _from_state: &WorldlineState<D>,
+        _to_state: &WorldlineState<D>,
+        _segment_step: f64,
+    ) -> NonlocalResult<()>
+    where
+        B: Connection<D>,
+    {
+        self.batch_calls.set(self.batch_calls.get() + 1);
+        Ok(())
+    }
+}
+
+#[test]
+fn production_operator_matches_basis_probed_scalar_oracle() {
+    let background = CylindricalMinkowski;
+    let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
+    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+    let oracle = probed_segment_operator(&background, &from, &to, 0.03);
+    let production = DiscreteConnectionTransport::segment_operator(&background, &from, &to, 0.03)
+        .expect("production operator construction must succeed");
+
+    for row in 0..4
+    {
+        for column in 0..4
+        {
+            let error = (oracle[row][column] - production[row][column]).abs();
+            assert!(
+                error <= 2.0e-15,
+                "operator entry ({row}, {column}) differs by {error:.3e}: oracle={}, production={}",
+                oracle[row][column],
+                production[row][column]
+            );
+        }
+    }
+}
+
+#[test]
+fn production_batch_matches_existing_scalar_transport() {
+    let background = CylindricalMinkowski;
+    let transport = DiscreteConnectionTransport;
+    let from = WorldlineState::new([0.0, 5.0, 0.7, 0.0], [1.2, 0.15, 0.08, -0.05]);
+    let to = WorldlineState::new([0.03, 5.01, 0.72, -0.001], [1.19, 0.1515, 0.079, -0.05]);
+    let step = 0.03;
+    let mut batch = [
+        [1.3, 0.2, -0.1, 0.05],
+        [0.7, -0.4, 0.3, 0.2],
+        [-0.2, 0.6, 0.1, -0.8],
+        [2.0, 0.0, 0.0, 0.0],
+    ];
+    let inputs = batch;
+
+    transport
+        .transport_batch(&background, &mut batch, &from, &to, step)
+        .expect("batch transport must succeed");
+
+    for (index, input) in inputs.into_iter().enumerate()
+    {
+        let scalar = transport
+            .transport_segment(index, &background, input, &from, &to, step)
+            .expect("scalar transport must succeed");
+        let error = max_abs_difference(&scalar, &batch[index]);
+        assert!(
+            error <= 3.0e-15,
+            "batch/scalar error {error:.3e} for vector {index}"
+        );
+    }
+}
+
+#[test]
+fn production_batch_is_transactional_on_invalid_input() {
+    let transport = DiscreteConnectionTransport;
+    let from = WorldlineState::new([0.0, 0.0, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0]);
+    let to = WorldlineState::new([0.1, 0.01, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0]);
+    let mut vectors = [[1.0, 2.0, 3.0, 4.0], [f64::INFINITY, 0.0, 0.0, 0.0]];
+    let before = vectors;
+
+    assert!(
+        transport
+            .transport_batch(&Minkowski, &mut vectors, &from, &to, 0.1)
+            .is_err()
+    );
+    assert_eq!(vectors[0], before[0]);
+    assert!(vectors[1][0].is_infinite());
+}
+
+#[test]
+fn scaled_generator_avoids_spurious_unscaled_product_overflow() {
+    let transport = DiscreteConnectionTransport;
+    let from = WorldlineState::new([0.0], [1.0]);
+    let to = WorldlineState::new([1.0e-200], [1.0]);
+    let step = 1.0e-200;
+
+    let scalar = transport
+        .transport_segment(0, &ExtremeConnection, [1.0], &from, &to, step)
+        .expect("scalar Heun oracle must stay finite");
+    let operator =
+        DiscreteConnectionTransport::segment_operator(&ExtremeConnection, &from, &to, step)
+            .expect("step-scaled production operator must stay finite");
+    let factored = DiscreteConnectionTransport::apply_segment_operator(&operator, [1.0], 0)
+        .expect("finite production operator must apply successfully");
+
+    assert!(operator[0][0].is_finite());
+    assert!(scalar[0].is_finite());
+    assert!(factored[0].is_finite());
+    assert!((operator[0][0] - 0.5).abs() <= 2.0e-15);
+    assert!((scalar[0] - factored[0]).abs() <= 2.0e-15);
+}
+
+#[test]
+fn retained_history_dispatches_one_batch_per_accepted_segment() {
+    let transport = CountingBatchTransport::default();
+    let mut history = CompleteUniformHistory::<4>::new();
+    let first = HistoryEntry::new([0.0, 1.0, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0], 0.0);
+    let second = HistoryEntry::new([0.1, 1.01, 0.0, 0.0], [1.0, 0.1, 0.0, 0.0], 0.1);
+
+    history
+        .push_entry(&Minkowski, &transport, first)
+        .expect("first retained entry must be accepted");
+    history
+        .push_entry(&Minkowski, &transport, second)
+        .expect("second retained entry must batch-transport prior history");
+
+    assert_eq!(transport.batch_calls.get(), 1);
+    assert_eq!(transport.scalar_calls.get(), 0);
+    assert_eq!(history.retained_samples(), 2);
+    assert_eq!(history.sample(0), Some(first.velocity));
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TinyOffDiagonalConnection;
+
+impl Connection<2> for TinyOffDiagonalConnection {
+    fn christoffel(&self, _coordinates: &[f64; 2]) -> [[[f64; 2]; 2]; 2] {
+        let mut symbols = [[[0.0_f64; 2]; 2]; 2];
+        symbols[0][0][1] = 1.0e-100;
+        symbols
+    }
+}
+
+#[test]
+fn production_batch_preserves_terms_that_a_precomputed_f64_operator_can_underflow() {
+    let transport = DiscreteConnectionTransport;
+    let from = WorldlineState::new([0.0, 0.0], [1.0, 0.0]);
+    let to = WorldlineState::new([1.0e-308, 0.0], [1.0, 0.0]);
+    let step = 1.0e-308;
+    let input = [0.0, 1.0e308];
+
+    let scalar = transport
+        .transport_segment(0, &TinyOffDiagonalConnection, input, &from, &to, step)
+        .expect("scalar Heun oracle must preserve the representable correction");
+    let mut batch = [input];
+    transport
+        .transport_batch(&TinyOffDiagonalConnection, &mut batch, &from, &to, step)
+        .expect("shared-generator batch must preserve scalar dynamic range");
+
+    assert!(scalar[0].is_finite());
+    assert!(batch[0][0].is_finite());
+    assert!(
+        scalar[0] != 0.0,
+        "scalar oracle must exercise a nonzero correction"
+    );
+    assert_eq!(batch[0][0].to_bits(), scalar[0].to_bits());
+    assert_eq!(batch[0][1].to_bits(), scalar[1].to_bits());
 }

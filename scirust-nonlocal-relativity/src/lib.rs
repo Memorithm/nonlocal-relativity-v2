@@ -499,6 +499,39 @@ pub trait HistoryTransport<const D: usize>: Clone {
         );
         Ok(vector)
     }
+
+    /// Transport a batch of vectors across one accepted segment.
+    ///
+    /// The default implementation preserves scalar transport semantics but
+    /// computes every output into temporary storage first, so `vectors` is
+    /// modified only after all transports succeed. Implementations may
+    /// override this method to share segment-level work across the batch.
+    fn transport_batch<B>(
+        &self,
+        background: &B,
+        vectors: &mut [[f64; D]],
+        from_state: &WorldlineState<D>,
+        to_state: &WorldlineState<D>,
+        segment_step: f64,
+    ) -> NonlocalResult<()>
+    where
+        B: Connection<D>,
+    {
+        let mut outputs = Vec::with_capacity(vectors.len());
+        for (retained_index, vector) in vectors.iter().copied().enumerate()
+        {
+            outputs.push(self.transport_segment(
+                retained_index,
+                background,
+                vector,
+                from_state,
+                to_state,
+                segment_step,
+            )?);
+        }
+        vectors.copy_from_slice(&outputs);
+        Ok(())
+    }
 }
 
 /// Coordinate identity transport for retained velocity history.
@@ -1163,6 +1196,16 @@ pub enum NonlocalRelativityError {
         value: f64,
     },
 
+    /// A precomputed transport-operator coefficient is not finite.
+    NonFiniteTransportOperator {
+        /// Operator row index.
+        row: usize,
+        /// Operator column index.
+        column: usize,
+        /// Invalid coefficient value.
+        value: f64,
+    },
+
     /// Proper-time-mode tolerance is non-finite or non-positive.
     InvalidProperTimeTolerance(f64),
 
@@ -1512,6 +1555,10 @@ impl fmt::Display for NonlocalRelativityError {
                 formatter,
                 "transported vector component {component} for retained sample \
                  {retained_index} is not finite; got {value}"
+            ),
+            Self::NonFiniteTransportOperator { row, column, value } => write!(
+                formatter,
+                "transport operator coefficient ({row}, {column}) is not finite; got {value}"
             ),
             Self::InvalidProperTimeTolerance(tolerance) => write!(
                 formatter,
