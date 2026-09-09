@@ -41,7 +41,7 @@ The lapse is a stored field in both modes. Selecting `Prescribed` freezes its ri
 - `Prescribed` — freezes both `beta^i` and `B^i`; this remains the default.
 - `GammaDriver { eta }` — evolves the hyperbolic Gamma-driver auxiliary system through `gamma_driver_rhs`.
 
-The driver is fed the **full** conformal-connection rate used by the grid right-hand side. A live shift is therefore un explicit opt-in capability, not an absent future feature.
+The driver is fed the **full** conformal-connection rate used by the grid right-hand side. A live shift is therefore an explicit opt-in capability, not an absent future feature.
 
 ## Spatial dimensionality
 
