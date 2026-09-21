@@ -11,7 +11,9 @@
 #![forbid(unsafe_code)]
 
 use nonlocal_relativity_experiments::{
-    circular_schwarzschild_state, euclidean_distance, print_common_header, require_finite,
+    circular_schwarzschild_state, euclidean_distance,
+    oracle::{EvidenceClass, strictly_decreasing},
+    print_common_header, require_finite,
 };
 use scirust_nonlocal_relativity::{
     AdaptiveNonlocalConfig, CaputoCoordinateMemory, CompleteUniformHistory, HeunPeceStepper,
@@ -101,6 +103,7 @@ where
     ) -> Result<(usize, WorldlineState<4>), String>,
 {
     let mut previous_error: Option<f64> = None;
+    let mut errors = Vec::with_capacity(TOLERANCES.len());
     for tolerance in TOLERANCES
     {
         let config = AdaptiveNonlocalConfig::new(
@@ -120,7 +123,20 @@ where
             println!("{label},{tolerance:.0e},{accepted_steps},{error:.6e},NA");
         }
         previous_error = Some(error);
+        errors.push(error);
     }
+
+    let monotonic = strictly_decreasing(&errors).map_err(|error| error.to_string())?;
+    if !monotonic
+    {
+        return Err(format!(
+            "{label} endpoint error is not strictly decreasing against the fixed fine-grid reference"
+        ));
+    }
+    println!(
+        "# oracle_check: {label}_endpoint_error_strictly_decreasing=true,evidence={}",
+        EvidenceClass::FineGridReference.as_str()
+    );
     Ok(())
 }
 
