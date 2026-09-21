@@ -15,7 +15,9 @@
 #![forbid(unsafe_code)]
 
 use nonlocal_relativity_experiments::{
-    circular_schwarzschild_state, euclidean_distance, print_common_header, require_finite,
+    circular_schwarzschild_state, euclidean_distance,
+    oracle::{EvidenceClass, OracleCheck, strictly_increasing},
+    print_common_header, require_finite,
 };
 use scirust_nonlocal_relativity::{
     AdaptiveNonlocalConfig, AdaptiveSimulationPolicy, CompleteUniformHistory,
@@ -63,6 +65,7 @@ fn main() -> Result<(), String> {
     println!("# beta = 0 must reproduce the baseline bit-for-bit (deviation exactly 0)");
     println!("beta,endpoint_deviation,bit_identical_to_baseline");
 
+    let mut deviations = Vec::with_capacity(BETAS.len());
     for &beta in &BETAS
     {
         let modulator = SchwarzschildKretschmannModulator::try_new(MASS, REFERENCE_LENGTH, beta)
@@ -90,8 +93,40 @@ fn main() -> Result<(), String> {
             final_state.coordinates[i].to_bits() == baseline_final.coordinates[i].to_bits()
                 && final_state.velocity[i].to_bits() == baseline_final.velocity[i].to_bits()
         });
+        if beta == 0.0
+        {
+            let identity = OracleCheck::absolute(
+                "beta_zero_baseline_identity",
+                EvidenceClass::Regression,
+                deviation,
+                0.0,
+                f64::MIN_POSITIVE,
+            )
+            .map_err(|oracle_error| oracle_error.to_string())?;
+            if !identity.passed || !bit_identical
+            {
+                return Err(
+                    "beta = 0 failed the exact unmodulated baseline identity".to_string()
+                );
+            }
+        }
+        deviations.push(deviation);
         println!("{beta:.1},{deviation:.6e},{bit_identical}");
     }
+
+    let monotonic = strictly_increasing(&deviations).map_err(|error| error.to_string())?;
+    if !monotonic
+    {
+        return Err("endpoint deviation is not strictly increasing across the beta sweep".to_string());
+    }
+    println!(
+        "# oracle_check: beta_zero_identity=true,evidence={}",
+        EvidenceClass::Regression.as_str()
+    );
+    println!(
+        "# oracle_check: beta_sensitivity_strictly_increasing=true,evidence={}",
+        EvidenceClass::PhenomenologicalSensitivity.as_str()
+    );
 
     println!(
         "# interpretation: beta = 0 reproduces the unmodulated baseline bit-for-bit (deviation 0,"
