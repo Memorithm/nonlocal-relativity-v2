@@ -74,6 +74,12 @@ pub enum OracleError {
     InvalidRefinementRatio(f64),
     /// A monotonicity check needs at least two samples.
     InsufficientSamples(usize),
+    /// A required evidence value is unavailable and must not be substituted
+    /// with a synthetic zero or automatic pass.
+    UnavailableEvidence {
+        /// Name of the missing evidence item.
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for OracleError {
@@ -102,6 +108,10 @@ impl fmt::Display for OracleError {
             Self::InsufficientSamples(count) => write!(
                 formatter,
                 "oracle monotonicity check needs at least two samples; got {count}"
+            ),
+            Self::UnavailableEvidence { name } => write!(
+                formatter,
+                "required oracle evidence '{name}' is unavailable"
             ),
         }
     }
@@ -259,6 +269,30 @@ pub fn strictly_decreasing(values: &[f64]) -> Result<bool, OracleError> {
     Ok(values.windows(2).all(|pair| pair[1] < pair[0]))
 }
 
+/// Return whether a sequence increases strictly at every sweep step.
+pub fn strictly_increasing(values: &[f64]) -> Result<bool, OracleError> {
+    if values.len() < 2
+    {
+        return Err(OracleError::InsufficientSamples(values.len()));
+    }
+    for &value in values
+    {
+        require_finite("monotonicity_value", value)?;
+    }
+    Ok(values.windows(2).all(|pair| pair[1] > pair[0]))
+}
+
+/// Require an evidence item to be explicitly available.
+///
+/// Missing evidence is a typed failure. The helper intentionally has no
+/// default-value argument so callers cannot silently turn absence into zero.
+pub fn require_evidence<T>(
+    name: &'static str,
+    evidence: Option<T>,
+) -> Result<T, OracleError> {
+    evidence.ok_or(OracleError::UnavailableEvidence { name })
+}
+
 fn require_finite(name: &'static str, value: f64) -> Result<(), OracleError> {
     if !value.is_finite()
     {
@@ -366,9 +400,25 @@ mod tests {
     fn monotonicity_is_explicit_and_validated() {
         assert!(strictly_decreasing(&[1.0, 0.5, 0.2, 0.1]).unwrap());
         assert!(!strictly_decreasing(&[1.0, 0.5, 0.6, 0.1]).unwrap());
+        assert!(strictly_increasing(&[0.0, 0.1, 0.5, 1.0]).unwrap());
+        assert!(!strictly_increasing(&[0.0, 0.1, 0.1, 1.0]).unwrap());
         assert!(matches!(
             strictly_decreasing(&[1.0]),
             Err(OracleError::InsufficientSamples(1))
         ));
+    }
+
+    #[test]
+    fn unavailable_evidence_fails_closed_instead_of_becoming_zero() {
+        let missing: Result<f64, OracleError> = require_evidence("independent_reference", None);
+        assert!(matches!(
+            missing,
+            Err(OracleError::UnavailableEvidence {
+                name: "independent_reference"
+            })
+        ));
+
+        let available = require_evidence("independent_reference", Some(0.0)).unwrap();
+        assert_eq!(available.to_bits(), 0.0_f64.to_bits());
     }
 }
