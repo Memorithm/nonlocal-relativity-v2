@@ -21,10 +21,12 @@
 
 use nonlocal_relativity_experiments::{print_common_header, require_finite};
 use scirust_nonlocal_relativity::{
-    CylindricalMinkowski, cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
-    cylindrical_to_cartesian_velocity, exact_cylindrical_minkowski_transport, tetrad_state_error,
+    CylindricalMinkowski, GeometricComparisonConfig, WorldlineState,
+    cartesian_to_cylindrical_coordinates, cartesian_to_cylindrical_velocity,
+    cylindrical_to_cartesian_velocity, exact_cylindrical_minkowski_transport,
+    geometric_trial_discrepancy,
 };
-use scirust_relativity::{Metric, Minkowski, geodesic_logarithm, transport_along_segment};
+use scirust_relativity::Minkowski;
 
 const LOG_STEP: f64 = 0.05;
 const JACOBIAN_STEP: f64 = 1.0e-6;
@@ -48,41 +50,30 @@ fn main() -> Result<(), String> {
     let low_velocity = [1.030, 0.120, -0.040, 0.020];
     let high_velocity = [1.031, 0.119, -0.039, 0.021];
 
-    let cartesian = Minkowski;
-    let cartesian_metric = cartesian.components(&high_coordinates);
-    let cartesian_position_tangent = geodesic_logarithm(
-        &cartesian,
-        &high_coordinates,
-        &low_coordinates,
+    let comparison_config = GeometricComparisonConfig::try_new(
         LOG_STEP,
         JACOBIAN_STEP,
         LOG_TOLERANCE,
         LOG_MAX_ITERATIONS,
-    )
-    .map_err(stringify)?;
-    let cartesian_low_velocity_at_high = transport_along_segment(
-        &cartesian,
-        &low_coordinates,
-        &high_coordinates,
-        &low_velocity,
         TRANSPORT_SUBSTEPS,
-    )
-    .map_err(stringify)?;
-    let cartesian_velocity_difference = subtract(cartesian_low_velocity_at_high, high_velocity);
-    let cartesian_position_frame = tetrad_state_error(
-        &cartesian_metric,
-        &high_velocity,
-        &cartesian_position_tangent,
         TIMELIKE_FLOOR,
     )
     .map_err(stringify)?;
-    let cartesian_velocity_frame = tetrad_state_error(
-        &cartesian_metric,
-        &high_velocity,
-        &cartesian_velocity_difference,
-        TIMELIKE_FLOOR,
+
+    let cartesian = Minkowski;
+    let low_cartesian_state = WorldlineState::new(low_coordinates, low_velocity);
+    let high_cartesian_state = WorldlineState::new(high_coordinates, high_velocity);
+    let cartesian_comparison = geometric_trial_discrepancy(
+        &cartesian,
+        &low_cartesian_state,
+        &high_cartesian_state,
+        comparison_config,
     )
     .map_err(stringify)?;
+    let cartesian_position_tangent = cartesian_comparison.position_tangent;
+    let cartesian_velocity_difference = cartesian_comparison.velocity_tangent;
+    let cartesian_position_frame = cartesian_comparison.position_frame;
+    let cartesian_velocity_frame = cartesian_comparison.velocity_frame;
 
     let cylindrical = CylindricalMinkowski;
     let low_cylindrical =
@@ -93,26 +84,22 @@ fn main() -> Result<(), String> {
         cartesian_to_cylindrical_velocity(low_coordinates, low_velocity).map_err(stringify)?;
     let high_velocity_cylindrical =
         cartesian_to_cylindrical_velocity(high_coordinates, high_velocity).map_err(stringify)?;
-    let cylindrical_metric = cylindrical.components(&high_cylindrical);
-
-    let cylindrical_position_tangent = geodesic_logarithm(
+    let low_cylindrical_state =
+        WorldlineState::new(low_cylindrical, low_velocity_cylindrical);
+    let high_cylindrical_state =
+        WorldlineState::new(high_cylindrical, high_velocity_cylindrical);
+    let cylindrical_comparison = geometric_trial_discrepancy(
         &cylindrical,
-        &high_cylindrical,
-        &low_cylindrical,
-        LOG_STEP,
-        JACOBIAN_STEP,
-        LOG_TOLERANCE,
-        LOG_MAX_ITERATIONS,
+        &low_cylindrical_state,
+        &high_cylindrical_state,
+        comparison_config,
     )
     .map_err(stringify)?;
-    let cylindrical_low_velocity_at_high = transport_along_segment(
-        &cylindrical,
-        &low_cylindrical,
-        &high_cylindrical,
-        &low_velocity_cylindrical,
-        TRANSPORT_SUBSTEPS,
-    )
-    .map_err(stringify)?;
+    let cylindrical_position_tangent = cylindrical_comparison.position_tangent;
+    let cylindrical_low_velocity_at_high = cylindrical_comparison.transported_low_velocity;
+    let cylindrical_velocity_difference = cylindrical_comparison.velocity_tangent;
+    let cylindrical_position_frame = cylindrical_comparison.position_frame;
+    let cylindrical_velocity_frame = cylindrical_comparison.velocity_frame;
     let exact_cylindrical_low_velocity_at_high = exact_cylindrical_minkowski_transport(
         low_cylindrical,
         low_velocity_cylindrical,
@@ -123,23 +110,6 @@ fn main() -> Result<(), String> {
         &cylindrical_low_velocity_at_high,
         &exact_cylindrical_low_velocity_at_high,
     );
-
-    let cylindrical_velocity_difference =
-        subtract(cylindrical_low_velocity_at_high, high_velocity_cylindrical);
-    let cylindrical_position_frame = tetrad_state_error(
-        &cylindrical_metric,
-        &high_velocity_cylindrical,
-        &cylindrical_position_tangent,
-        TIMELIKE_FLOOR,
-    )
-    .map_err(stringify)?;
-    let cylindrical_velocity_frame = tetrad_state_error(
-        &cylindrical_metric,
-        &high_velocity_cylindrical,
-        &cylindrical_velocity_difference,
-        TIMELIKE_FLOOR,
-    )
-    .map_err(stringify)?;
 
     // Bring the cylindrical tangent-space discrepancies back to Cartesian
     // components at the common high point. This is an independent chart-level
@@ -168,31 +138,14 @@ fn main() -> Result<(), String> {
     let velocity_spatial_disagreement =
         (cartesian_velocity_frame.spatial - cylindrical_velocity_frame.spatial).abs();
 
-    let low_norm_cartesian = metric_contraction(
-        &cartesian.components(&low_coordinates),
-        &low_velocity,
-        &low_velocity,
-    );
-    let low_norm_cylindrical = metric_contraction(
-        &cylindrical.components(&low_cylindrical),
-        &low_velocity_cylindrical,
-        &low_velocity_cylindrical,
-    );
-    let high_norm_cartesian = metric_contraction(&cartesian_metric, &high_velocity, &high_velocity);
-    let high_norm_cylindrical = metric_contraction(
-        &cylindrical_metric,
-        &high_velocity_cylindrical,
-        &high_velocity_cylindrical,
-    );
-    let transported_low_norm = metric_contraction(
-        &cylindrical_metric,
-        &cylindrical_low_velocity_at_high,
-        &cylindrical_low_velocity_at_high,
-    );
+    let low_norm_cartesian = cartesian_comparison.low_velocity_metric_norm;
+    let low_norm_cylindrical = cylindrical_comparison.low_velocity_metric_norm;
+    let high_norm_cartesian = cartesian_comparison.high_velocity_metric_norm;
+    let high_norm_cylindrical = cylindrical_comparison.high_velocity_metric_norm;
     let metric_norm_chart_disagreement = (low_norm_cartesian - low_norm_cylindrical)
         .abs()
         .max((high_norm_cartesian - high_norm_cylindrical).abs());
-    let transport_metric_norm_drift = (transported_low_norm - low_norm_cylindrical).abs();
+    let transport_metric_norm_drift = cylindrical_comparison.transport_metric_norm_drift;
 
     require_finite(&[
         ("cylindrical_transport_error", cylindrical_transport_error),
@@ -310,37 +263,12 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn subtract<const D: usize>(left: [f64; D], right: [f64; D]) -> [f64; D] {
-    let mut difference = [0.0_f64; D];
-    for (slot, (left_value, right_value)) in difference.iter_mut().zip(left.into_iter().zip(right))
-    {
-        *slot = left_value - right_value;
-    }
-    difference
-}
-
 fn max_abs_difference<const D: usize>(left: &[f64; D], right: &[f64; D]) -> f64 {
     left.iter()
         .zip(right.iter())
         .fold(0.0_f64, |maximum, (left_value, right_value)| {
             maximum.max((left_value - right_value).abs())
         })
-}
-
-fn metric_contraction<const D: usize>(
-    metric: &[[f64; D]; D],
-    left: &[f64; D],
-    right: &[f64; D],
-) -> f64 {
-    let mut value = 0.0_f64;
-    for mu in 0..D
-    {
-        for nu in 0..D
-        {
-            value += metric[mu][nu] * left[mu] * right[nu];
-        }
-    }
-    value
 }
 
 fn require_at_most(name: &str, value: f64, tolerance: f64) -> Result<(), String> {
