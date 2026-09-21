@@ -303,9 +303,9 @@ fn invert_transport_operator<const D: usize>(
     {
         let mut pivot_row = column;
         let mut pivot_abs = left[column][column].abs();
-        for row in (column + 1)..D
+        for (row, candidate_row) in left.iter().enumerate().skip(column + 1)
         {
-            let candidate = left[row][column].abs();
+            let candidate = candidate_row[column].abs();
             if candidate > pivot_abs
             {
                 pivot_abs = candidate;
