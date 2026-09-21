@@ -286,10 +286,7 @@ pub fn strictly_increasing(values: &[f64]) -> Result<bool, OracleError> {
 ///
 /// Missing evidence is a typed failure. The helper intentionally has no
 /// default-value argument so callers cannot silently turn absence into zero.
-pub fn require_evidence<T>(
-    name: &'static str,
-    evidence: Option<T>,
-) -> Result<T, OracleError> {
+pub fn require_evidence<T>(name: &'static str, evidence: Option<T>) -> Result<T, OracleError> {
     evidence.ok_or(OracleError::UnavailableEvidence { name })
 }
 
