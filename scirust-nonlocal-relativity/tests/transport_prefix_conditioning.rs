@@ -1,6 +1,6 @@
 use scirust_nonlocal_relativity::{
-    CylindricalMinkowski, DiscreteConnectionTransport, HistoryEntry,
-    transport_prefix_diagnostics, transport_vector_along_polyline,
+    CylindricalMinkowski, DiscreteConnectionTransport, HistoryEntry, transport_prefix_diagnostics,
+    transport_vector_along_polyline,
 };
 use scirust_relativity::{Connection, Minkowski};
 
@@ -47,7 +47,10 @@ fn minkowski_prefixes_are_bit_exact_identity_with_unit_condition() {
         assert_eq!(diagnostic.segment_count, segment_count);
         assert!(matrix_bits_equal(&diagnostic.prefix_operator, &expected));
         assert!(matrix_bits_equal(
-            diagnostic.inverse_operator.as_ref().expect("identity inverse"),
+            diagnostic
+                .inverse_operator
+                .as_ref()
+                .expect("identity inverse"),
             &expected
         ));
         assert_eq!(diagnostic.condition_inf, Some(1.0));
@@ -102,9 +105,8 @@ fn cylindrical_prefix_matches_scalar_polyline_and_inverts_round_trip() {
         .inverse_operator
         .as_ref()
         .expect("regular cylindrical prefix");
-    let recovered =
-        DiscreteConnectionTransport::apply_segment_operator(inverse, factored, 0)
-            .expect("inverse prefix application");
+    let recovered = DiscreteConnectionTransport::apply_segment_operator(inverse, factored, 0)
+        .expect("inverse prefix application");
 
     assert!(max_abs_difference(&direct, &factored) <= 6.0e-15);
     assert!(max_abs_difference(&vector, &recovered) <= 6.0e-15);
