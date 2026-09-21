@@ -44,6 +44,7 @@ mod adaptive_control;
 mod adaptive_stepper;
 mod charts;
 mod curved_transport;
+mod geometric_comparison;
 mod geometric_error;
 mod history_adapter;
 mod modulation;
@@ -70,6 +71,10 @@ pub use charts::{
 pub use curved_transport::{
     exact_schwarzschild_circular_orbit_transport, schwarzschild_circular_orbit_angular_velocity,
     schwarzschild_circular_orbit_four_velocity,
+};
+pub use geometric_comparison::{
+    GeometricComparisonConfig, GeometricComparisonError, GeometricTrialDiscrepancy,
+    geometric_trial_discrepancy,
 };
 pub use geometric_error::{
     OrthonormalTetrad, TetradStateError, TimelikeStateError, build_orthonormal_tetrad,
