@@ -105,9 +105,7 @@ fn main() -> Result<(), String> {
             .map_err(|oracle_error| oracle_error.to_string())?;
             if !identity.passed || !bit_identical
             {
-                return Err(
-                    "beta = 0 failed the exact unmodulated baseline identity".to_string()
-                );
+                return Err("beta = 0 failed the exact unmodulated baseline identity".to_string());
             }
         }
         deviations.push(deviation);
@@ -117,7 +115,9 @@ fn main() -> Result<(), String> {
     let monotonic = strictly_increasing(&deviations).map_err(|error| error.to_string())?;
     if !monotonic
     {
-        return Err("endpoint deviation is not strictly increasing across the beta sweep".to_string());
+        return Err(
+            "endpoint deviation is not strictly increasing across the beta sweep".to_string(),
+        );
     }
     println!(
         "# oracle_check: beta_zero_identity=true,evidence={}",
