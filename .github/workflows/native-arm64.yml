@@ -70,11 +70,14 @@ jobs:
           free -h
           rustc --version 2>/dev/null || true
 
-      - name: Prepare executable temporary directory
+      - name: Prepare writable toolchain and temporary directories
         run: |
           tmpdir="$(mktemp -d "$GITHUB_WORKSPACE/.ci-tmp.XXXXXX")"
-          chmod 700 "$tmpdir"
+          rustup_home="$tmpdir/rustup"
+          mkdir -p "$rustup_home"
+          chmod 700 "$tmpdir" "$rustup_home"
           echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$rustup_home" >> "$GITHUB_ENV"
 
       - name: Install pinned nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
