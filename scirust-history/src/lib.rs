@@ -994,9 +994,7 @@ mod tests {
         let mut history = AdaptiveAgeHistory::new(5, 2).unwrap();
         for position in 1_u64..=7
         {
-            history
-                .push(HistoryEntry::new(position, position))
-                .unwrap();
+            history.push(HistoryEntry::new(position, position)).unwrap();
         }
         let before = history.clone();
 
