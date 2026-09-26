@@ -169,7 +169,16 @@ impl fmt::Display for GeometricComparisonError {
     }
 }
 
-impl Error for GeometricComparisonError {}
+impl Error for GeometricComparisonError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self
+        {
+            Self::Relativity { source, .. } => Some(source),
+            Self::Nonlocal { source, .. } => Some(source),
+            Self::InvalidPositiveSetting { .. } | Self::InvalidCount { .. } => None,
+        }
+    }
+}
 
 /// Geometric discrepancy between low- and high-order candidate states.
 ///
@@ -410,12 +419,26 @@ mod tests {
         let low = WorldlineState::new([f64::NAN, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]);
         let high = WorldlineState::new([0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]);
 
+        let error = geometric_trial_discrepancy(&Minkowski, &low, &high, config())
+            .expect_err("a non-finite coordinate must fail closed");
         assert!(matches!(
-            geometric_trial_discrepancy(&Minkowski, &low, &high, config()),
-            Err(GeometricComparisonError::Relativity {
+            error,
+            GeometricComparisonError::Relativity {
                 operation: "geodesic_logarithm",
                 source: RelativityError::NonFiniteCoordinate(_)
-            })
+            }
         ));
+        let source = std::error::Error::source(&error)
+            .expect("wrapped relativity failures must expose their source");
+        assert!(source.downcast_ref::<RelativityError>().is_some());
+    }
+
+    #[test]
+    fn configuration_errors_have_no_wrapped_source() {
+        let error =
+            GeometricComparisonConfig::try_new(0.0, 1.0e-6, 1.0e-12, 16, 8, 1.0e-12)
+                .unwrap_err();
+
+        assert!(std::error::Error::source(&error).is_none());
     }
 }
