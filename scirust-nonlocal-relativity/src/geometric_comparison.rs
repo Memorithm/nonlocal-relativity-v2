@@ -436,8 +436,7 @@ mod tests {
     #[test]
     fn configuration_errors_have_no_wrapped_source() {
         let error =
-            GeometricComparisonConfig::try_new(0.0, 1.0e-6, 1.0e-12, 16, 8, 1.0e-12)
-                .unwrap_err();
+            GeometricComparisonConfig::try_new(0.0, 1.0e-6, 1.0e-12, 16, 8, 1.0e-12).unwrap_err();
 
         assert!(std::error::Error::source(&error).is_none());
     }
