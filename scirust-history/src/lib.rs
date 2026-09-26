@@ -976,10 +976,7 @@ mod tests {
         assert_eq!(evicted_positions, [2, 4, 6, 8, 3, 10]);
         assert_eq!(history.view().fidelity(), HistoryFidelity::Approximation);
         assert_eq!(history.view().retention_policy().capacity(), Some(6));
-        assert_eq!(
-            history.view().retention_policy().recent_samples(),
-            Some(2)
-        );
+        assert_eq!(history.view().retention_policy().recent_samples(), Some(2));
 
         let diagnostics = history.diagnostics();
         assert_eq!(diagnostics.retained_samples, 6);
