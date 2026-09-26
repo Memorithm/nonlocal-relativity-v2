@@ -123,14 +123,16 @@ impl RetentionPolicy {
     /// older anchor/summary slot always exists.
     pub fn adaptive_age(capacity: usize, recent_samples: usize) -> Result<Self, HistoryError> {
         let Some(capacity_nonzero) = NonZeroUsize::new(capacity)
-        else {
+        else
+        {
             return Err(HistoryError::InvalidAdaptiveAgeConfiguration {
                 capacity,
                 recent_samples,
             });
         };
         let Some(recent_nonzero) = NonZeroUsize::new(recent_samples)
-        else {
+        else
+        {
             return Err(HistoryError::InvalidAdaptiveAgeConfiguration {
                 capacity,
                 recent_samples,
@@ -617,7 +619,8 @@ impl<Value, Position> AdaptiveAgeHistory<Value, Position> {
             capacity,
             recent_samples,
         } = policy
-        else {
+        else
+        {
             unreachable!()
         };
 
