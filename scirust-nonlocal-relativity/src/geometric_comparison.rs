@@ -285,8 +285,7 @@ where
     })?;
 
     let low_metric = background.components(&low.coordinates);
-    let low_velocity_metric_norm =
-        metric_contraction(&low_metric, &low.velocity, &low.velocity);
+    let low_velocity_metric_norm = metric_contraction(&low_metric, &low.velocity, &low.velocity);
     let high_velocity_metric_norm =
         metric_contraction(&high_metric, &high.velocity, &high.velocity);
     let transported_low_velocity_metric_norm = metric_contraction(
@@ -298,8 +297,14 @@ where
         (transported_low_velocity_metric_norm - low_velocity_metric_norm).abs();
 
     for (quantity, value) in [
-        ("geometric_low_velocity_metric_norm", low_velocity_metric_norm),
-        ("geometric_high_velocity_metric_norm", high_velocity_metric_norm),
+        (
+            "geometric_low_velocity_metric_norm",
+            low_velocity_metric_norm,
+        ),
+        (
+            "geometric_high_velocity_metric_norm",
+            high_velocity_metric_norm,
+        ),
         (
             "geometric_transported_low_velocity_metric_norm",
             transported_low_velocity_metric_norm,
@@ -347,9 +352,7 @@ fn validate_positive_setting(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        GeometricComparisonConfig, GeometricComparisonError, geometric_trial_discrepancy,
-    };
+    use super::{GeometricComparisonConfig, GeometricComparisonError, geometric_trial_discrepancy};
     use crate::WorldlineState;
     use scirust_relativity::{Minkowski, RelativityError};
 
@@ -359,28 +362,27 @@ mod tests {
 
     #[test]
     fn flat_comparison_uses_common_high_tangent_space() {
-        let low = WorldlineState::new(
-            [0.1, 1.0, -0.5, 0.2],
-            [1.0, 0.10, -0.02, 0.03],
-        );
-        let high = WorldlineState::new(
-            [0.2, 1.2, -0.4, 0.25],
-            [1.0, 0.12, -0.01, 0.02],
-        );
+        let low = WorldlineState::new([0.1, 1.0, -0.5, 0.2], [1.0, 0.10, -0.02, 0.03]);
+        let high = WorldlineState::new([0.2, 1.2, -0.4, 0.25], [1.0, 0.12, -0.01, 0.02]);
 
-        let comparison =
-            geometric_trial_discrepancy(&Minkowski, &low, &high, config()).unwrap();
+        let comparison = geometric_trial_discrepancy(&Minkowski, &low, &high, config()).unwrap();
 
         let expected_position = [-0.1, -0.2, -0.1, -0.05];
         let expected_velocity = [0.0, -0.02, -0.01, 0.01];
         for component in 0..4
         {
-            assert!((comparison.position_tangent[component] - expected_position[component]).abs() < 2.0e-12);
+            assert!(
+                (comparison.position_tangent[component] - expected_position[component]).abs()
+                    < 2.0e-12
+            );
             assert_eq!(
                 comparison.transported_low_velocity[component].to_bits(),
                 low.velocity[component].to_bits()
             );
-            assert!((comparison.velocity_tangent[component] - expected_velocity[component]).abs() < 2.0e-15);
+            assert!(
+                (comparison.velocity_tangent[component] - expected_velocity[component]).abs()
+                    < 2.0e-15
+            );
         }
         assert!(comparison.transport_metric_norm_drift < 2.0e-15);
     }
@@ -405,14 +407,8 @@ mod tests {
 
     #[test]
     fn unavailable_logarithm_fails_closed() {
-        let low = WorldlineState::new(
-            [f64::NAN, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-        );
-        let high = WorldlineState::new(
-            [0.0, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-        );
+        let low = WorldlineState::new([f64::NAN, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]);
+        let high = WorldlineState::new([0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]);
 
         assert!(matches!(
             geometric_trial_discrepancy(&Minkowski, &low, &high, config()),
