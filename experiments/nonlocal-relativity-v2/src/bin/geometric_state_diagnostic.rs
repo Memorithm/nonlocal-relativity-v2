@@ -84,10 +84,8 @@ fn main() -> Result<(), String> {
         cartesian_to_cylindrical_velocity(low_coordinates, low_velocity).map_err(stringify)?;
     let high_velocity_cylindrical =
         cartesian_to_cylindrical_velocity(high_coordinates, high_velocity).map_err(stringify)?;
-    let low_cylindrical_state =
-        WorldlineState::new(low_cylindrical, low_velocity_cylindrical);
-    let high_cylindrical_state =
-        WorldlineState::new(high_cylindrical, high_velocity_cylindrical);
+    let low_cylindrical_state = WorldlineState::new(low_cylindrical, low_velocity_cylindrical);
+    let high_cylindrical_state = WorldlineState::new(high_cylindrical, high_velocity_cylindrical);
     let cylindrical_comparison = geometric_trial_discrepancy(
         &cylindrical,
         &low_cylindrical_state,
