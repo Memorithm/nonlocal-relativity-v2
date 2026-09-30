@@ -36,45 +36,51 @@ concurrency:
 
 jobs:
   native-arm64:
-    name: Native ARM64 (Jetson Thor)
+    name: Native ARM64 (Mac mini)
 
     # Never execute untrusted code from a fork on the self-hosted runner.
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
 
-    runs-on:
-      - self-hosted
-      - Linux
-      - ARM64
-      - scirust-arm64
-      - jetson-thor
-      - internal
+    runs-on: [self-hosted, macOS, ARM64, nonlocal-ci, mac-mini, internal]
 
     timeout-minutes: 120
 
     env:
       RUST_BACKTRACE: 1
       CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+      CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
+      CARGO_PROFILE_TEST_OVERFLOW_CHECKS: "true"
+      CARGO_BUILD_JOBS: 2
       RUSTFLAGS: "-D warnings"
 
     steps:
-      - name: Check out repository
+      - name: Check out exact source revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Display native runner information
         run: |
           uname -a
           uname -m
-          nproc
-          free -h
+          sysctl -n hw.logicalcpu
+          sysctl -n hw.memsize
           rustc --version 2>/dev/null || true
 
-      - name: Prepare executable temporary directory
+      - name: Prepare writable toolchain and temporary directories
         run: |
           tmpdir="$(mktemp -d "$GITHUB_WORKSPACE/.ci-tmp.XXXXXX")"
-          chmod 700 "$tmpdir"
+          rustup_home="$tmpdir/rustup"
+          cargo_home="$tmpdir/cargo"
+          mkdir -p "$rustup_home" "$cargo_home"
+          chmod 700 "$tmpdir" "$rustup_home" "$cargo_home"
           echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$rustup_home" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$cargo_home" >> "$GITHUB_ENV"
 
       - name: Install pinned nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
@@ -85,7 +91,7 @@ jobs:
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          shared-key: native-arm64-jetson-thor
+          shared-key: native-arm64-mac-mini
 
       - name: Check formatting
         run: cargo fmt --all -- --check

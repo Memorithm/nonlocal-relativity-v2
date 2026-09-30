@@ -415,7 +415,7 @@ mod tests {
             })
         ));
 
-        let available = require_evidence("independent_reference", Some(0.0)).unwrap();
+        let available = require_evidence("independent_reference", Some(0.0_f64)).unwrap();
         assert_eq!(available.to_bits(), 0.0_f64.to_bits());
     }
 }
