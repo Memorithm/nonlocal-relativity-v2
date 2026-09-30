@@ -1,30 +1,16 @@
 name: Nonlocal Relativity
 
-# Focused, reproducible gate for the three crates of the experimental
-# fractional-memory worldline research layer plus the staged, domain-neutral
-# retained-history crate harvested from that work:
-#   - scirust-fractional
-#   - scirust-history (standalone while excluded from the root workspace)
-#   - scirust-relativity
-#   - scirust-nonlocal-relativity
-#
-# It runs the exact commands documented in
-# scirust-nonlocal-relativity/README.md and the v2 status/paper docs, so they
-# stay reproducible locally with identical results. It performs no hardware
-# validation and claims none.
-#
-# Toolchain: this repository pins nightly-2026-07-02 in rust-toolchain.toml and
-# uses unstable rustfmt options in rustfmt.toml, so a stable toolchain cannot
-# reproduce `cargo fmt --check`. The same pinned nightly is used here (fixed,
-# not floating `@nightly`) so a newer nightly cannot silently reformat merged
-# code or change a lint and turn every open PR red. Bump the date deliberately.
-
+# Run the complete scientific gate on the repository's trusted Thor runner.
+# Keep the numerical commands and pinned toolchain identical to the hosted
+# gate; moving execution does not waive checks or change scientific claims.
 on:
   push:
     branches: [master, main, develop]
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - "scirust-fractional/**"
       - "scirust-history/**"
       - "scirust-relativity/**"
@@ -37,6 +23,8 @@ on:
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "rustfmt.toml"
       - "scirust-fractional/**"
       - "scirust-history/**"
       - "scirust-relativity/**"
@@ -44,12 +32,12 @@ on:
       - "experiments/nonlocal-relativity-v2/**"
       - "paper/nonlocal-relativity-v2.md"
       - ".github/workflows/nonlocal-relativity.yml"
+  workflow_dispatch:
 
 concurrency:
   group: nonlocal-relativity-${{ github.ref }}
   cancel-in-progress: true
 
-# Read-only: none of these jobs write back to the repository.
 permissions:
   contents: read
 
@@ -61,11 +49,29 @@ env:
 jobs:
   validate:
     name: fmt / clippy / test / docs
-    runs-on: ubuntu-latest
+    # Match the existing native gate: never execute fork code on Thor.
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, ARM64, scirust-arm64, jetson-thor, internal]
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check out exact source revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare writable toolchain and temporary directories
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d "$GITHUB_WORKSPACE/.ci-nonlocal.XXXXXX")"
+          mkdir -p "$tmpdir/rustup" "$tmpdir/cargo"
+          chmod 700 "$tmpdir" "$tmpdir/rustup" "$tmpdir/cargo"
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$tmpdir/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$tmpdir/cargo" >> "$GITHUB_ENV"
 
       - name: Install pinned nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
@@ -75,6 +81,8 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: nonlocal-relativity-thor
 
       - name: Formatting
         run: cargo +nightly-2026-07-02 fmt --all -- --check
@@ -121,10 +129,14 @@ jobs:
             --bin geometric_state_diagnostic
 
       - name: Whitespace / conflict-marker check (git diff --check)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [ -n "${GITHUB_BASE_REF:-}" ]; then
-            git fetch --no-tags --depth=100 origin "$GITHUB_BASE_REF"
-            base="$(git merge-base "origin/$GITHUB_BASE_REF" HEAD)"
+          set -euo pipefail
+          # The full checkout already contains the base. Do not fetch again
+          # after checkout deliberately removed the repository credentials.
+          if [ -n "${BASE_SHA:-}" ]; then
+            base="$(git merge-base "$BASE_SHA" HEAD)"
           elif git rev-parse HEAD~1 >/dev/null 2>&1; then
             base="HEAD~1"
           else
@@ -139,9 +151,6 @@ jobs:
 
       - name: Forbidden-marker scan
         run: |
-          # Scope: the three hardened crates, staged generic history, plus only
-          # the nonlocal-relativity v2 artifacts. Unrelated pre-existing docs
-          # elsewhere in the repo are deliberately not scanned.
           scan="scirust-fractional scirust-history scirust-relativity scirust-nonlocal-relativity"
           [ -d experiments/nonlocal-relativity-v2 ] && scan="$scan experiments/nonlocal-relativity-v2"
           [ -f paper/nonlocal-relativity-v2.md ] && scan="$scan paper/nonlocal-relativity-v2.md"
@@ -154,9 +163,27 @@ jobs:
 
   examples:
     name: run examples (release)
-    runs-on: ubuntu-latest
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, ARM64, scirust-arm64, jetson-thor, internal]
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check out exact source revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Prepare writable toolchain and temporary directories
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d "$GITHUB_WORKSPACE/.ci-nonlocal.XXXXXX")"
+          mkdir -p "$tmpdir/rustup" "$tmpdir/cargo"
+          chmod 700 "$tmpdir" "$tmpdir/rustup" "$tmpdir/cargo"
+          echo "TMPDIR=$tmpdir" >> "$GITHUB_ENV"
+          echo "RUSTUP_HOME=$tmpdir/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$tmpdir/cargo" >> "$GITHUB_ENV"
 
       - name: Install pinned nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
@@ -165,10 +192,9 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: nonlocal-relativity-thor
 
-      # Enumerate examples from the crate directory rather than maintaining a
-      # hard-coded list that could drift. Every discovered example is built and
-      # run in release mode (their runtimes are all short numerical demos).
       - name: Build and run every nonlocal-relativity example (release)
         run: |
           set -euo pipefail
