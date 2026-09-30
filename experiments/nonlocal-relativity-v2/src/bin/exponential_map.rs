@@ -14,7 +14,10 @@
 
 #![forbid(unsafe_code)]
 
-use nonlocal_relativity_experiments::{print_experiment_header, require_finite};
+use nonlocal_relativity_experiments::{
+    oracle::{EvidenceClass, OracleCheck},
+    print_experiment_header, require_finite,
+};
 use scirust_relativity::{
     AntiDeSitter, Connection, DeSitter, Minkowski, Schwarzschild, geodesic_exponential,
     geodesic_logarithm,
@@ -97,10 +100,38 @@ fn main() -> Result<(), String> {
                 _ => round_trip_error(&anti_de_sitter, position, tangent)?,
             };
             require_finite(&[("round_trip_error", error)])?;
+            let evidence = if label == "Minkowski"
+            {
+                EvidenceClass::ExactAnalytic
+            }
+            else
+            {
+                EvidenceClass::Regression
+            };
+            let oracle = OracleCheck::absolute(
+                format!("exp_log_round_trip_{label}"),
+                evidence,
+                error,
+                0.0,
+                TOLERANCE,
+            )
+            .map_err(|oracle_error| oracle_error.to_string())?;
+            if !oracle.passed
+            {
+                return Err(format!(
+                    "exp/log round-trip exceeded tolerance for {label} at scale {scale}: error {:.3e} > {:.3e}",
+                    oracle.absolute_error, oracle.tolerance
+                ));
+            }
             println!("{label},{scale:.2},{tangent_norm:.4e},{error:.3e}");
         }
     }
 
+    println!(
+        "# oracle_check: exp_log_round_trip_within_requested_tolerance=true,evidence_minkowski={},evidence_curved={}",
+        EvidenceClass::ExactAnalytic.as_str(),
+        EvidenceClass::Regression.as_str()
+    );
     println!("# interpretation: flat spacetime round-trips exactly (error at the roundoff floor);");
     println!("# in curved spacetimes the Newton logarithm inverts the exponential map to the");
     println!("# requested tolerance, so the round-trip error stays at or below that tolerance");
