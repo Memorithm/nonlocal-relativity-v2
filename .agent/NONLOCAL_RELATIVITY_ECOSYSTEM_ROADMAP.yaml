@@ -347,5 +347,6 @@ pr_repair_2026_09_30:
     diagnosis: isolated_Miri_toolchain_missing_explicit_x86_64_unknown_linux_gnu_std_target_during_scirust_sparse_doctest
     correction: explicit_host_target_added_without_changing_test_commands_or_scientific_assertions
     branches: [3777c6861b7db8ce0649efb89f950c8cd20109b1, 43d92829a640615f6bba15ecda00bc28240b6632, d9cdd4c536f14a5ca3e9eba626c7dbf8e7f5222b]
-    status: pending_exact_head_CI
+    reviews: exact_head_clean_for_all_three_candidates
+    status: exact_head_reviews_clean_pending_CI
   promotion_to_scirust: not_performed_requires_separate_source_target_lineage_and_destination_CI
