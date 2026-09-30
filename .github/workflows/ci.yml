@@ -179,41 +179,16 @@ jobs:
     name: finmigrate GnuCOBOL Equivalence
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
-    container: ubuntu@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
-    defaults:
-      run:
-        working-directory: scirust-finmigrate/tests/compiler-derived/gnucobol-3.1.2
+    timeout-minutes: 30
     steps:
-      - name: Prepare isolated Ubuntu tool dependencies
-        working-directory: /
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq ca-certificates git python3 sudo curl build-essential pkg-config
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Checkout exact source revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Prepare writable per-job compiler state
+      - name: Run the pinned Ubuntu verification environment
         shell: bash
-        run: |
-          set -euo pipefail
-          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
-          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
-          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
-          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
-          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
-      - name: Install GnuCOBOL 3.1.2
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq gnucobol
-          cobc --version
-      - name: Verify integrity manifest (SHA-256)
-        run: sha256sum -c SHA256SUMS
-      - name: Model-equivalence check (no compiler; version-independent)
-        run: python3 tools/run_baselines.py check
-      - name: Reproduce baselines vs live GnuCOBOL (verify)
-        run: python3 tools/run_baselines.py verify
+        run: bash .github/scripts/nonlocal-ubuntu-check.sh gnucobol
 
   build-test:
     name: Build & Test (nightly, x86_64)
@@ -499,7 +474,7 @@ jobs:
       - name: Install qemu-user + aarch64 cross toolchain
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-user gcc-aarch64-linux-gnu
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq qemu-user gcc-aarch64-linux-gnu
       - name: Run portable-f32 proof on aarch64 (qemu)
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
@@ -534,64 +509,33 @@ jobs:
           echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
           echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
           echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
+      - name: Install the original audit stable toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: stable
+      - name: Install the identical cargo-deny version without Docker networking
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3
+        with:
+          tool: cargo-deny@0.19.8
+      - name: Verify audit tool identity
+        run: cargo-deny --version | grep -Fx 'cargo-deny 0.19.8'
       - name: Audit default dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          arguments: --locked --workspace
+        run: cargo-deny --log-level warn --manifest-path ./Cargo.toml --locked --workspace check
       - name: Audit trader live dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-trader/Cargo.toml
-          arguments: --locked --no-default-features --features live
+        run: cargo-deny --log-level warn --manifest-path scirust-trader/Cargo.toml --locked --no-default-features --features live check
       - name: Audit RSI Anthropic dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-rsi/Cargo.toml
-          arguments: --locked --no-default-features --features anthropic
+        run: cargo-deny --log-level warn --manifest-path scirust-rsi/Cargo.toml --locked --no-default-features --features anthropic check
       - name: Audit SciAgent fetch dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-sciagent/Cargo.toml
-          arguments: --locked --no-default-features --features fetch
+        run: cargo-deny --log-level warn --manifest-path scirust-sciagent/Cargo.toml --locked --no-default-features --features fetch check
       - name: Audit wgpu dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-gpu/Cargo.toml
-          arguments: --locked --no-default-features --features wgpu
+        run: cargo-deny --log-level warn --manifest-path scirust-gpu/Cargo.toml --locked --no-default-features --features wgpu check
       - name: Audit CUDA dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-gpu/Cargo.toml
-          arguments: --locked --no-default-features --features cuda
+        run: cargo-deny --log-level warn --manifest-path scirust-gpu/Cargo.toml --locked --no-default-features --features cuda check
       - name: Audit OpenBLAS dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-core/Cargo.toml
-          arguments: --locked --no-default-features --features blas-openblas
+        run: cargo-deny --log-level warn --manifest-path scirust-core/Cargo.toml --locked --no-default-features --features blas-openblas check
       - name: Audit MKL dependency graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
-        with:
-          command: check
-          rust-version: stable
-          manifest-path: scirust-core/Cargo.toml
-          arguments: --locked --no-default-features --features blas-mkl
+        run: cargo-deny --log-level warn --manifest-path scirust-core/Cargo.toml --locked --no-default-features --features blas-mkl check
 
-  # Miri exercises the memory-view/allocation regressions in crates that
-  # contain unsafe code, then the pure numeric suites.
   miri:
     name: Miri (memory safety and numeric crates)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -724,7 +668,7 @@ jobs:
       - name: Install Mesa lavapipe (software Vulkan)
         run: |
           sudo apt-get update
-          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y mesa-vulkan-drivers vulkan-tools
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Test wgpu backend on lavapipe
@@ -737,52 +681,17 @@ jobs:
     name: GPU (CUDA no-runtime fallback)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
-    container: ubuntu@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
+    timeout-minutes: 30
     steps:
-      - name: Prepare isolated Ubuntu tool dependencies
-        working-directory: /
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq ca-certificates git python3 sudo curl build-essential pkg-config
-      - name: Verify absence of CUDA runtime in the test container
-        working-directory: /
-        run: |
-          test ! -e /dev/nvidiactl
-          python3 - <<'PY_CHECK'
-          import ctypes
-          try:
-              ctypes.CDLL("libcuda.so.1")
-          except OSError:
-              pass
-          else:
-              raise SystemExit("Unexpected CUDA runtime: fallback evidence would be invalid")
-          PY_CHECK
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Checkout exact source revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Prepare writable per-job compiler state
+      - name: Run the pinned Ubuntu verification environment
         shell: bash
-        run: |
-          set -euo pipefail
-          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
-          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
-          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
-          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
-          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
-        with:
-          toolchain: stable
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Test CUDA crates without a local runtime
-        run: |
-          cargo +stable test -p scirust-cuda --features cuda --locked
-          cargo +stable test -p scirust-gpu --features cuda --locked
+        run: bash .github/scripts/nonlocal-ubuntu-check.sh cuda
 
-  # Generate and validate a complete workspace CycloneDX SBOM.
   sbom:
     name: SBOM (CycloneDX)
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
