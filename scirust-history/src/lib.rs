@@ -98,6 +98,15 @@ pub enum RetentionPolicy {
     Complete,
     /// Retain at most the given non-zero number of most recent entries.
     Bounded(NonZeroUsize),
+    /// Retain a fixed-capacity age-adaptive approximation: the first sample
+    /// remains an anchor, the newest tail remains exact, and older samples are
+    /// thinned deterministically with a dyadic insertion-age priority.
+    AdaptiveAge {
+        /// Maximum number of retained entries.
+        capacity: NonZeroUsize,
+        /// Number of newest entries protected from age-based eviction.
+        recent_samples: NonZeroUsize,
+    },
 }
 
 impl RetentionPolicy {
@@ -108,23 +117,69 @@ impl RetentionPolicy {
             .ok_or(HistoryError::ZeroCapacity)
     }
 
+    /// Construct an age-adaptive bounded policy.
+    ///
+    /// The capacity must exceed the non-zero exact recent-tail length so an
+    /// older anchor/summary slot always exists.
+    pub fn adaptive_age(capacity: usize, recent_samples: usize) -> Result<Self, HistoryError> {
+        let Some(capacity_nonzero) = NonZeroUsize::new(capacity)
+        else
+        {
+            return Err(HistoryError::InvalidAdaptiveAgeConfiguration {
+                capacity,
+                recent_samples,
+            });
+        };
+        let Some(recent_nonzero) = NonZeroUsize::new(recent_samples)
+        else
+        {
+            return Err(HistoryError::InvalidAdaptiveAgeConfiguration {
+                capacity,
+                recent_samples,
+            });
+        };
+        if capacity <= recent_samples
+        {
+            return Err(HistoryError::InvalidAdaptiveAgeConfiguration {
+                capacity,
+                recent_samples,
+            });
+        }
+
+        Ok(Self::AdaptiveAge {
+            capacity: capacity_nonzero,
+            recent_samples: recent_nonzero,
+        })
+    }
+
     /// Return the scientific fidelity classification implied by this policy.
     #[must_use]
     pub const fn fidelity(self) -> HistoryFidelity {
         match self
         {
             Self::Complete => HistoryFidelity::Reference,
-            Self::Bounded(_) => HistoryFidelity::Approximation,
+            Self::Bounded(_) | Self::AdaptiveAge { .. } => HistoryFidelity::Approximation,
         }
     }
 
-    /// Return the maximum retained sample count, or `None` for complete retention.
+    /// Return the fixed maximum retained sample count, or `None` for complete retention.
     #[must_use]
     pub const fn capacity(self) -> Option<usize> {
         match self
         {
             Self::Complete => None,
-            Self::Bounded(capacity) => Some(capacity.get()),
+            Self::Bounded(capacity) | Self::AdaptiveAge { capacity, .. } => Some(capacity.get()),
+        }
+    }
+
+    /// Return the protected exact recent-tail length for an age-adaptive
+    /// policy, or `None` for other policies.
+    #[must_use]
+    pub const fn recent_samples(self) -> Option<usize> {
+        match self
+        {
+            Self::AdaptiveAge { recent_samples, .. } => Some(recent_samples.get()),
+            Self::Complete | Self::Bounded(_) => None,
         }
     }
 }
@@ -134,6 +189,14 @@ impl RetentionPolicy {
 pub enum HistoryError {
     /// A bounded backend was requested with zero retained capacity.
     ZeroCapacity,
+    /// An age-adaptive backend has no room for both its exact recent tail and
+    /// at least one older retained sample.
+    InvalidAdaptiveAgeConfiguration {
+        /// Requested total retained capacity.
+        capacity: usize,
+        /// Requested exact recent-tail length.
+        recent_samples: usize,
+    },
     /// The proposed position is equal to the most recently accepted position.
     DuplicatePosition {
         /// Number of samples successfully accepted before the rejected proposal.
@@ -159,6 +222,13 @@ impl fmt::Display for HistoryError {
             {
                 formatter.write_str("history retention capacity must be non-zero")
             },
+            Self::InvalidAdaptiveAgeConfiguration {
+                capacity,
+                recent_samples,
+            } => write!(
+                formatter,
+                "adaptive-age history requires capacity > recent_samples > 0; got capacity={capacity}, recent_samples={recent_samples}"
+            ),
             Self::DuplicatePosition { observed_samples } => write!(
                 formatter,
                 "history position duplicates the latest accepted position after {observed_samples} samples"
@@ -498,6 +568,178 @@ where
     }
 }
 
+/// Deterministic fixed-capacity age-adaptive retained-history approximation.
+///
+/// This backend preserves the first accepted sample as an anchor and protects
+/// the configured newest recent_samples entries exactly. When full, one older
+/// interior entry is evicted before each insertion. Candidates are ranked by
+/// the number of trailing zero bits in their insertion ordinal: powers of two
+/// and their multiples survive longer, producing deterministic
+/// dyadic/multiresolution thinning of older history without reconstructing or
+/// altering logical positions.
+///
+/// The policy is always an approximation, even before the first eviction. It
+/// changes retention only; downstream kernels remain responsible for
+/// interpreting the resulting non-uniform positions and for quantifying
+/// approximation error against CompleteHistory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdaptiveAgeHistory<Value, Position> {
+    capacity: NonZeroUsize,
+    recent_samples: NonZeroUsize,
+    entries: Vec<HistoryEntry<Value, Position>>,
+    ordinals: Vec<usize>,
+    observed_samples: usize,
+    total_evictions: usize,
+    last_selection_checks: usize,
+    total_selection_checks: usize,
+}
+
+/// Deterministic accounting for AdaptiveAgeHistory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdaptiveAgeDiagnostics {
+    /// Entries currently retained.
+    pub retained_samples: usize,
+    /// Entries accepted during this backend lifetime.
+    pub observed_samples: usize,
+    /// Entries removed by age-adaptive thinning.
+    pub total_evictions: usize,
+    /// Eviction candidates examined by the most recent insertion.
+    pub last_selection_checks: usize,
+    /// Cumulative eviction candidates examined over the backend lifetime.
+    pub total_selection_checks: usize,
+}
+
+impl<Value, Position> AdaptiveAgeHistory<Value, Position> {
+    /// Construct an empty age-adaptive history.
+    ///
+    /// capacity must exceed the non-zero recent_samples tail length.
+    pub fn new(capacity: usize, recent_samples: usize) -> Result<Self, HistoryError> {
+        let policy = RetentionPolicy::adaptive_age(capacity, recent_samples)?;
+        let RetentionPolicy::AdaptiveAge {
+            capacity,
+            recent_samples,
+        } = policy
+        else
+        {
+            unreachable!()
+        };
+
+        Ok(Self {
+            capacity,
+            recent_samples,
+            entries: Vec::with_capacity(capacity.get()),
+            ordinals: Vec::with_capacity(capacity.get()),
+            observed_samples: 0,
+            total_evictions: 0,
+            last_selection_checks: 0,
+            total_selection_checks: 0,
+        })
+    }
+
+    /// Return the fixed retained-entry capacity.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.capacity.get()
+    }
+
+    /// Return the protected exact recent-tail length.
+    #[must_use]
+    pub const fn recent_samples(&self) -> usize {
+        self.recent_samples.get()
+    }
+
+    /// Return deterministic retention-operation accounting.
+    #[must_use]
+    pub const fn diagnostics(&self) -> AdaptiveAgeDiagnostics {
+        AdaptiveAgeDiagnostics {
+            retained_samples: self.entries.len(),
+            observed_samples: self.observed_samples,
+            total_evictions: self.total_evictions,
+            last_selection_checks: self.last_selection_checks,
+            total_selection_checks: self.total_selection_checks,
+        }
+    }
+
+    fn eviction_index(&self) -> (usize, usize) {
+        debug_assert_eq!(self.entries.len(), self.capacity.get());
+        let protected_existing_recent = self.recent_samples.get().saturating_sub(1);
+        let candidate_end = self.entries.len() - protected_existing_recent;
+        debug_assert!(candidate_end > 1);
+
+        let mut best_index = 1;
+        let mut best_priority = self.ordinals[best_index].trailing_zeros();
+        let mut checks = 1;
+        for index in 2..candidate_end
+        {
+            checks += 1;
+            let priority = self.ordinals[index].trailing_zeros();
+            if priority < best_priority
+            {
+                best_index = index;
+                best_priority = priority;
+            }
+        }
+        (best_index, checks)
+    }
+}
+
+impl<Value, Position> HistoryBackend<Value, Position> for AdaptiveAgeHistory<Value, Position>
+where
+    Position: PartialOrd,
+{
+    fn retention_policy(&self) -> RetentionPolicy {
+        RetentionPolicy::AdaptiveAge {
+            capacity: self.capacity,
+            recent_samples: self.recent_samples,
+        }
+    }
+
+    fn observed_samples(&self) -> usize {
+        self.observed_samples
+    }
+
+    fn view(&self) -> HistoryView<'_, Value, Position> {
+        HistoryView::from_slices(
+            &self.entries,
+            &[],
+            self.retention_policy(),
+            self.observed_samples,
+        )
+    }
+
+    fn push(
+        &mut self,
+        entry: HistoryEntry<Value, Position>,
+    ) -> Result<PushOutcome<Value, Position>, HistoryError> {
+        validate_next_position(self.entries.last(), entry.position(), self.observed_samples)?;
+
+        self.last_selection_checks = 0;
+        let evicted = if self.entries.len() == self.capacity.get()
+        {
+            let (index, checks) = self.eviction_index();
+            self.last_selection_checks = checks;
+            self.total_selection_checks += checks;
+            self.ordinals.remove(index);
+            self.total_evictions += 1;
+            Some(self.entries.remove(index))
+        }
+        else
+        {
+            None
+        };
+
+        self.entries.push(entry);
+        self.ordinals.push(self.observed_samples);
+        self.observed_samples += 1;
+
+        Ok(PushOutcome::new(
+            evicted,
+            self.entries.len(),
+            self.observed_samples,
+        ))
+    }
+}
+
 fn validate_next_position<Value, Position>(
     latest: Option<&HistoryEntry<Value, Position>>,
     position: &Position,
@@ -531,8 +773,8 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::{
-        BoundedHistory, CompleteHistory, HistoryBackend, HistoryEntry, HistoryError,
-        HistoryFidelity, HistoryView, PushOutcome, RetentionPolicy,
+        AdaptiveAgeHistory, BoundedHistory, CompleteHistory, HistoryBackend, HistoryEntry,
+        HistoryError, HistoryFidelity, HistoryView, PushOutcome, RetentionPolicy,
     };
 
     #[test]
@@ -685,6 +927,84 @@ mod tests {
             Err(HistoryError::ZeroCapacity)
         );
         assert_eq!(RetentionPolicy::bounded(0), Err(HistoryError::ZeroCapacity));
+    }
+
+    #[test]
+    fn adaptive_age_policy_rejects_invalid_tail_geometry() {
+        assert_eq!(
+            AdaptiveAgeHistory::<u8, u64>::new(4, 0),
+            Err(HistoryError::InvalidAdaptiveAgeConfiguration {
+                capacity: 4,
+                recent_samples: 0
+            })
+        );
+        assert_eq!(
+            AdaptiveAgeHistory::<u8, u64>::new(4, 4),
+            Err(HistoryError::InvalidAdaptiveAgeConfiguration {
+                capacity: 4,
+                recent_samples: 4
+            })
+        );
+        assert_eq!(
+            RetentionPolicy::adaptive_age(0, 1),
+            Err(HistoryError::InvalidAdaptiveAgeConfiguration {
+                capacity: 0,
+                recent_samples: 1
+            })
+        );
+    }
+
+    #[test]
+    fn adaptive_age_retention_is_deterministic_and_preserves_recent_tail() {
+        let mut history = AdaptiveAgeHistory::new(6, 2).unwrap();
+        let mut evicted_positions = Vec::new();
+
+        for position in 1_u64..=12
+        {
+            let outcome = history
+                .push(HistoryEntry::new(position * 10, position))
+                .unwrap();
+            if let Some(evicted) = outcome.into_evicted()
+            {
+                evicted_positions.push(*evicted.position());
+            }
+        }
+
+        let positions: Vec<u64> = history
+            .view()
+            .iter()
+            .map(|entry| *entry.position())
+            .collect();
+        assert_eq!(positions, [1, 5, 7, 9, 11, 12]);
+        assert_eq!(evicted_positions, [2, 4, 6, 8, 3, 10]);
+        assert_eq!(history.view().fidelity(), HistoryFidelity::Approximation);
+        assert_eq!(history.view().retention_policy().capacity(), Some(6));
+        assert_eq!(history.view().retention_policy().recent_samples(), Some(2));
+
+        let diagnostics = history.diagnostics();
+        assert_eq!(diagnostics.retained_samples, 6);
+        assert_eq!(diagnostics.observed_samples, 12);
+        assert_eq!(diagnostics.total_evictions, 6);
+        assert_eq!(diagnostics.last_selection_checks, 4);
+        assert_eq!(diagnostics.total_selection_checks, 24);
+    }
+
+    #[test]
+    fn adaptive_age_failed_insert_is_transactional() {
+        let mut history = AdaptiveAgeHistory::new(5, 2).unwrap();
+        for position in 1_u64..=7
+        {
+            history.push(HistoryEntry::new(position, position)).unwrap();
+        }
+        let before = history.clone();
+
+        assert_eq!(
+            history.push(HistoryEntry::new(99, 7)),
+            Err(HistoryError::DuplicatePosition {
+                observed_samples: 7
+            })
+        );
+        assert_eq!(history, before);
     }
 
     #[test]

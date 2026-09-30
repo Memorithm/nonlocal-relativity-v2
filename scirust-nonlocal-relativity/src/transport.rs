@@ -170,6 +170,221 @@ where
     Ok(current)
 }
 
+/// Diagnostics for one prefix product of discrete segment transport operators.
+///
+/// The prefix after segment_count accepted segments is P_n = T_(n-1) ... T_0.
+/// The explicit inverse is provided only when partial-pivot Gauss-Jordan
+/// elimination succeeds with finite arithmetic. condition_inf is the
+/// corresponding infinity-norm condition estimate. These values characterize
+/// the explicit operator path only and do not change the range-preserving
+/// production batch transport.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransportPrefixDiagnostic<const D: usize> {
+    /// Number of segment operators composed into this prefix.
+    pub segment_count: usize,
+    /// Prefix operator P_n = T_(n-1) ... T_0.
+    pub prefix_operator: [[f64; D]; D],
+    /// Explicit inverse of prefix_operator, when finite inversion succeeds.
+    pub inverse_operator: Option<[[f64; D]; D]>,
+    /// Infinity-norm condition estimate, when operator and inverse norms are finite.
+    pub condition_inf: Option<f64>,
+    /// Smallest absolute pivot encountered by inversion. Zero records a
+    /// singular prefix under the chosen partial-pivoting path.
+    pub min_abs_pivot: Option<f64>,
+}
+
+/// Build every explicit prefix transport operator along waypoints and
+/// characterize its finite invertibility and infinity-norm conditioning.
+///
+/// The returned vector includes the zero-segment identity prefix at index
+/// zero, followed by one diagnostic per accepted segment. This function is a
+/// research/verification primitive for issue #40 phase 5. It deliberately does
+/// not alter retained history or select the prefix-factorized phase-6 backend.
+///
+/// # Errors
+///
+/// Returns NonlocalRelativityError::EmptyTransportPolyline when no waypoints
+/// are supplied, and forwards segment-operator validation failures.
+pub fn transport_prefix_diagnostics<B, const D: usize>(
+    background: &B,
+    waypoints: &[HistoryEntry<D>],
+) -> NonlocalResult<Vec<TransportPrefixDiagnostic<D>>>
+where
+    B: Connection<D>,
+{
+    if waypoints.is_empty()
+    {
+        return Err(NonlocalRelativityError::EmptyTransportPolyline);
+    }
+
+    let mut prefix = identity_transport_operator();
+    let mut diagnostics = Vec::with_capacity(waypoints.len());
+    diagnostics.push(diagnose_transport_prefix(0, prefix));
+
+    for (segment_index, window) in waypoints.windows(2).enumerate()
+    {
+        let from_state = WorldlineState::new(window[0].coordinates, window[0].velocity);
+        let to_state = WorldlineState::new(window[1].coordinates, window[1].velocity);
+        let segment_step = window[1].parameter - window[0].parameter;
+        let segment = DiscreteConnectionTransport::segment_operator(
+            background,
+            &from_state,
+            &to_state,
+            segment_step,
+        )?;
+        prefix = multiply_transport_operators(&segment, &prefix)?;
+        diagnostics.push(diagnose_transport_prefix(segment_index + 1, prefix));
+    }
+
+    Ok(diagnostics)
+}
+
+fn identity_transport_operator<const D: usize>() -> [[f64; D]; D] {
+    let mut identity = [[0.0_f64; D]; D];
+    for (index, row) in identity.iter_mut().enumerate()
+    {
+        row[index] = 1.0;
+    }
+    identity
+}
+
+fn multiply_transport_operators<const D: usize>(
+    left: &[[f64; D]; D],
+    right: &[[f64; D]; D],
+) -> NonlocalResult<[[f64; D]; D]> {
+    let mut product = [[0.0_f64; D]; D];
+    for row in 0..D
+    {
+        for column in 0..D
+        {
+            for inner in 0..D
+            {
+                product[row][column] += left[row][inner] * right[inner][column];
+            }
+            if !product[row][column].is_finite()
+            {
+                return Err(NonlocalRelativityError::NonFiniteTransportOperator {
+                    row,
+                    column,
+                    value: product[row][column],
+                });
+            }
+        }
+    }
+    Ok(product)
+}
+
+fn matrix_infinity_norm<const D: usize>(matrix: &[[f64; D]; D]) -> Option<f64> {
+    let mut norm = 0.0_f64;
+    for row in matrix
+    {
+        let mut row_sum = 0.0_f64;
+        for value in row
+        {
+            row_sum += value.abs();
+        }
+        if !row_sum.is_finite()
+        {
+            return None;
+        }
+        norm = norm.max(row_sum);
+    }
+    Some(norm)
+}
+
+fn invert_transport_operator<const D: usize>(
+    operator: &[[f64; D]; D],
+) -> (Option<[[f64; D]; D]>, Option<f64>) {
+    let mut left = *operator;
+    let mut inverse = identity_transport_operator();
+    let mut min_abs_pivot = f64::INFINITY;
+
+    for column in 0..D
+    {
+        let mut pivot_row = column;
+        let mut pivot_abs = left[column][column].abs();
+        for (row, candidate_row) in left.iter().enumerate().skip(column + 1)
+        {
+            let candidate = candidate_row[column].abs();
+            if candidate > pivot_abs
+            {
+                pivot_abs = candidate;
+                pivot_row = row;
+            }
+        }
+
+        if !pivot_abs.is_finite()
+        {
+            return (None, None);
+        }
+        if pivot_abs == 0.0
+        {
+            return (None, Some(0.0));
+        }
+
+        min_abs_pivot = min_abs_pivot.min(pivot_abs);
+        if pivot_row != column
+        {
+            left.swap(pivot_row, column);
+            inverse.swap(pivot_row, column);
+        }
+
+        let pivot = left[column][column];
+        for index in 0..D
+        {
+            left[column][index] /= pivot;
+            inverse[column][index] /= pivot;
+            if !left[column][index].is_finite() || !inverse[column][index].is_finite()
+            {
+                return (None, Some(min_abs_pivot));
+            }
+        }
+
+        for row in 0..D
+        {
+            if row == column
+            {
+                continue;
+            }
+
+            let factor = left[row][column];
+            for index in 0..D
+            {
+                left[row][index] -= factor * left[column][index];
+                inverse[row][index] -= factor * inverse[column][index];
+                if !left[row][index].is_finite() || !inverse[row][index].is_finite()
+                {
+                    return (None, Some(min_abs_pivot));
+                }
+            }
+        }
+    }
+
+    let min_abs_pivot = if D == 0 { None } else { Some(min_abs_pivot) };
+    (Some(inverse), min_abs_pivot)
+}
+
+fn diagnose_transport_prefix<const D: usize>(
+    segment_count: usize,
+    prefix_operator: [[f64; D]; D],
+) -> TransportPrefixDiagnostic<D> {
+    let (inverse_operator, min_abs_pivot) = invert_transport_operator(&prefix_operator);
+    let condition_inf = inverse_operator.as_ref().and_then(|inverse| {
+        let operator_norm = matrix_infinity_norm(&prefix_operator)?;
+        let inverse_norm = matrix_infinity_norm(inverse)?;
+        let condition = operator_norm * inverse_norm;
+        condition.is_finite().then_some(condition)
+    });
+
+    TransportPrefixDiagnostic {
+        segment_count,
+        prefix_operator,
+        inverse_operator,
+        condition_inf,
+        min_abs_pivot,
+    }
+}
+
 /// Deterministic discrete parallel-transport approximation for retained
 /// history vectors.
 ///

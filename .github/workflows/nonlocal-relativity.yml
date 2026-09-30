@@ -1,6 +1,6 @@
 name: Nonlocal Relativity
 
-# Run the complete scientific gate on the repository's trusted Thor runner.
+# Run the complete scientific gate on the repository's trusted Dell Linux runner.
 # Keep the numerical commands and pinned toolchain identical to the hosted
 # gate; moving execution does not waive checks or change scientific claims.
 on:
@@ -44,16 +44,20 @@ permissions:
 env:
   RUST_BACKTRACE: 1
   CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+  CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
+  CARGO_PROFILE_TEST_OVERFLOW_CHECKS: "true"
+  CARGO_BUILD_JOBS: 4
   CARGO_TERM_COLOR: always
 
 jobs:
   validate:
     name: fmt / clippy / test / docs
-    # Match the existing native gate: never execute fork code on Thor.
+    # Match the existing native gate: never execute fork code on internal runners.
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, ARM64, scirust-arm64, jetson-thor, internal]
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     timeout-minutes: 120
     steps:
       - name: Check out exact source revision
@@ -82,7 +86,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: nonlocal-relativity-thor
+          shared-key: nonlocal-relativity-dell-x64
 
       - name: Formatting
         run: cargo +nightly-2026-07-02 fmt --all -- --check
@@ -166,7 +170,7 @@ jobs:
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, ARM64, scirust-arm64, jetson-thor, internal]
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     timeout-minutes: 120
     steps:
       - name: Check out exact source revision
@@ -193,7 +197,7 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          shared-key: nonlocal-relativity-thor
+          shared-key: nonlocal-relativity-dell-x64
 
       - name: Build and run every nonlocal-relativity example (release)
         run: |
