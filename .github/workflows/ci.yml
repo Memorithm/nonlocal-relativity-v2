@@ -33,14 +33,32 @@ permissions:
 env:
   RUST_BACKTRACE: 1
   CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+  CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
+  CARGO_PROFILE_TEST_OVERFLOW_CHECKS: "true"
+  CARGO_BUILD_JOBS: 4
   RUSTFLAGS: "-D warnings"
 
 jobs:
   fmt:
     name: Format Check
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       # rustfmt output is version-sensitive and this repo's rustfmt.toml uses
       # unstable options, so the toolchain must be nightly. Pin it to a fixed
       # nightly (rather than the floating `@nightly`) so a new nightly rustfmt
@@ -57,9 +75,23 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -84,9 +116,23 @@ jobs:
   # Ambiguïtés f32/f64 = WARNING non bloquant (zéro faux positif).
   epsilon-audit:
     name: Epsilon Audit (σ gate)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -102,9 +148,23 @@ jobs:
   # warning counts (7/8) are preserved. Coreutils only — no toolchain needed.
   cobol-corpus:
     name: COBOL Corpus Integrity
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Verify COBOL reference corpus
         run: ./scripts/verify-cobol-corpus.sh
 
@@ -117,12 +177,32 @@ jobs:
   # locally with identical results.
   finmigrate-compiler:
     name: finmigrate GnuCOBOL Equivalence
-    runs-on: ubuntu-22.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
+    container: ubuntu@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
     defaults:
       run:
         working-directory: scirust-finmigrate/tests/compiler-derived/gnucobol-3.1.2
     steps:
+      - name: Prepare isolated Ubuntu tool dependencies
+        working-directory: /
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq ca-certificates git python3 sudo curl build-essential pkg-config
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install GnuCOBOL 3.1.2
         run: |
           sudo apt-get update -qq
@@ -137,9 +217,23 @@ jobs:
 
   build-test:
     name: Build & Test (nightly, x86_64)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -155,9 +249,23 @@ jobs:
   # testing warning-clean (RUSTFLAGS=-D warnings is set workspace-wide above).
   portable-simd:
     name: Build & Test (portable-simd, nightly)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -172,9 +280,23 @@ jobs:
   # nightly while the default scirust-simd build remains MSRV-compatible.
   nightly-simd:
     name: Build & Test (nightly SIMD extensions)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -189,9 +311,23 @@ jobs:
   # this is the gate industrial consumers care about.
   build-test-stable:
     name: Build & Test (stable, x86_64)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -222,9 +358,23 @@ jobs:
 
   msrv:
     name: Check (MSRV 1.89.0)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install exact MSRV
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -235,28 +385,67 @@ jobs:
         run: cargo +1.89.0 check --workspace --all-targets --locked
 
   platform-check:
-    name: Check (${{ matrix.os }}, stable)
-    runs-on: ${{ matrix.os }}
+    name: Check (${{ matrix.platform }}, stable)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - platform: macOS ARM64 native
+            runner: [self-hosted, macOS, ARM64, nonlocal-ci, mac-mini, internal]
+            target: ''
+          - platform: Windows MSVC target (Linux cross-check)
+            runner: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: stable
+          targets: ${{ matrix.target }}
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - name: Check all workspace targets
+      - name: Check all workspace targets on native macOS
+        if: matrix.target == ''
         run: cargo +stable check --workspace --all-targets --locked
+      - name: Cross-check all workspace targets for Windows MSVC
+        if: matrix.target != ''
+        run: cargo +stable check --workspace --all-targets --locked --target x86_64-pc-windows-msvc
 
   opt-in-features:
     name: Check opt-in network features
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -281,9 +470,23 @@ jobs:
   # x86_64 Debian, LIVESTATE volet 112).
   cross-check-aarch64:
     name: Cross-check (aarch64)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -314,9 +517,23 @@ jobs:
 
   deny:
     name: License & Security Audit
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Audit default dependency graph
         uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
         with:
@@ -377,9 +594,23 @@ jobs:
   # contain unsafe code, then the pure numeric suites.
   miri:
     name: Miri (memory safety and numeric crates)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain + miri
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -417,7 +648,8 @@ jobs:
   # job log. Long-running campaigns are run out-of-band.
   fuzz:
     name: Fuzz (untrusted parsers, smoke)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     continue-on-error: true
     # cargo-fuzz builds third-party crates (libfuzzer-sys) and instruments the
     # binary itself; do not impose the workspace-wide `-D warnings`.
@@ -425,6 +657,19 @@ jobs:
       RUSTFLAGS: ""
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -455,9 +700,23 @@ jobs:
   # Vulkan adapter (Mesa lavapipe) — no physical GPU required.
   gpu-wgpu:
     name: GPU (wgpu / lavapipe)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -476,9 +735,42 @@ jobs:
   # construction must skip / return Unavailable, never panic in cudarc's loader.
   gpu-cuda-fallback:
     name: GPU (CUDA no-runtime fallback)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
+    container: ubuntu@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
     steps:
+      - name: Prepare isolated Ubuntu tool dependencies
+        working-directory: /
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq ca-certificates git python3 sudo curl build-essential pkg-config
+      - name: Verify absence of CUDA runtime in the test container
+        working-directory: /
+        run: |
+          test ! -e /dev/nvidiactl
+          python3 - <<'PY_CHECK'
+          import ctypes
+          try:
+              ctypes.CDLL("libcuda.so.1")
+          except OSError:
+              pass
+          else:
+              raise SystemExit("Unexpected CUDA runtime: fallback evidence would be invalid")
+          PY_CHECK
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -493,9 +785,23 @@ jobs:
   # Generate and validate a complete workspace CycloneDX SBOM.
   sbom:
     name: SBOM (CycloneDX)
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
@@ -516,10 +822,24 @@ jobs:
   # must not gate merges.
   coverage:
     name: Code Coverage
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare writable per-job compiler state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ci_state="$(mktemp -d "$RUNNER_TEMP/nonlocal-ci.XXXXXX")"
+          mkdir -p "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          chmod 700 "$ci_state" "$ci_state/rustup" "$ci_state/cargo" "$ci_state/tmp"
+          echo "RUSTUP_HOME=$ci_state/rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$ci_state/cargo" >> "$GITHUB_ENV"
+          echo "TMPDIR=$ci_state/tmp" >> "$GITHUB_ENV"
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:

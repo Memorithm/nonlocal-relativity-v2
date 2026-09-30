@@ -36,26 +36,24 @@ concurrency:
 
 jobs:
   native-arm64:
-    name: Native ARM64 (Jetson Thor)
+    name: Native ARM64 (Mac mini)
 
     # Never execute untrusted code from a fork on the self-hosted runner.
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
 
-    runs-on:
-      - self-hosted
-      - Linux
-      - ARM64
-      - scirust-arm64
-      - jetson-thor
-      - internal
+    runs-on: [self-hosted, macOS, ARM64, nonlocal-ci, mac-mini, internal]
 
     timeout-minutes: 120
 
     env:
       RUST_BACKTRACE: 1
       CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_TEST_OPT_LEVEL: "2"
+      CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: "true"
+      CARGO_PROFILE_TEST_OVERFLOW_CHECKS: "true"
+      CARGO_BUILD_JOBS: 2
       RUSTFLAGS: "-D warnings"
 
     steps:
@@ -69,8 +67,8 @@ jobs:
         run: |
           uname -a
           uname -m
-          nproc
-          free -h
+          sysctl -n hw.logicalcpu
+          sysctl -n hw.memsize
           rustc --version 2>/dev/null || true
 
       - name: Prepare writable toolchain and temporary directories
@@ -93,7 +91,7 @@ jobs:
       - name: Restore Cargo cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
-          shared-key: native-arm64-jetson-thor
+          shared-key: native-arm64-mac-mini
 
       - name: Check formatting
         run: cargo fmt --all -- --check
