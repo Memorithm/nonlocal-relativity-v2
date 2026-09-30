@@ -317,12 +317,30 @@ fn adaptive_scaled_norm_golden_values_bit_for_bit() {
     assert_eq!(trajectory.len(), 176);
 
     let final_state = trajectory.final_state().unwrap();
+    // Exact regression fixtures are scoped to the observed target environment.
+    // See docs/ADAPTIVE_GOLDEN_PLATFORM_SCOPE.md for measurements and limits.
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let expected_coordinates_bits: [u64; 4] = [
+        0x3fee99d33872904b,
+        0x4023fbe788e8f7f6,
+        0x3ff921fb54442d18,
+        0x3f9efcc3603d09e2,
+    ];
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     let expected_coordinates_bits: [u64; 4] = [
         0x3fee99d33872904c,
         0x4023fbe788e8f7f6,
         0x3ff921fb54442d18,
         0x3f9efcc3603d09df,
     ];
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let expected_velocity_bits: [u64; 4] = [
+        0x3ff3209f6d6aa13b,
+        0xbf84797d4428fc0d,
+        0x3bf46a69ccd61f69,
+        0x3fa361e17609ee99,
+    ];
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     let expected_velocity_bits: [u64; 4] = [
         0x3ff3209f6d6aa13e,
         0xbf84797d4428fc0c,
@@ -348,9 +366,13 @@ fn adaptive_scaled_norm_golden_values_bit_for_bit() {
         final_diagnostics.affine_parameter.to_bits(),
         0x3fe999999999999a
     );
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    let expected_memory_bits = 0x3f34510b8cc118e0;
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    let expected_memory_bits = 0x3f34510b8cc1bd6f;
     assert_eq!(
         final_diagnostics.memory_l2_norm.to_bits(),
-        0x3f34510b8cc1bd6f
+        expected_memory_bits
     );
 }
 

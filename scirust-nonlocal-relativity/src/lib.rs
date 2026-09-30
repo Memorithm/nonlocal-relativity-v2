@@ -90,7 +90,10 @@ pub use proper_time::{
     ParameterizationMode, ProperTimeDiagnostics, affine_trajectory_proper_time,
     proper_time_caputo_velocity_memory, simulate_nonlocal_worldline_with_mode,
 };
-pub use transport::{DiscreteConnectionTransport, HistoryEntry, transport_vector_along_polyline};
+pub use transport::{
+    DiscreteConnectionTransport, HistoryEntry, TransportPrefixDiagnostic,
+    transport_prefix_diagnostics, transport_vector_along_polyline,
+};
 
 /// Result type used by this experimental crate.
 pub type NonlocalResult<T> = Result<T, NonlocalRelativityError>;
