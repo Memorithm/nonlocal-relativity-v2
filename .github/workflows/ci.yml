@@ -591,14 +591,29 @@ jobs:
   # harness building and would surface a crash (e.g. a parser regression) in the
   # job log. Long-running campaigns are run out-of-band.
   fuzz:
-    name: Fuzz (untrusted parsers, smoke)
+    name: Fuzz (${{ matrix.validation }})
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - validation: Linux x86_64 ASan build
+            runner: [self-hosted, Linux, X64, nonlocal-ci, dell-t430, internal]
+            target: x86_64-unknown-linux-gnu
+            smoke: false
+            build-jobs: 4
+          - validation: Mac ARM64 ASan build and smoke
+            runner: [self-hosted, macOS, ARM64, nonlocal-ci, mac-mini, internal]
+            target: aarch64-apple-darwin
+            smoke: true
+            build-jobs: 2
     continue-on-error: true
     # cargo-fuzz builds third-party crates (libfuzzer-sys) and instruments the
     # binary itself; do not impose the workspace-wide `-D warnings`.
     env:
       RUSTFLAGS: ""
+      CARGO_BUILD_JOBS: ${{ matrix.build-jobs }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -621,7 +636,7 @@ jobs:
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz@0.13.2
       - name: Cache cargo
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -632,13 +647,15 @@ jobs:
       # unavailable ("sanitizer is incompatible with statically linked libc").
       - name: Build fuzz targets
         working-directory: fuzz
-        run: cargo +nightly-2026-07-02 fuzz build --target x86_64-unknown-linux-gnu
+        run: cargo +nightly-2026-07-02 fuzz build --target ${{ matrix.target }}
       - name: Smoke-run QSR1 deserializer fuzzer
+        if: matrix.smoke
         working-directory: fuzz
-        run: cargo +nightly-2026-07-02 fuzz run qsr1_from_bytes --target x86_64-unknown-linux-gnu -- -max_total_time=45 -runs=500000
+        run: cargo +nightly-2026-07-02 fuzz run qsr1_from_bytes --target ${{ matrix.target }} -- -max_total_time=45 -runs=500000
       - name: Smoke-run ONNX JSON importer fuzzer
+        if: matrix.smoke
         working-directory: fuzz
-        run: cargo +nightly-2026-07-02 fuzz run import_onnx_json_from_bytes --target x86_64-unknown-linux-gnu -- -max_total_time=45 -runs=500000
+        run: cargo +nightly-2026-07-02 fuzz run import_onnx_json_from_bytes --target ${{ matrix.target }} -- -max_total_time=45 -runs=500000
 
   # Real wgpu compute path, validated against the CPU oracle on a software
   # Vulkan adapter (Mesa lavapipe) — no physical GPU required.
