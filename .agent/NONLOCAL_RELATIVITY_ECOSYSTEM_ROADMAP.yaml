@@ -1,7 +1,7 @@
 schema_version: 1
 kind: nonlocal_relativity_ecosystem_agent_roadmap
 status: active
-last_updated: "2026-08-31"
+last_updated: "2026-09-30"
 repository: Memorithm/nonlocal-relativity-v2
 intended_consumer: autonomous_coding_agent
 visibility_note: >-
@@ -286,3 +286,59 @@ ax_research_task_program:
   invariants:
     - task_success_does_not_establish_a_physical_or_mathematical_claim
     - numerical_claim_scope_remains_protocol_bound
+
+pr_repair_2026_09_30:
+  status: qualified_candidates_pending_exact_head_CI_and_merge
+  integrated_base: "857a893accada29637630312df9ecd254c713b47"
+  candidates:
+    - pr: 55
+      head: "8fbe934ea88e7867a59dcd638ff1342c7b39c7cb"
+      scope: prefix_conditioning_diagnostics_only_phase_6_not_activated
+    - pr: 57
+      head: "0ace02ff16d1b9088da3d7c5483152c7c66cd18b"
+      scope: retained_history_approximation_no_Caputo_or_error_control_claim
+    - pr: 58
+      head: "9cc815f077c199c6b2eb340651e88f34805afc4d"
+      scope: common_tangent_diagnostic_no_acceptance_or_covariance_claim
+  qualification:
+    control_repository: Memorithm/RemoteOps
+    run: 36765417295
+    control_revision: "8a353118a4babc98aa5b87aa2c43087f305ab15b"
+    checks: [fmt, strict_experiment_clippy, experiment_tests, adaptive_convergence, exponential_map, modulation_sensitivity, geometric_state_diagnostic]
+    limitation: does_not_replace_final_exact_head_repository_CI
+  adaptive_refinement:
+    document: docs/ADAPTIVE_REFINEMENT_EVIDENCE.md
+    contract: adaptive-refinement/v2
+    original_strict_trend_hypothesis: rejected_for_both_unchanged_tolerance_sweeps
+    observation_run: 36764843501
+    observation_revision: "19f3feede69429e4e6cca2a1837cdb0250e3465e"
+    embedded_plateaus: 1
+    step_doubling_plateaus: 2
+    observed_identity: complete_endpoint_bits_and_accepted_step_count_only
+    trajectory_identity_or_plateau_cause: not_established
+    criteria:
+      - finite_aligned_evidence_and_positive_step_counts
+      - no_endpoint_error_increase_including_one_ULP
+      - no_step_count_decrease
+      - equal_error_requires_identical_complete_endpoint_bits_and_count
+      - overall_error_improvement_and_overall_step_count_increase_required
+      - actual_strict_trend_boolean_and_plateau_count_remain_explicit
+    unchanged: [five_tolerances, fine_grid_references, step_bounds, integrators, error_computation, generic_strictly_decreasing_semantics]
+    evidence_class: bounded_fine_grid_self_consistency_not_a_convergence_proof
+  platform_evidence:
+    mac_golden_scope: aarch64_apple_darwin_exact_fixture_with_unchanged_Linux_anchor
+    mac_golden_document: docs/ADAPTIVE_GOLDEN_PLATFORM_SCOPE.md
+    windows_scope: Linux_hosted_MSVC_target_compilation_not_native_Windows_execution
+    sanitizer_scope: Linux_x86_64_instrumented_build_plus_native_Mac_ARM64_ASan_execution
+    sanitizer_probe_run: 36760682917
+    host_networking: explicit_for_pinned_Ubuntu_oracles_not_network_isolation
+    shared_Dell_virtual_memory_policy: unchanged
+  security:
+    advisory: RUSTSEC-2026-0285
+    rustls: "0.23.45"
+    transitive_scope: [rustls_webpki_0_103_15, aws_lc_rs_1_18_1, aws_lc_sys_0_45_0]
+    audit_graphs: 8
+    optional_network_compilation_checks: 3
+    qualification_run: 36762493842
+    policy: no_advisory_exception_or_license_policy_weakening
+  promotion_to_scirust: not_performed_requires_separate_source_target_lineage_and_destination_CI
