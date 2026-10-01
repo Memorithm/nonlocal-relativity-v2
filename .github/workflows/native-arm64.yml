@@ -7,6 +7,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scirust-fractional/**"
+      - "scirust-history/**"
       - "scirust-relativity/**"
       - "scirust-nonlocal-relativity/**"
       - "scirust-sim/**"
@@ -19,6 +20,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scirust-fractional/**"
+      - "scirust-history/**"
       - "scirust-relativity/**"
       - "scirust-nonlocal-relativity/**"
       - "scirust-sim/**"
@@ -99,6 +101,9 @@ jobs:
       - name: Test fractional calculus
         run: cargo test -p scirust-fractional
 
+      - name: Test generic retained history
+        run: cargo test -p scirust-history
+
       - name: Test relativity and geodesics
         run: cargo test -p scirust-relativity
 
@@ -115,6 +120,7 @@ jobs:
         run: |
           cargo clippy \
             -p scirust-fractional \
+            -p scirust-history \
             -p scirust-relativity \
             -p scirust-nonlocal-relativity \
             --all-targets \
