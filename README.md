@@ -9,7 +9,7 @@ This repository is a **frozen platform snapshot with a specialised research line
 | `experiments/nonlocal-relativity-v2/` | Deterministic scenarios, named numerical oracles and scoped evidence |
 | This fork's other SciRust crates | Frozen historical support; no new generic platform development here |
 
-The previous SciRust overview is preserved verbatim in [docs/SCIRUST-SNAPSHOT-README.md](docs/SCIRUST-SNAPSHOT-README.md). Its capability counts and measurements are historical; they do not describe the current canonical platform or independently qualify this fork.
+The previous SciRust overview is preserved verbatim in [SCIRUST-SNAPSHOT-README.md](SCIRUST-SNAPSHOT-README.md). Its capability counts and measurements are historical; they do not describe the current canonical platform or independently qualify this fork.
 
 ## Scientific boundary
 
