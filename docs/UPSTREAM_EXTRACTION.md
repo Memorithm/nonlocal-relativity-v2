@@ -7,7 +7,7 @@ Audit finding: B-NR-02. Documentation-only reconciliation; no generic crate, num
 Source repository: Memorithm/nonlocal-relativity-v2  
 Source base: `2c11a00b88357aae7950f40c6e6ae466713ec0f5`
 
-The root Cargo metadata still identifies a historical SciRust workspace. `FORK.md` classifies it as a frozen fork snapshot. The previous root overview is retained unchanged at `docs/SCIRUST-SNAPSHOT-README.md` for attribution and historical provenance.
+The root Cargo metadata still identifies a historical SciRust workspace. `FORK.md` classifies it as a frozen fork snapshot. The previous root overview is retained unchanged at `SCIRUST-SNAPSHOT-README.md` for attribution and historical provenance.
 
 ## Ownership and candidate classification
 
