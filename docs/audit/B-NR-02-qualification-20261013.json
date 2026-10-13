@@ -1,0 +1,243 @@
+{
+  "schema": "memorithm.audit.qualification.v1",
+  "finding": "B-NR-02",
+  "observed_at": "2026-10-13T17:33:35.417Z",
+  "repository": "Memorithm/nonlocal-relativity-v2",
+  "pr": 60,
+  "candidate_sha": "b1d3aff967284871795c6b1b91315a4cadff6f93",
+  "integrated_sha": "9cbbe6e8266c2cbf0cf7632c26f49e2275849581",
+  "candidate_checks": [
+    {
+      "name": "Build & Test (stable, x86_64)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903559"
+    },
+    {
+      "name": "Build & Test (portable-simd, nightly)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903337"
+    },
+    {
+      "name": "Fuzz (Linux x86_64 ASan build)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903309"
+    },
+    {
+      "name": "Check (MSRV 1.89.0)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903283"
+    },
+    {
+      "name": "License & Security Audit",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903254"
+    },
+    {
+      "name": "Epsilon Audit (σ gate)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903168"
+    },
+    {
+      "name": "Format Check",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903161"
+    },
+    {
+      "name": "Code Coverage",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903145"
+    },
+    {
+      "name": "Clippy",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903100"
+    },
+    {
+      "name": "GPU (CUDA no-runtime fallback)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903090"
+    },
+    {
+      "name": "Miri (memory safety and numeric crates)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903067"
+    },
+    {
+      "name": "COBOL Corpus Integrity",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903064"
+    },
+    {
+      "name": "Check (Windows MSVC target (Linux cross-check), stable)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903060"
+    },
+    {
+      "name": "Build & Test (nightly SIMD extensions)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903033"
+    },
+    {
+      "name": "Build & Test (nightly, x86_64)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388903022"
+    },
+    {
+      "name": "Fuzz (Mac ARM64 ASan build and smoke)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902943"
+    },
+    {
+      "name": "Check (macOS ARM64 native, stable)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902941"
+    },
+    {
+      "name": "SBOM (CycloneDX)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902916"
+    },
+    {
+      "name": "Check opt-in network features",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902914"
+    },
+    {
+      "name": "Cross-check (aarch64)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902868"
+    },
+    {
+      "name": "GPU (wgpu / lavapipe)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902829"
+    },
+    {
+      "name": "finmigrate GnuCOBOL Equivalence",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38424008259/job/115388902791"
+    }
+  ],
+  "integrated_checks": [
+    {
+      "name": "Fuzz (Mac ARM64 ASan build and smoke)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427501050"
+    },
+    {
+      "name": "Check opt-in network features",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427500072"
+    },
+    {
+      "name": "Cross-check (aarch64)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427500068"
+    },
+    {
+      "name": "Build & Test (nightly SIMD extensions)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427500056"
+    },
+    {
+      "name": "GPU (CUDA no-runtime fallback)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427500016"
+    },
+    {
+      "name": "Build & Test (stable, x86_64)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499936"
+    },
+    {
+      "name": "Fuzz (Linux x86_64 ASan build)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499862"
+    },
+    {
+      "name": "License & Security Audit",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499861"
+    },
+    {
+      "name": "SBOM (CycloneDX)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499844"
+    },
+    {
+      "name": "Build & Test (portable-simd, nightly)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499825"
+    },
+    {
+      "name": "Check (Windows MSVC target (Linux cross-check), stable)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499823"
+    },
+    {
+      "name": "Format Check",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499822"
+    },
+    {
+      "name": "Code Coverage",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499813"
+    },
+    {
+      "name": "GPU (wgpu / lavapipe)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499810"
+    },
+    {
+      "name": "Check (macOS ARM64 native, stable)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499775"
+    },
+    {
+      "name": "Build & Test (nightly, x86_64)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499748"
+    },
+    {
+      "name": "Miri (memory safety and numeric crates)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499684"
+    },
+    {
+      "name": "Check (MSRV 1.89.0)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499650"
+    },
+    {
+      "name": "Clippy",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499593"
+    },
+    {
+      "name": "finmigrate GnuCOBOL Equivalence",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499591"
+    },
+    {
+      "name": "COBOL Corpus Integrity",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499577"
+    },
+    {
+      "name": "Epsilon Audit (σ gate)",
+      "conclusion": "success",
+      "url": "https://github.com/Memorithm/nonlocal-relativity-v2/actions/runs/38435276119/job/115427499266"
+    }
+  ],
+  "archive_equals_original_readme": true,
+  "archive_blob_sha": "f9f298c9cd12b5b763d69a3092a1926881b3610b",
+  "review_threads": 1,
+  "resolved_review_threads": 1,
+  "scope": "documentation-only fork responsibility and upstream extraction procedure; no claim of implemented code extraction or new science",
+  "merge_origin": "previously merged by user/permitted path; not merged during this session",
+  "excluded_from_counts": {
+    "pr": 61,
+    "reason": "closed empty no-diff follow-up; no technical correction and no merge"
+  }
+}
