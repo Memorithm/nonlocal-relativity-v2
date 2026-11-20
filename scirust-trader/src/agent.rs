@@ -359,7 +359,7 @@ impl TradingAgent {
             prediction: pred,
             narration,
             llm_consistent: consistent,
-            timestamp_ms: chrono::Utc::now().timestamp_millis(),
+            timestamp_ms: crate::unix_millis_now(),
         }
     }
 
