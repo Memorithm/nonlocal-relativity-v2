@@ -22,7 +22,7 @@ env:
 jobs:
   validate:
     name: Validate ${{ github.ref_name }}
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, remoteops, ci-isolated]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -97,7 +97,7 @@ jobs:
   publish:
     name: Publish draft ${{ github.ref_name }}
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, remoteops, ci-isolated]
     environment: release
     permissions:
       contents: write

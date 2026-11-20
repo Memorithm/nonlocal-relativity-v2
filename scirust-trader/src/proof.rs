@@ -51,7 +51,7 @@ impl DecisionProof {
     /// Build a proof from a list of decision records.
     pub fn from_records(records: &[DecisionRecord]) -> Result<Self, ProofError> {
         let scirust_version = env!("CARGO_PKG_VERSION").to_string();
-        let timestamp_ms = chrono::Utc::now().timestamp_millis();
+        let timestamp_ms = crate::unix_millis_now();
         let num_decisions = records.len();
         let manifest_hash =
             compute_manifest_hash(&scirust_version, timestamp_ms, num_decisions, records)?;

@@ -17,6 +17,18 @@ ignore = [
     # Unmaintained notice, not a vulnerability: this is pulled in only by the
     # optional Intel MKL source package and the advisory lists no safe upgrade.
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained; transitively required by intel-mkl-src, no safe upgrade available" },
+    # Unmaintained notice, not a vulnerability (published 2026-11). SciRust no
+    # longer depends on chrono directly (openclaw-u uses jiff, scirust-trader
+    # uses std::time); it remains only as a build dependency of ocipkg under
+    # the optional Intel MKL source package (feature blas-mkl).
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; only a build dependency of ocipkg via intel-mkl-src (blas-mkl), no direct use" },
+    # ocipkg 0.2 is pinned by intel-mkl-src 0.8.1 (latest, no newer release)
+    # and only runs in its build script, downloading the MKL image from Intel's
+    # registry when the optional `blas-mkl` feature is enabled. The fixed
+    # ocipkg 0.4.1 is not reachable from intel-mkl-src. Revisit by dropping
+    # `blas-mkl` or vendoring MKL. Owner delegated the choice 2026-11-20.
+    { id = "RUSTSEC-2026-0449", reason = "ocipkg unmaintained; build-time only via intel-mkl-src 0.8.1 (blas-mkl), no upgrade path" },
+    { id = "RUSTSEC-2026-0450", reason = "ocipkg OCI unpack path traversal; build-time only, trusted Intel registry image via intel-mkl-src 0.8.1 (blas-mkl), fixed 0.4.1 unreachable" },
 ]
 
 [licenses]

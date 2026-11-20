@@ -55,3 +55,17 @@ pub mod robustness;
 pub mod scanner;
 pub mod strategy;
 pub mod wallet;
+
+/// Milliseconds since the Unix epoch (UTC), from the system clock.
+///
+/// Replaces `chrono::Utc::now().timestamp_millis()` (chrono is unmaintained,
+/// RUSTSEC-2026-0543). A clock set before 1970 yields a negative value, as
+/// chrono did.
+pub(crate) fn unix_millis_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    match SystemTime::now().duration_since(UNIX_EPOCH)
+    {
+        Ok(d) => i64::try_from(d.as_millis()).unwrap_or(i64::MAX),
+        Err(e) => i64::try_from(e.duration().as_millis()).map_or(i64::MIN, |ms| -ms),
+    }
+}

@@ -26,7 +26,6 @@
 //! Usage : `cargo run --features openclaw --bin openclaw-u`
 //!         `OPENCLAW_UNSAFE_MUTATE=1 cargo run --features openclaw --bin openclaw-u`
 
-use chrono::Local;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -37,6 +36,18 @@ use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 use tokio::time::interval;
+
+/// Local wall-clock time as RFC 3339 (e.g. `2026-11-20T20:30:00.123+01:00`).
+fn now_rfc3339() -> String {
+    jiff::Zoned::now()
+        .strftime("%Y-%m-%dT%H:%M:%S%.f%:z")
+        .to_string()
+}
+
+/// Local wall-clock time as `HH:MM:SS`.
+fn now_hms() -> String {
+    jiff::Zoned::now().strftime("%H:%M:%S").to_string()
+}
 
 const STATE_FILE: &str = "state.json";
 const EVOLUTION_LOG: &str = "evolution.log";
@@ -192,7 +203,7 @@ struct CoreState {
 
 impl CoreState {
     fn birth() -> Self {
-        let now = Local::now().to_rfc3339();
+        let now = now_rfc3339();
         Self {
             energy: 50.0,
             goals: Vec::new(),
@@ -207,7 +218,7 @@ impl CoreState {
     }
 
     fn log(&mut self, entry: &str) {
-        let line = format!("[{}] {}", Local::now().format("%H:%M:%S"), entry);
+        let line = format!("[{}] {}", now_hms(), entry);
         if self.history.len() >= MAX_HISTORY
         {
             self.history.pop_front();
@@ -216,7 +227,7 @@ impl CoreState {
     }
 
     fn touch(&mut self) {
-        self.last_heartbeat = Local::now().to_rfc3339();
+        self.last_heartbeat = now_rfc3339();
     }
 }
 
@@ -325,7 +336,7 @@ fn mutation_enabled() -> bool {
 }
 
 async fn log_evolution(entry: &str) {
-    let line = format!("[{}] {}\n", Local::now().to_rfc3339(), entry);
+    let line = format!("[{}] {}\n", now_rfc3339(), entry);
     if let Ok(mut file) = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
